@@ -63,8 +63,12 @@ function loadRenderer(opts = {}) {
     onPtyExit: (cb) => { listeners.chat.push(cb); return () => {}; },
     onChatEvent: (cb) => { listeners.chat.push(cb); return () => {}; },
   };
-  // jsdom ships neither of these, and app.js wires a ResizeObserver at boot.
+  // jsdom ships neither of these, and the renderer wires both at boot.
   window.ResizeObserver = class { observe() {} unobserve() {} disconnect() {} };
+  // scrollIntoView is called on every permission card; jsdom leaves it undefined.
+  if (!window.Element.prototype.scrollIntoView) {
+    window.Element.prototype.scrollIntoView = function () {};
+  }
   window.ccx = ccx;
   window.Terminal = class { constructor() { this.cols = 80; this.rows = 24; } loadAddon() {} open() {} focus() {} dispose() {} write() {} onData() {} onResize() {} attachCustomKeyEventHandler() {} hasSelection() { return false; } getSelection() { return ''; } };
   window.FitAddon = { FitAddon: class { fit() {} } };

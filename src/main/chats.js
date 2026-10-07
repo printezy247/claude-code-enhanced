@@ -14,7 +14,12 @@ const providers = require('./providers');
 // In packaged builds the module must load from the UNPACKED on-disk copy —
 // from inside app.asar the SDK can't resolve/spawn its engine (ENOTDIR).
 let sdkPromise = null;
+// Injection seam: tests pass a fake SDK so no engine process is spawned. The
+// dynamic import below bypasses vitest's mock registry (the module is loaded
+// through Node's CJS require), so a constructor argument is the reliable hook.
+let sdkOverride = null;
 function sdk() {
+  if (sdkOverride) return Promise.resolve(sdkOverride);
   if (!sdkPromise) {
     sdkPromise = (async () => {
       const { app } = require('electron');
@@ -80,15 +85,32 @@ function cwdOf(full) {
 }
 
 class ChatManager extends EventEmitter {
-  constructor() {
+  constructor({ proxyToken = null, sdk = null } = {}) {
     super();
+    this.proxyToken = proxyToken;
+    if (sdk) sdkOverride = sdk;
     this.chats = new Map();      // id -> chat
     this.pendingPerms = new Map(); // requestId -> {resolve, timer, toolName}
     this.nextId = 1;
+    this.permSeq = 1;
     this.lastCreatedId = null;
   }
 
-  async create({ cwd, providerInstance, settings, model, permissionMode, yolo, resume, claudePath, fork, anthropicBaseUrl }) {
+  /** Remove a pending permission entry. Returns false if it was already gone. */
+  _dropPerm(requestId) {
+    const entry = this.pendingPerms.get(requestId);
+    if (!entry) return false;
+    clearTimeout(entry.timer);
+    this.pendingPerms.delete(requestId);
+    return true;
+  }
+
+  /** Pending permission requests for one chat (used by close/interrupt). */
+  _permsOf(chatId) {
+    return [...this.pendingPerms.values()].filter(e => e.chatId === chatId);
+  }
+
+  async create({ cwd, providerInstance, settings, model, permissionMode, yolo, resume, resumeAt, claudePath, fork, anthropicBaseUrl }) {
     const { query } = await sdk();
     const opts_fork = !!fork;
     const id = 'c' + this.nextId++;
@@ -102,7 +124,10 @@ class ChatManager extends EventEmitter {
       cwd: dir,
       permissionMode: effMode,
       allowDangerouslySkipPermissions: !!yolo,
-      settingSources: ['user', 'project'],   // loads skills, slash commands, CLAUDE.md, .mcp.json
+      // 'local' was missing, so .claude/settings.local.json was never loaded — that
+      // is where the CLI stores its own "always allow" rules, so approving a
+      // tool in a terminal tab had no effect on chat tabs. #12
+      settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,          // stream_event frames for live typing
       // Desktop-parity surface: file checkpoints (rewind), nested subagent
       // transcript, hook lifecycle frames, questions that never AFK-timeout.
@@ -122,7 +147,20 @@ class ChatManager extends EventEmitter {
       const last = this.lastChatFor(dir);
       if (last) options.resume = last;
     }
+    // Branch the conversation itself from a message (edit-and-resubmit). The
+    // SDK branches history; `resumeSessionAt` is the message anchor. #30
+    if (resumeAt) options.resumeSessionAt = String(resumeAt);
     if (opts_fork) options.forkSession = true;   // branch from a session without touching the original
+    // Per-provider lean tool set. Fewer tool schemas = a much smaller base
+    // prompt, which is the real lever on the ~70K context floor that blocks
+    // 3-4B local models. #41
+    if (settings && settings.leanTools) {
+      const lean = Array.isArray(settings.leanTools) ? settings.leanTools : [];
+      if (lean.length) {
+        options.tools = lean;
+        options.disallowedTools = (settings.disallowedTools || []).map(String);
+      }
+    }
     // Sandboxed command execution (claude code sandbox: Bubblewrap on Linux).
     if (settings && settings.sandbox && settings.sandbox.enabled) {
       const s = settings.sandbox;
@@ -159,37 +197,55 @@ class ChatManager extends EventEmitter {
         if (line.trim()) console.error('[claude]', line);
       }
     };
-    if (resume === 'last') {
-      const last = settings && settings._lastChatByCwd && settings._lastChatByCwd[dir];
-      if (last) options.resume = last;
-    }
+    // (The duplicate `resume === 'last'` block that read a nonexistent
+    // settings._lastChatByCwd was removed here — lastChatFor above is the one
+    // real source. #18)
 
     if (anthropicBaseUrl) {
       // Route the engine through the built-in OpenAI-format translator
       options.env.ANTHROPIC_BASE_URL = anthropicBaseUrl;
-      options.env.ANTHROPIC_AUTH_TOKEN = (providerInstance && (providerInstance.apiKey || providerInstance.authToken)) || 'proxy-key';
+      // The proxy's own token, not the provider key: the proxy already holds
+      // the credential and rejects requests without its token. #8
+      options.env.ANTHROPIC_AUTH_TOKEN = this.proxyToken || 'proxy-key';
+      options.env.ANTHROPIC_API_KEY = '';
     }
 
+    // Each request keeps its own entry; several tools can be pending at once
+    // (parallel tool calls, subagents). The old single-slot UI dropped all but
+    // the last card and left the rest to time out. #2
     options.canUseTool = async (toolName, input, ctx = {}) => {
-      const requestId = 'r' + Math.random().toString(36).slice(2, 10);
+      const requestId = 'r' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
       return await new Promise((resolve) => {
         const entry = {
-          toolName, input, resolve,
+          chatId: id, requestId, toolName, input, resolve,
+          // Suggestions come from the engine: they are the exact rule set that
+          // would cover THIS call (e.g. `npm test *`), not the whole tool. #3
+          suggestions: ctx.suggestions || [],
+          suppressAlwaysAllowRule: !!ctx.suppressAlwaysAllowRule,
+          // Metadata for the prompt text instead of a raw JSON dump. #28
+          title: ctx.title || '', description: ctx.description || '',
+          decisionReason: ctx.decisionReason || '', blockedPath: ctx.blockedPath || '',
+          displayName: ctx.displayName || '', toolUseID: ctx.toolUseID || '',
           timer: setTimeout(() => {
-            this.pendingPerms.delete(requestId);
+            this._dropPerm(requestId);
             this.emit('event', id, { kind: 'permission-timeout', requestId });
             resolve({ behavior: 'deny', message: 'Permission request timed out (no answer in 6 minutes)' });
           }, PERM_TIMEOUT_MS),
         };
         this.pendingPerms.set(requestId, entry);
         ctx.signal && ctx.signal.addEventListener && ctx.signal.addEventListener('abort', () => {
-          clearTimeout(entry.timer);
-          this.pendingPerms.delete(requestId);
+          if (!this._dropPerm(requestId)) return;
+          // Tell the UI so the card does not linger after an interrupt. #11
+          this.emit('event', id, { kind: 'permission-cleared', requestId, reason: 'interrupted' });
           resolve({ behavior: 'deny', message: 'Interrupted' });
         }, { once: true });
         this.emit('event', id, {
           kind: 'permission', requestId, toolName, input,
-          suggestions: ctx.suggestions || [],
+          suggestions: entry.suggestions,
+          suppressAlwaysAllowRule: entry.suppressAlwaysAllowRule,
+          title: entry.title, description: entry.description,
+          decisionReason: entry.decisionReason, blockedPath: entry.blockedPath,
+          displayName: entry.displayName, toolUseID: entry.toolUseID,
           expiresAt: Date.now() + PERM_TIMEOUT_MS,
         });
       });
@@ -372,10 +428,21 @@ class ChatManager extends EventEmitter {
 
   // File checkpointing: restore every tracked file to the state at a user
   // message uuid. Conversation itself is NOT rewound.
-  async rewind(id, uuid) {
+  async rewind(id, uuid, opts = {}) {
     if (!/^[a-f0-9-]{30,}$/i.test(String(uuid || ''))) throw new Error('invalid checkpoint id');
-    const r = await this._chat(id).q.rewindFiles(uuid);
-    return { rewound: true, ...(r && typeof r === 'object' ? { skipped: Array.isArray(r.skippedLinks) ? r.skippedLinks.length : 0 } : {}) };
+    const r = await this._chat(id).q.rewindFiles(uuid, opts);
+    return {
+      rewound: true,
+      // skippedLinks is a COUNT per the SDK's RewindFilesResult, but older
+      // builds returned a list; accept either. The old code checked
+      // Array.isArray() and therefore always reported 0.
+      skipped: r && typeof r === 'object' ? (Array.isArray(r.skippedLinks) ? r.skippedLinks.length : Number(r.skippedLinks) || 0) : 0,
+      filesChanged: (r && r.filesChanged) || [],
+      insertions: (r && r.insertions) || 0,
+      deletions: (r && r.deletions) || 0,
+      canRewind: r ? r.canRewind !== false : true,
+      error: r && r.error,
+    };
   }
 
   checkpoints(id) {
@@ -592,25 +659,42 @@ class ChatManager extends EventEmitter {
 
   answer(id, requestId, decision, answers) {
     const entry = this.pendingPerms.get(requestId);
-    if (!entry) return { ok: false, error: 'request no longer pending' };
-    clearTimeout(entry.timer);
-    this.pendingPerms.delete(requestId);
-    if (decision === 'deny') entry.resolve({ behavior: 'deny', message: 'User denied this tool use.' });
-    else if (answers && typeof answers === 'object' && Object.keys(answers).length) {
+    // Scope by chat: requestIds are unique, but a stale card in another tab
+    // must never be able to answer this tab's request. #20
+    if (!entry || entry.chatId !== id) return { ok: false, error: 'request no longer pending' };
+    this._dropPerm(requestId);
+    if (decision === 'deny') {
+      entry.resolve({ behavior: 'deny', message: 'User denied this tool use.' });
+    } else if (answers && typeof answers === 'object' && Object.keys(answers).length) {
       // AskUserQuestion: picked labels ride on the permission result as the
       // tool's answers (engine reads updatedInput.answers, keyed by question).
       entry.resolve({ behavior: 'allow', updatedInput: { ...(entry.input || {}), answers } });
     } else if (decision === 'always') {
-      entry.resolve({
-        behavior: 'allow',
-        updatedPermissions: [{ type: 'addRules', rules: [{ toolName: entry.toolName }], behavior: 'allow', destination: 'session' }],
-      });
+      // Use the engine's own suggestions. A bare { toolName } rule approves EVERY
+      // use of the tool for the session — one "yes" to `ls` would have allowed
+      // `rm -rf`. The SDK documents updatedPermissions as the intended channel. #3
+      if (entry.suppressAlwaysAllowRule) {
+        entry.resolve({ behavior: 'allow' });
+      } else if (entry.suggestions.length) {
+        entry.resolve({ behavior: 'allow', updatedPermissions: entry.suggestions });
+      } else {
+        // No suggestions available: allow just this call rather than granting a
+        // blanket rule. Safer default than the old behaviour.
+        entry.resolve({ behavior: 'allow' });
+      }
     } else entry.resolve({ behavior: 'allow' });
     return { ok: true };
   }
 
   close(id) {
     const chat = this.chats.get(id);
+    // Deny anything still waiting so no promise is left hanging after close. #20
+    for (const entry of this._permsOf(id)) {
+      if (this._dropPerm(entry.requestId)) {
+        this.emit('event', id, { kind: 'permission-cleared', requestId: entry.requestId, reason: 'closed' });
+        try { entry.resolve({ behavior: 'deny', message: 'Session closed' }); } catch { /* resolved already */ }
+      }
+    }
     if (!chat) return;
     try { chat.abort.abort(); } catch { /* already closing */ }
   }

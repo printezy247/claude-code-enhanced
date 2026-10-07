@@ -12,7 +12,6 @@
     "start": "electron .",
     "rebuild": "electron-builder install-app-deps",
     "smoke": "CCE_SMOKE=1 xvfb-run -a -s \"-screen 0 1280x860x24\" electron .",
-    "check": "node scripts/check.js",
     "test": "vitest run",
     "test:watch": "vitest",
     "dist": "node scripts/vendor-monaco.js && electron-builder --linux",

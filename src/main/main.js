@@ -34,7 +34,8 @@ const ChatManager = require('./chats');
 
 const store = new Store();
 const sessions = new SessionManager();
-const chats = new ChatManager();
+// The manager needs the proxy token so proxied chats authenticate.
+const chats = new ChatManager({ proxyToken });
 let win = null;
 let claudeInfo = { found: false, path: '', version: '' };
 
@@ -61,6 +62,26 @@ function claudePath() {
   return p || (claudeInfo.found ? claudeInfo.path : 'claude');
 }
 
+// ---------- proxy routing -----------------------------------------------------
+// Ollama and other native-Anthropic providers used to bypass the translator, so
+// a text-channel tool call from a small local model reached the engine as plain
+// prose and nothing happened (#1). Local models now route through the proxy too,
+// which recovers those calls. Cloud Anthropic-compatible providers stay direct.
+function usesProxy(provider) {
+  if (!provider || !proxyPort) return false;
+  if (provider.protocol === 'openai') return true;
+  return !!provider.baseUrl && provider.alwaysTranslate !== false && isLocalBase(provider.baseUrl);
+}
+function isLocalBase(baseUrl) {
+  try {
+    const h = new URL(baseUrl).hostname;
+    return h === 'localhost' || h === '127.0.0.1' || h === '::1' || h === '0.0.0.0' || h.endsWith('.local');
+  } catch { return false; }
+}
+function proxyBaseUrl(provider) {
+  return 'http://127.0.0.1:' + proxyPort + '/px/' + provider.uid;
+}
+
 // ---------- window ----------------------------------------------------------
 function createWindow() {
   win = new BrowserWindow({
@@ -79,6 +100,25 @@ function createWindow() {
     },
   });
   win.setMenuBarVisibility(false);
+
+  // A markdown link in a chat must not navigate the app away from itself, and a
+  // target=_blank link must not open a second window with our preload attached.
+  // Both happened before: clicking a link replaced the whole UI and left the
+  // user with a blank page. #6
+  win.webContents.on('will-navigate', (event, url) => {
+    const target = new URL(url);
+    if (target.protocol === 'file:') return;                 // our own page
+    event.preventDefault();
+    if (/^https?:$/.test(target.protocol)) shell.openExternal(url);
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
+    return { action: 'deny' };
+  });
+  // Refuse every permission request the renderer could make: the app needs no
+  // camera, mic, geolocation or notifications permission from the page itself.
+  win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
     .catch((err) => console.error('[cce] page load failed:', String(err)));
   win.on('closed', () => { win = null; });
@@ -443,9 +483,11 @@ function registerIpc() {
     const env = { ...process.env, ...providers.envFor(provider, store.settings) };
     // OpenAI-protocol providers only work through the built-in translator; the
     // terminal CLI gets the same ANTHROPIC_BASE_URL override as SDK chats.
-    if (provider && provider.protocol === 'openai' && proxyPort) {
-      env.ANTHROPIC_BASE_URL = 'http://127.0.0.1:' + proxyPort + '/px/' + provider.uid;
-      env.ANTHROPIC_AUTH_TOKEN = (provider.apiKey || provider.authToken) || 'proxy-key';
+    if (usesProxy(provider)) {
+      env.ANTHROPIC_BASE_URL = proxyBaseUrl(provider);
+      // Proxy token, not the provider key — the proxy adds the real credential.
+      env.ANTHROPIC_AUTH_TOKEN = proxyToken;
+      env.ANTHROPIC_API_KEY = '';
     }
     if (!env.TERM) env.TERM = 'xterm-256color';
 
@@ -491,11 +533,11 @@ function registerIpc() {
   handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork }) => {
     const provider = store.providers.find(p => p.uid === providerUid)
       || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
-    const useProxy = !!(provider && provider.protocol === 'openai' && proxyPort);
+    const useProxy = usesProxy(provider);
     // Local Ollama providers: pre-warm the model at a context size that fits the
     // claude engine's base prompt (Ollama's default 4-16K ctx 400s instantly).
     let effModel = sanitizeModel(model || (provider && provider.model) || '');
-    if (provider && provider.baseUrl && !useProxy && !effModel) {
+    if (provider && provider.baseUrl && !effModel) {
       const picked = await pickLocalDefault(provider.baseUrl);
       if (picked) { effModel = picked; model = picked; }
     }
@@ -507,7 +549,7 @@ function registerIpc() {
     const created = await chats.create({
       cwd, providerInstance: provider, settings: store.settings,
       model, permissionMode, yolo, resume, fork,
-      anthropicBaseUrl: useProxy ? ('http://127.0.0.1:' + proxyPort + '/px/' + provider.uid) : undefined,
+      anthropicBaseUrl: useProxy ? proxyBaseUrl(provider) : undefined,
       // Only override the engine when the user set an explicit path in Settings;
       // auto-wiring the system CLI stalls (SDK expects its matching engine version).
       claudePath: (store.settings.claudePath || '').trim() || undefined,
@@ -526,7 +568,7 @@ function registerIpc() {
     const prov = chat && chat.providerInstance;
     const eff = sanitizeModel(model || (prov && prov.model) || '');
     model = sanitizeModel(model);
-    const isNativeOllama = !!(prov && prov.baseUrl) && !(prov && prov.protocol === 'openai');
+    const isNativeOllama = !!(prov && prov.baseUrl) && !usesProxy(prov);
     if (isNativeOllama && eff) {
       const warm = await warmOllamaModel(prov.baseUrl, eff, Number(store.settings.localNumCtx || 131072));
       if (!warm.ok) return { blocked: true, modelCtx: warm.native, error: warm.error };

@@ -18,7 +18,13 @@ function toast(msg, kind = '') {
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 3600);
   setTimeout(() => t.remove(), 4000);
 }
-function esc(s) { return String(s ?? ''); }
+// Real HTML escaping: several call sites interpolate provider- and
+// server-supplied strings into innerHTML, and MCP server names are untrusted. #7
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
+}
 
 const state = {
   info: null,

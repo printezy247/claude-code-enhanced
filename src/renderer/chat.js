@@ -13,10 +13,19 @@ const Chat = (() => {
       // collapse runs of empty rules (some relays pad replies with '---' lines)
       html = html.replace(/(?:<hr\s*\/?>\s*(?:<p>\s*<\/p>\s*)*){3,}/g, '<hr>');
       return html;
-    } catch { return document.createTextNode(text || '').textContent; }
+    } catch {
+      // Escaped text, not raw: the return value is assigned to innerHTML, so
+      // returning the bare string was an injection path when marked/DOMPurify
+      // were unavailable. #7
+      return esc(text || '');
+    }
   };
 
-  const esc = (s) => String(s ?? '');
+  // Real HTML escaping. The old version was String(s), and it fed innerHTML with
+// tool names — MCP tool names come from remote servers and are untrusted. #7
+  const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+  ));
 
   function el(tag, cls, text) {
     const n = document.createElement(tag);
@@ -398,7 +407,8 @@ const Chat = (() => {
   async function closeChat(id) {
     const chat = chats.get(id);
     if (!chat) return;
-    clearInterval(chat.permTimer);
+    // Stop every pending countdown, not just one shared interval. #2
+    for (const card of chat.permSlot.querySelectorAll('.perm-card')) endPermCountdown(card);
     clearInterval(chat.ctxTimer);
     if (chat.alive) await ccx.invoke('chat:close', { id });
     chat.pane.remove(); chat.tabEl.remove(); chats.delete(id);
@@ -1510,6 +1520,11 @@ const Chat = (() => {
     else if (kind === 'status') setBusy(chat, evt.busy);
     else if (kind === 'permission') showPermission(chat, evt);
     else if (kind === 'permission-timeout') clearPermission(chat, evt.requestId, 'Permission request timed out — auto-denied');
+    // Interrupt / tab close: drop the card instead of leaving it clickable. #11
+    else if (kind === 'permission-cleared') {
+      clearPermission(chat, evt.requestId, null);
+      if (evt.reason === 'interrupted') toast('Pending permission cleared (interrupted)', '');
+    }
     else if (kind === 'task') onTaskEvent(chat, evt.msg);
     else if (kind === 'hook') onHookEvent(chat, evt.msg);
     else if (kind === 'auth') onAuth(chat, evt);
@@ -1850,7 +1865,10 @@ const Chat = (() => {
     card.appendChild(head); card.appendChild(body);
 
     const ctx = {
-      card, name, input, dot, title, status: 'running',
+      // `body` was missing here even though renderOutput() and nestedTarget()
+      // both read ctx.body, so every tool_result threw and the output pane was
+      // never rendered (the throw was swallowed by the event handler's catch).
+      card, body, name, input, dot, title, status: 'running',
       setStatus(status, note) {
         ctx.status = status;
         dot.className = 'tool-dot ' + status;
@@ -1994,79 +2012,106 @@ const Chat = (() => {
     return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
   };
 
-  // Live countdown on the card: an unanswered request auto-denies, so say so
-  // instead of letting the card sit until the engine gives up.
+  // Live countdown per card. An unanswered request auto-denies, so say so
+  // instead of letting the card sit until the engine gives up. One interval per
+  // card: a shared timer cancelled whichever card was answered. #2
   function startPermCountdown(chat, card, head, evt) {
-    clearInterval(chat.permTimer);
-    chat.permTimer = null;
     if (!evt.expiresAt) return;
     const cd = el('span', 'perm-countdown', '');
     head.appendChild(cd);
-    const tick = () => {
+    const timer = setInterval(() => {
       const left = evt.expiresAt - Date.now();
       if (left <= 0) {
-        clearInterval(chat.permTimer);
-        chat.permTimer = null;
+        clearInterval(timer);
         card.remove();
+        chat.permCount = Math.max(0, (chat.permCount || 1) - 1);
+        updatePermBadge(chat);
         toast('Permission request timed out — auto-denied', 'err');
         return;
       }
       cd.textContent = '⏳ auto-deny in ' + fmtDur(left);
-    };
-    chat.permTimer = setInterval(tick, 1000);
-    tick();
+    }, 1000);
+    timer.unref && timer.unref();
+    card.dataset.timer = '1';
+    card._permTimer = timer;
+    cd.textContent = '⏳ auto-deny in ' + fmtDur(Math.max(0, evt.expiresAt - Date.now()));
   }
 
-  function endPermCountdown(chat) {
-    clearInterval(chat.permTimer);
-    chat.permTimer = null;
+  /** Stop a card's countdown. Takes the card, not the chat. */
+  function endPermCountdown(card) {
+    if (card && card._permTimer) {
+      clearInterval(card._permTimer);
+      card._permTimer = null;
+    }
   }
 
   function clearPermission(chat, requestId, note) {
-    const card = chat.permSlot.querySelector('.perm-card');
-    if (card && (!requestId || card.dataset.rid === requestId)) {
+    // Remove every card whose id matches (or all, when no id is given).
+    const cards = [...chat.permSlot.querySelectorAll('.perm-card')];
+    let removed = 0;
+    for (const card of cards) {
+      if (requestId && card.dataset.rid !== requestId) continue;
+      endPermCountdown(card);
       card.remove();
-      if (note) toast(note, 'err');
+      removed++;
+      chat.permCount = Math.max(0, (chat.permCount || 0) - 1);
     }
-    endPermCountdown(chat);
+    if (removed) updatePermBadge(chat);
+    if (note && removed) toast(note, 'err');
   }
 
   function showPermission(chat, evt) {
-    chat.permSlot.innerHTML = '';
+    // Do NOT clear the slot: several requests can be pending at once (parallel
+    // tool calls, subagents) and the old single-card behaviour dropped all but
+    // the last, leaving the rest to time out. Each card owns its own timer. #2
     const { requestId, toolName, input = {} } = evt;
     if (toolName === 'AskUserQuestion') return showAskQuestion(chat, evt);
+    chat.permCount = (chat.permCount || 0) + 1;
+    updatePermBadge(chat);
     const card = el('div', 'perm-card' + (toolName === 'ExitPlanMode' ? ' plan' : ''));
+    card.dataset.rid = requestId;
     const head = el('div', 'perm-head');
     head.appendChild(el('span', 'tool-ico', toolIcon(toolName)));
+
+    // Use the engine's own prompt sentence when it sends one; only fall back to
+    // reconstructing from the tool name. #28
+    const title = evt.title || ('Claude wants to use ' + toolName);
     const t = el('span', '', '');
+    t.appendChild(el('b', '', title));
+    head.appendChild(t);
+    if (chat.permCount > 1) head.appendChild(el('span', 'chip', chat.permCount + ' pending'));
+    card.appendChild(head);
+
     if (toolName === 'ExitPlanMode') {
-      t.innerHTML = '<b>Plan ready</b> — approve to let Claude start building';
-      head.appendChild(t);
       const planBody = el('div', 'perm-plan md');
       planBody.innerHTML = md(input.plan || '(no plan text)');
-      card.appendChild(head); card.appendChild(planBody);
+      card.appendChild(planBody);
     } else {
-      t.innerHTML = `Claude wants to use <b>${esc(toolName)}</b>`;
-      head.appendChild(t);
-      card.appendChild(head);
-      const preview = el('pre', 'perm-input mono', JSON.stringify(input, null, 2).slice(0, 1200));
-      card.appendChild(preview);
+      if (evt.description) card.appendChild(el('div', 'perm-desc', evt.description));
+      if (evt.decisionReason) card.appendChild(el('div', 'hint', 'why: ' + evt.decisionReason));
+      if (evt.blockedPath) card.appendChild(el('div', 'hint', 'blocked path: ' + evt.blockedPath));
+      card.appendChild(renderToolInput(toolName, input));
       if (Array.isArray(evt.suggestions) && evt.suggestions.length) {
-        card.appendChild(el('div', 'hint', 'suggested rule: ' + JSON.stringify(evt.suggestions[0]).slice(0, 160)));
+        card.appendChild(el('div', 'hint', 'Session rule: ' + describeSuggestions(evt.suggestions)));
       }
     }
-    card.dataset.rid = requestId;
+
     startPermCountdown(chat, card, head, evt);
     const actions = el('div', 'perm-actions');
     const setMode = async (mode) => {
       const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode });
       if (r.ok) { chat.mode = mode; chat.modeSel.value = mode; toast('Mode → ' + modeLabel(chat.mode), 'ok'); }
     };
-    const mk = (label, cls, decision, afterMode) => {
+    const finish = () => {
+      card.remove();
+      chat.permCount = Math.max(0, (chat.permCount || 1) - 1);
+      updatePermBadge(chat);
+    };
+    const mk = (label, cls, decision, afterMode, tip) => {
       const b = el('button', 'btn ' + cls, label);
+      if (tip) b.title = tip;
       b.addEventListener('click', async () => {
-        card.remove();
-        endPermCountdown(chat);
+        finish();
         await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision });
         if (afterMode) await setMode(afterMode);
         setBusy(chat, true);
@@ -2078,13 +2123,61 @@ const Chat = (() => {
       actions.appendChild(mk('✓ approve', '', 'allow', 'default'));
       actions.appendChild(mk('✗ keep planning', '', 'deny'));
     } else {
-      actions.appendChild(mk('Allow once', 'primary', 'allow'));
-      actions.appendChild(mk('Allow for this session', '', 'always'));
+      actions.appendChild(mk('Allow once', 'primary', 'allow', null,
+        'Approve just this call. Nothing else is remembered.'));
+      // Only offer the persistent choice when the engine gave a scoped rule for
+      // it; a bare toolName rule would approve every future use. #3
+      if (!evt.suppressAlwaysAllowRule && Array.isArray(evt.suggestions) && evt.suggestions.length) {
+        actions.appendChild(mk('Allow for this session', '', 'always', null,
+          'Adds: ' + describeSuggestions(evt.suggestions)));
+      }
       actions.appendChild(mk('Deny', 'danger', 'deny'));
     }
     card.appendChild(actions);
     chat.permSlot.appendChild(card);
     card.scrollIntoView({ block: 'nearest' });
+  }
+
+  /** Human summary of what "always allow" will actually grant. #28 */
+  function describeSuggestions(suggestions) {
+    const parts = [];
+    for (const s of suggestions.slice(0, 2)) {
+      for (const r of (s.rules || [])) {
+        parts.push(r.ruleContent ? r.toolName + ' ' + r.ruleContent : r.toolName);
+      }
+    }
+    return parts.join(' · ') || 'this tool';
+  }
+
+  /** Readable summary of a tool's input instead of a raw JSON dump. #28 */
+  function renderToolInput(toolName, input) {
+    const wrap = el('div', 'perm-tool-input');
+    if (toolName === 'Bash' && input.command) {
+      // The command is the whole point of the prompt: show it large, not as JSON.
+      wrap.appendChild(el('pre', 'perm-command mono', String(input.command).slice(0, 2000)));
+      if (input.description) wrap.appendChild(el('div', 'hint', input.description));
+    } else if (['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(toolName) && input.file_path) {
+      wrap.appendChild(el('div', 'perm-path mono', String(input.file_path)));
+    } else if ((toolName === 'Grep' || toolName === 'Glob') && input.pattern) {
+      wrap.appendChild(el('div', 'perm-path mono', String(input.pattern)));
+    } else if (toolName === 'WebFetch' && input.url) {
+      wrap.appendChild(el('div', 'perm-path mono', String(input.url)));
+    }
+    const det = el('details', 'tool-json');
+    det.appendChild(el('summary', '', 'raw input'));
+    det.appendChild(el('pre', 'tool-io mono', JSON.stringify(input, null, 2).slice(0, 1200)));
+    wrap.appendChild(det);
+    return wrap;
+  }
+
+  function updatePermBadge(chat) {
+    const n = chat.permCount || 0;
+    chat.permSlot.classList.toggle('has-many', n > 1);
+    if (n > 1) {
+      chat.permSlot.title = n + ' permission requests pending — each needs its own answer';
+    } else {
+      chat.permSlot.removeAttribute('title');
+    }
   }
 
   // AskUserQuestion arrives as a permission request, but it is a question, not
@@ -2156,17 +2249,21 @@ const Chat = (() => {
     const send = el('button', 'btn primary', 'Send answers');
     const skip = el('button', 'btn danger', 'Skip');
     const sync = () => { send.disabled = qs.some(q => answers[q.question] === undefined); };
+    const finish = () => {
+      endPermCountdown(card);
+      card.remove();
+      chat.permCount = Math.max(0, (chat.permCount || 1) - 1);
+      updatePermBadge(chat);
+    };
     card.dataset.rid = requestId;
     startPermCountdown(chat, card, head, evt);
     send.addEventListener('click', async () => {
-      card.remove();
-      endPermCountdown(chat);
+      finish();
       await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision: 'allow', answers });
       setBusy(chat, true);
     });
     skip.addEventListener('click', async () => {
-      card.remove();
-      endPermCountdown(chat);
+      finish();
       await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision: 'deny' });
       setBusy(chat, true);
     });
@@ -2248,6 +2345,19 @@ const Chat = (() => {
   }
 
   /* ---------------- global event wiring ---------------- */
+
+  // Anchor interception: a markdown link opens externally instead of replacing
+  // the app with a web page. #6 (main.js also blocks navigation; this is the
+  // renderer half so the click feels immediate.)
+  document.addEventListener('click', (e) => {
+    const a = e.target && e.target.closest ? e.target.closest('a[href]') : null;
+    if (!a) return;
+    const href = a.getAttribute('href') || '';
+    if (!/^https?:\/\//i.test(href)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    ccx.invoke('shell:openExternal', { url: href });
+  });
 
   if (window.ccx && window.ccx.onChatEvent) {
     window.ccx.onChatEvent((evt) => {
