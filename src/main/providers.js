@@ -157,6 +157,10 @@ function publicInstance(p) {
     envExtras: p.envExtras || {},
     protocol: p.protocol || 'anthropic',
     models: Array.isArray(p.models) ? p.models : [],
+    // Lean tool allowlist (small local models) and per-provider translate
+    // override; both are needed by the renderer and are not secrets. #41 #1
+    leanTools: Array.isArray(p.leanTools) ? p.leanTools : null,
+    alwaysTranslate: p.alwaysTranslate !== false,
     hasAuthToken: !!p.authToken, hasApiKey: !!p.apiKey,
     authTokenHint: mask(p.authToken), apiKeyHint: mask(p.apiKey),
   };

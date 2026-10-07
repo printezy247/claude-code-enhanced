@@ -1,6 +1,6 @@
 // Claude Code Enhanced — main process.
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -37,7 +37,29 @@ const sessions = new SessionManager();
 // The manager needs the proxy token so proxied chats authenticate.
 const chats = new ChatManager({ proxyToken });
 let win = null;
+let tray = null;
 let claudeInfo = { found: false, path: '', version: '' };
+
+/** Build the tray icon + menu (close-to-tray). #46 */
+function createTray() {
+  if (tray && !tray.isDestroyed()) return tray;
+  const iconPath = path.join(__dirname, '..', '..', 'build', 'icon.png');
+  try {
+    tray = new Tray(iconPath);
+    tray.setToolTip('Claude Code Enhanced');
+    const menu = Menu.buildFromTemplate([
+      { label: 'Show', click: () => { if (win && !win.isDestroyed()) win.show(); } },
+      { type: 'separator' },
+      { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
+    ]);
+    tray.setContextMenu(menu);
+    tray.on('click', () => { if (win && !win.isDestroyed()) win.show(); });
+  } catch (err) {
+    console.error('[cce] tray unavailable:', String(err.message || err));
+    tray = null;
+  }
+  return tray;
+}
 
 // ---------- claude CLI detection -------------------------------------------
 function detectClaude() {
@@ -61,6 +83,49 @@ function claudePath() {
   const p = (store.settings.claudePath || '').trim();
   return p || (claudeInfo.found ? claudeInfo.path : 'claude');
 }
+
+// ---------- GUI PATH hole (#13) ----------------------------------------------
+// A GUI-launched app never sources .bashrc, so the agent's Bash tool could not
+// see bun, uv, nvm or anything else installed there — while tools.js happily
+// reported those tools as present. Resolve the login-shell environment once and
+// merge it into every spawned session.
+let loginEnvCache = null;
+function loginEnv() {
+  if (loginEnvCache) return loginEnvCache;
+  const shell = process.env.SHELL || '/bin/bash';
+  try {
+    const out = execFileSync(shell, ['-ilc', 'env'], {
+      timeout: 8000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const env = {};
+    for (const line of String(out).split('\n')) {
+      const i = line.indexOf('=');
+      if (i > 0) env[line.slice(0, i)] = line.slice(i + 1);
+    }
+    loginEnvCache = env;
+  } catch { loginEnvCache = {}; }
+  return loginEnvCache;
+}
+/** PATH first, then anything the login shell added that we lack. */
+function envWithLoginPath(base = {}) {
+  const le = loginEnv();
+  if (!le.PATH || le.PATH === (base.PATH || process.env.PATH)) return base;
+  return { ...le, ...base, PATH: le.PATH };
+}
+
+// Lean tool sets for small local models. Every tool schema in the base prompt
+// costs context, and the engine's own prompt plus skills is already ~68K, so
+// cutting the tool list is the only real lever for a 3-4B model. #41
+const LEAN_PRESETS = {
+  readOnly: { label: 'Read-only (no writes)', tools: ['Read', 'Grep', 'Glob', 'NotebookRead', 'WebFetch', 'TodoWrite'] },
+  lean: { label: 'Lean coding', tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'TodoWrite'] },
+  minimal: { label: 'Minimal (read + bash)', tools: ['Read', 'Grep', 'Bash'] },
+};
+
+const MIME_BY_EXT = {
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif', '.webp': 'image/webp',
+};
 
 // ---------- proxy routing -----------------------------------------------------
 // Ollama and other native-Anthropic providers used to bypass the translator, so
@@ -122,6 +187,17 @@ function createWindow() {
   win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
     .catch((err) => console.error('[cce] page load failed:', String(err)));
   win.on('closed', () => { win = null; });
+  // Close-to-tray: the engine processes keep running, so closing the window
+  // should not kill a 40-minute turn. Opt-in in Settings. #46
+  win.on('close', (e) => {
+    if (!store.settings.closeToTray || app.isQuitting) return;
+    e.preventDefault();
+    win.hide();
+    if (tray && !tray.isDestroyed()) tray.displayBalloon({
+      title: 'Claude Code Enhanced',
+      content: 'Still running in the tray — click the tray icon to reopen.',
+    });
+  });
 
   if (process.env.CCE_SMOKE) {
     win.webContents.on('did-fail-load', (_e, code, desc) =>
@@ -304,15 +380,65 @@ function registerIpc() {
   // ----- providers -----
   handle('providers:all', async () => ({
     presets: providers.PRESETS,
+    leanPresets: Object.entries(LEAN_PRESETS).map(([id, p]) => ({ id, label: p.label, tools: p.tools })),
     instances: store.providers.map(providers.publicInstance),
     defaultUid: store.settings.defaultProviderUid,
   }));
+
+  // Provider failover chain: retry a failed turn across the next provider in
+  // the list. The engine reads ANTHROPIC_BASE_URL at spawn time, so failover
+  // works between turns (a chat restart), not mid-turn. #42
+  handle('provider:failover', async ({ id }) => {
+    const chat = chats.chats.get(id);
+    if (!chat) throw new Error('chat not found');
+    const order = Array.isArray(store.settings.failoverChain) ? store.settings.failoverChain : [];
+    if (!order.length) return { ok: false, error: 'no failover chain configured (Settings → Providers)' };
+    const current = chat.providerInstance ? chat.providerInstance.uid : null;
+    const idx = order.findIndex(u => u === current);
+    const nextUid = order[(idx + 1) % order.length];
+    const next = store.providers.find(p => p.uid === nextUid);
+    if (!next) return { ok: false, error: 'failover provider ' + nextUid + ' no longer exists' };
+    // The live engine cannot be re-pointed; recreate the chat on the next
+    // provider and carry the model + mode over.
+    const resume = chat.sessionId || null;
+    chats.close(id);
+    await new Promise(r => setTimeout(r, 50));
+    const created = await chats.create({
+      cwd: chat.cwd,
+      providerInstance: next,
+      settings: { ...store.settings, ...(next.leanTools ? { leanTools: next.leanTools } : {}) },
+      model: next.model || chat.model,
+      permissionMode: chat.permissionMode,
+      resume,
+      claudePath: (store.settings.claudePath || '').trim() || undefined,
+      anthropicBaseUrl: usesProxy(next) ? proxyBaseUrl(next) : undefined,
+    });
+    return { ok: true, from: current, to: next.uid, newId: created.id, provider: providers.publicInstance(next) };
+  });
 
   handle('providers:save', async ({ instance }) => {
     if (!instance || !instance.name) throw new Error('provider name required');
     const sanitizeModelField = (m) => String(m || '').split(',')[0].trim();
     instance.model = sanitizeModelField(instance.model);
     instance.smallFastModel = sanitizeModelField(instance.smallFastModel);
+    // Lean tool allowlist per provider (#41). The renderer sends a preset id; the
+    // raw tool array is also accepted but validated against the known names so
+    // a typo cannot silently disable a tool.
+    if ('leanToolsPreset' in instance || instance.leanTools != null) {
+      const id = instance.leanToolsPreset;
+      delete instance.leanToolsPreset;
+      if (id === '__keep') {
+        // Editing an existing provider without touching the field.
+      } else if (id && LEAN_PRESETS[id]) {
+        instance.leanTools = LEAN_PRESETS[id].tools.slice();
+      } else if (Array.isArray(instance.leanTools)) {
+        const known = new Set([].concat(...Object.values(LEAN_PRESETS).map(p => p.tools)));
+        instance.leanTools = instance.leanTools.map(String).filter(t => known.has(t));
+        if (!instance.leanTools.length) instance.leanTools = null;
+      } else {
+        instance.leanTools = null;
+      }
+    }
     const list = store.providers;
     const existing = list.find(p => p.uid === instance.uid);
     if (existing) {
@@ -480,7 +606,7 @@ function registerIpc() {
     const provider = store.providers.find(p => p.uid === providerUid)
       || store.providers.find(p => p.uid === store.settings.defaultProviderUid)
       || null;
-    const env = { ...process.env, ...providers.envFor(provider, store.settings) };
+    const env = envWithLoginPath({ ...process.env, ...providers.envFor(provider, store.settings) });
     // OpenAI-protocol providers only work through the built-in translator; the
     // terminal CLI gets the same ANTHROPIC_BASE_URL override as SDK chats.
     if (usesProxy(provider)) {
@@ -518,19 +644,35 @@ function registerIpc() {
     // Desktop notification for permission prompts — the card is easy to miss
     // behind a terminal window, and an unanswered one silently times out.
     if (evt && evt.kind === 'permission') {
-      try {
-        const n = new Notification({
-          title: 'Claude needs permission: ' + (evt.toolName || 'tool'),
-          body: 'Open Claude Code Enhanced to answer (auto-denies in 6 minutes).',
-        });
-        n.show();
-      } catch { /* notifications unavailable */ }
+      notify('Claude needs permission: ' + (evt.toolName || 'tool'),
+        'Open Claude Code Enhanced to answer (auto-denies in 6 minutes).');
     }
+    // Finished turns, but only when the window is in the background: a
+    // notification for work the user is already watching is noise. #36
+    if (evt && evt.kind === 'status' && evt.busy === false && store.settings.notifyOnDone !== false) {
+      const focused = win && !win.isDestroyed() && win.isFocused();
+      if (!focused && !finished.has(id)) {
+        finished.add(id);
+        notify('Claude finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.');
+      }
+    }
+    if (evt && evt.kind === 'status' && evt.busy === true) finished.delete(id);
     if (win && !win.isDestroyed()) win.webContents.send('chat:event', { id, ...evt });
   });
+  // Chats already busy when the window loses focus must not notify on finish.
+  const finished = new Set();
+
+  function notify(title, body) {
+    if (process.env.CCE_QUIET_NOTIFY) return;
+    try {
+      const n = new Notification({ title, body });
+      n.on('click', () => { if (win && !win.isDestroyed()) win.show(); });
+      n.show();
+    } catch { /* notifications unavailable */ }
+  }
 
   // Local-model pre-warm helpers live in ./localmodels (tested by scripts/check.js).
-  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork }) => {
+  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt }) => {
     const provider = store.providers.find(p => p.uid === providerUid)
       || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
     const useProxy = usesProxy(provider);
@@ -547,8 +689,15 @@ function registerIpc() {
       if (warm.corrected) model = warm.corrected;   // typo/alias fixed against the server's real tags
     }
     const created = await chats.create({
-      cwd, providerInstance: provider, settings: store.settings,
-      model, permissionMode, yolo, resume, fork,
+      cwd, providerInstance: provider,
+      // A provider's own lean tool list overrides the global setting. #41
+      settings: {
+        ...store.settings,
+        ...(provider && Array.isArray(provider.leanTools) && provider.leanTools.length
+          ? { leanTools: provider.leanTools }
+          : {}),
+      },
+      model, permissionMode, yolo, resume, fork, resumeAt,
       anthropicBaseUrl: useProxy ? proxyBaseUrl(provider) : undefined,
       // Only override the engine when the user set an explicit path in Settings;
       // auto-wiring the system CLI stalls (SDK expects its matching engine version).
@@ -578,14 +727,43 @@ function registerIpc() {
     return { ...(r && typeof r === 'object' ? r : null), model };
   });
   handle('chat:set-mode', async ({ id, mode }) => chats.setMode(id, mode));
-  handle('chat:permission-answer', async ({ id, requestId, decision, answers }) => chats.answer(id, requestId, decision, answers));
+  // Per-chat reasoning effort and thinking budget. The settings existed in
+  // chats.create but had no runtime control and no UI at all. #38
+  handle('chat:effort', async ({ id, effort, thinking }) => {
+    const c = chats.chats.get(id);
+    if (!c) throw new Error('chat not found');
+    const out = {};
+    if (effort !== undefined) {
+      const e = String(effort || '').trim();
+      c.effort = e;
+      const r = await c.q.applyFlagSettings({ effort: e || null });
+      out.effort = e;
+      out.applied = !!r;
+    }
+    if (thinking !== undefined && typeof c.q.setMaxThinkingTokens === 'function') {
+      const t = Number(thinking) || 0;
+      c.thinking = t;
+      await c.q.setMaxThinkingTokens(t > 0 ? t : null);
+      out.thinking = t;
+    }
+    return out;
+  });
+  // Model list straight from the engine (display names, context sizes) instead
+  // of the hard-coded opus/sonnet/haiku options. #39
+  handle('chat:supported-models', async ({ id }) => {
+    const c = chats.chats.get(id);
+    if (!c) return { models: [] };
+    try { return { models: await c.q.supportedModels() }; }
+    catch (err) { return { models: [], error: String(err.message || err) }; }
+  });
+  handle('chat:permission-answer', async ({ id, requestId, decision, answers, message }) => chats.answer(id, requestId, decision, answers, message));
   handle('chat:close', async ({ id }) => { chats.close(id); return {}; });
   handle('chat:skills', async ({ cwd }) => ({ skills: chats.scanSkills(cwd) }));
   handle('chat:commands', async ({ id }) => ({ commands: await chats.commands(id) }));
   // Desktop-parity controls
   handle('chat:context', async ({ id }) => ({ usage: await chats.context(id) }));
   handle('chat:checkpoints', async ({ id }) => ({ checkpoints: chats.checkpoints(id) }));
-  handle('chat:rewind', async ({ id, uuid }) => await chats.rewind(id, uuid));
+  handle('chat:rewind', async ({ id, uuid, dryRun }) => await chats.rewind(id, uuid, { dryRun: !!dryRun }));
   handle('chat:mcp', async ({ id, op, name, enabled }) => {
     if (op === 'status') return { servers: await chats.mcpStatus(id) };
     if (op === 'toggle') return { server: await chats.mcpToggle(id, name, enabled) };
@@ -630,14 +808,21 @@ function registerIpc() {
         }
       };
       const imported = [];
+      const skipped = [];
       for (const dir of found) {
         const name = path.basename(dir);
         if (!/^[\w.-]{1,60}$/.test(name)) continue;
-        copyDir(dir, path.join(destRoot, name));
+        const dest = path.join(destRoot, name);
+        // Never silently overwrite an installed skill. #23
+        if (fs.existsSync(dest)) { skipped.push(name); continue; }
+        copyDir(dir, dest);
         imported.push(name);
       }
+      if (!imported.length && skipped.length) {
+        throw new Error('already installed: ' + skipped.join(', ') + ' — remove them first to overwrite');
+      }
       if (!imported.length) throw new Error('skill folder names were not usable');
-      return { imported };
+      return { imported, skipped };
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -722,6 +907,41 @@ function registerIpc() {
     fs.mkdirSync(path.dirname(real), { recursive: true });
     fs.writeFileSync(real, text);
     return { saved: true, bytes: Buffer.byteLength(text) };
+  });
+
+  // Export a stored conversation to markdown. #45
+  handle('chat:export', async ({ cwd, sessionId }) => {
+    const { items } = chats.transcript(cwd, sessionId);
+    const out = [];
+    for (const it of items) {
+      if (it.t === 'user') out.push('## You\n\n' + it.text);
+      else if (it.t === 'assistant') out.push('## Claude\n\n' + it.text);
+      else if (it.t === 'thinking') out.push('<details><summary>thinking</summary>\n\n' + it.text + '\n\n</details>');
+      else if (it.t === 'tool') {
+        out.push('### ' + it.name + '\n\n```json\n' + JSON.stringify(it.input || {}, null, 2).slice(0, 2000) + '\n```');
+        if (it.output) out.push('```\n' + String(it.output).slice(0, 4000) + '\n```');
+      }
+    }
+    const md = ['# Conversation ' + sessionId, '_cwd: ' + (cwd || '?') + ' · exported ' + new Date().toISOString() + '_', ''].join('\n') + out.join('\n\n');
+    const res = await dialog.showSaveDialog(win, {
+      defaultPath: path.join(store.settings.defaultCwd || os.homedir(), 'conversation-' + String(sessionId).slice(0, 8) + '.md'),
+      filters: [{ name: 'Markdown', extensions: ['md'] }],
+    });
+    if (res.canceled || !res.filePath) return { saved: false };
+    fs.writeFileSync(res.filePath, md);
+    return { saved: true, path: res.filePath, bytes: Buffer.byteLength(md) };
+  });
+
+  // Read a file so an Edit diff can show real context lines instead of only the
+  // old_string snippet, and so the split view can show a file. #29
+  handle('file:read', async ({ path: p, maxBytes }) => {
+    if (!p) throw new Error('path required');
+    const home = process.env.HOME || os.homedir();
+    const real = path.resolve(String(p).replace(/^~(?=\/|$)/, home));
+    const limit = Math.min(Number(maxBytes) > 0 ? Number(maxBytes) : 200000, 2000000);
+    const st = fs.statSync(real);
+    if (st.size > limit) return { path: real, tooLarge: true, size: st.size, content: '' };
+    return { path: real, tooLarge: false, size: st.size, content: fs.readFileSync(real, 'utf8') };
   });
 
   // Everything the engine reads as memory/rules for a project — one panel edits them.
@@ -882,17 +1102,64 @@ function registerIpc() {
     return { canceled: res.canceled, path: res.canceled ? null : res.filePaths[0] };
   });
 
+  // Attach files to a chat turn. Images come back as base64 blocks, text files
+  // as inline content; the size caps match the renderer's own limits. #32
+  const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
+  const MAX_TEXT_BYTES = 400 * 1024;
+  const IMAGE_TYPES = /^image\/(png|jpeg|gif|webp)$/;
+  handle('dialog:pickFiles', async () => {
+    const res = await dialog.showOpenDialog(win, {
+      properties: ['openFile', 'multiSelections'],
+      defaultPath: store.settings.defaultCwd || os.homedir(),
+    });
+    if (res.canceled) return { files: [] };
+    const files = [];
+    for (const p of res.filePaths.slice(0, 10)) {
+      const name = path.basename(p);
+      try {
+        const st = fs.statSync(p);
+        const ext = path.extname(p).toLowerCase();
+        const mediaType = MIME_BY_EXT[ext] || '';
+        if (IMAGE_TYPES.test(mediaType)) {
+          if (st.size > MAX_IMAGE_BYTES) { files.push({ name, error: 'image larger than 4 MB' }); continue; }
+          files.push({ name, mediaType, base64: fs.readFileSync(p).toString('base64') });
+        } else if (/\.(md|txt|json|ya?ml|toml|ini|cfg|conf|log|sql|py|js|mjs|cjs|ts|tsx|jsx|sh|bash|zsh|c|h|cpp|hpp|rs|go|rb|java|kt|swift|html|css|scss|vue|svelte|xml|csv|env|gitignore|dockerfile|makefile)$/i.test(ext) || st.size <= MAX_TEXT_BYTES) {
+          if (st.size > MAX_TEXT_BYTES) { files.push({ name, error: 'file larger than 400 kB' }); continue; }
+          files.push({ name, text: fs.readFileSync(p, 'utf8').slice(0, 40000) });
+        } else {
+          files.push({ name, error: 'unsupported file type' });
+        }
+      } catch (err) { files.push({ name, error: String(err.message || err) }); }
+    }
+    return { files };
+  });
+
   handle('shell:openExternal', async ({ url }) => {
     if (/^https?:\/\//.test(url)) await shell.openExternal(url);
     return {};
   });
 
   // ----- settings -----
-  handle('settings:get', async () => ({ settings: store.settings, claude: claudeInfo }));
+  handle('settings:get', async () => ({
+    settings: { ...store.settings, loginEnv: { PATH: loginEnv().PATH || '' } },
+    claude: claudeInfo,
+    leanPresets: Object.entries(LEAN_PRESETS).map(([id, p]) => ({ id, label: p.label, tools: p.tools })),
+  }));
   handle('settings:set', async ({ settings }) => {
-    store.settings = { ...store.settings, ...settings };
+    const incoming = { ...settings };
+    // Resolve the lean-tools preset id into an actual tool list, so chats.js
+    // only ever sees names. #41
+    if ('leanToolsPreset' in incoming) {
+      const preset = LEAN_PRESETS[incoming.leanToolsPreset];
+      incoming.leanTools = preset ? preset.tools.slice() : null;
+      delete incoming.leanToolsPreset;
+    }
+    store.settings = { ...store.settings, ...incoming };
+    // loginEnv is derived, never persisted.
+    delete store.settings.loginEnv;
     store.save();
     claudeInfo = await detectClaude();
+    if (store.settings.closeToTray) createTray();
     return { settings: store.settings, claude: claudeInfo };
   });
 }
@@ -930,6 +1197,7 @@ if (!gotLock) {
     // module-level variable, so registering first is safe.
     registerIpc();
     createWindow();
+    if (store.settings.closeToTray) createTray();
     detectClaude().then((info) => {
       claudeInfo = info;
       if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
@@ -941,5 +1209,5 @@ if (!gotLock) {
   });
 }
 
-app.on('window-all-closed', () => app.quit());
-app.on('before-quit', () => { sessions.killAll(); chats.killAll(); });
+app.on('window-all-closed', () => { if (!store.settings.closeToTray) app.quit(); });
+app.on('before-quit', () => { app.isQuitting = true; sessions.killAll(); chats.killAll(); });

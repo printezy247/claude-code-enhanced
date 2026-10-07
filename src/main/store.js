@@ -13,6 +13,14 @@ const DEFAULT_SETTINGS = {
   disableTelemetry: true,    // DISABLE_TELEMETRY / DISABLE_ERROR_REPORTING / DISABLE_AUTOUPDATER
   defaultProviderUid: null,
   defaultCwd: os.homedir(),
+  theme: 'dark',            // 'dark' | 'light' (#47)
+  failoverChain: [],        // ordered provider uids to retry a turn on (#42)
+  closeToTray: false,       // keep chats alive when the window closes (#46)
+  notifyOnDone: true,       // desktop notification when a turn finishes (#36)
+  // Per-provider lean tool set: fewer tool schemas = a smaller base prompt,
+  // which is what lets 3-4B local models clear the ~70K context floor. #41
+  leanTools: null,          // null = off; array of tool names = allowlist
+  disallowedTools: [],
   sandbox: {                 // Bubblewrap-isolated bash (claude code sandbox)
     enabled: false,
     autoAllowBashIfSandboxed: true,

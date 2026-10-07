@@ -135,8 +135,15 @@ class ChatManager extends EventEmitter {
       extraArgs: { 'replay-user-messages': null },  // user messages carry uuid -> rewind anchors
       forwardSubagentText: true,
       includeHookEvents: true,
+      // Suggested next prompts and subagent progress summaries: both feed the
+      // UI chips the desktop app shows. #37
+      promptSuggestions: true,
+      agentProgressSummaries: true,
       askUserQuestionTimeout: 'never',
       env: { ...process.env, ...providers.envFor(providerInstance, settings) },
+      // PATH from the user's login shell, so the agent's Bash tool can see
+      // bun/uv/nvm and anything else in .bashrc. #13
+      ...(settings && settings.loginEnv ? { PATH: settings.loginEnv.PATH || process.env.PATH } : {}),
     };
     // Fail faster than the 300s default when the engine stream stalls mid-turn
     // (long Bash runs keep streaming, so a dead body means a dead turn).
@@ -472,6 +479,13 @@ class ChatManager extends EventEmitter {
     return { permissionMode: mode };
   }
 
+  /** Engine-reported model list, for the picker. #39 */
+  async supportedModels(id) {
+    const chat = this.chats.get(id);
+    if (!chat) return [];
+    try { return await chat.q.supportedModels(); } catch { return []; }
+  }
+
   async commands(id) {
     const chat = this.chats.get(id);
     if (!chat) throw new Error('chat not found');
@@ -657,14 +671,15 @@ class ChatManager extends EventEmitter {
     }));
   }
 
-  answer(id, requestId, decision, answers) {
+  answer(id, requestId, decision, answers, message) {
     const entry = this.pendingPerms.get(requestId);
     // Scope by chat: requestIds are unique, but a stale card in another tab
     // must never be able to answer this tab's request. #20
     if (!entry || entry.chatId !== id) return { ok: false, error: 'request no longer pending' };
     this._dropPerm(requestId);
     if (decision === 'deny') {
-      entry.resolve({ behavior: 'deny', message: 'User denied this tool use.' });
+      // A deny message is how plan-mode feedback reaches the model. #40
+      entry.resolve({ behavior: 'deny', message: String(message || 'User denied this tool use.') });
     } else if (answers && typeof answers === 'object' && Object.keys(answers).length) {
       // AskUserQuestion: picked labels ride on the permission result as the
       // tool's answers (engine reads updatedInput.answers, keyed by question).

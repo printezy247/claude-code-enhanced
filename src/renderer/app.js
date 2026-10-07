@@ -30,6 +30,8 @@ const state = {
   info: null,
   settings: null,
   providers: { presets: [], instances: [], defaultUid: null },
+  leanPresets: [],
+  theme: 'dark',
   connectorPresets: [],
   sessions: new Map(),   // id -> { term, fit, tabEl, pane, alive, label, cwd, provider }
   activeId: null,
@@ -89,6 +91,156 @@ window.__activateNext = (closedId) => {
   }
 };
 window.Chat = Chat;
+
+/* ================= theme (#47) ================= */
+
+function applyTheme(theme) {
+  const t = theme === 'light' ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', t);
+  state.theme = t;
+}
+window.applyTheme = applyTheme;
+
+/* ================= conversation list (#34) ================= */
+
+let convoSessions = [];
+
+function renderConversationList(filter) {
+  const root = document.querySelector('#convo-list');
+  if (!root) return;
+  root.innerHTML = '';
+  const q = String(filter || '').trim().toLowerCase();
+  const items = convoSessions.filter((s) => !q
+    || String(s.preview || '').toLowerCase().includes(q)
+    || String(s.cwd || s.folder || '').toLowerCase().includes(q));
+  if (!items.length) {
+    root.appendChild(el('div', 'hint', q ? 'Nothing matches.' : 'No conversations yet.'));
+    return;
+  }
+  const now = Date.now();
+  const buckets = [
+    ['Today', 24 * 3600e3], ['Yesterday', 48 * 3600e3],
+    ['Earlier this week', 7 * 86400e3], ['Older', Infinity],
+  ];
+  for (let bi = 0; bi < buckets.length; bi++) {
+    const [label, within] = buckets[bi];
+    const prev = bi === 0 ? 0 : buckets[bi - 1][1];
+    const rows = items.filter((s) => now - s.mtime <= within && now - s.mtime > prev);
+    if (!rows.length) continue;
+    root.appendChild(el('div', 'convo-sec', label));
+    for (const s of rows) {
+      const row = el('div', 'convo-row');
+      const main = el('div', 'convo-main');
+      main.appendChild(el('div', 'convo-preview', s.preview || '(empty session)'));
+      main.appendChild(el('div', 'convo-meta', basenameOf(s.cwd || s.folder) + ' · ' + fmtAgeOf(s.mtime)));
+      row.appendChild(main);
+      const close = el('button', 'btn small danger convo-close', '✕');
+      close.title = 'Delete this conversation from disk';
+      let armed = false;
+      close.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!armed) { armed = true; close.textContent = 'sure?'; setTimeout(() => { armed = false; close.textContent = '✕'; }, 2500); return; }
+        const r = await ccx.invoke('chat:delete', { cwd: s.cwd || s.folder, sessionId: s.sessionId });
+        if (r.ok) { convoSessions = convoSessions.filter((x) => x.sessionId !== s.sessionId); renderConversationList(q); }
+        else toast(r.error, 'err');
+      });
+      row.appendChild(close);
+      row.addEventListener('click', () => {
+        Chat.createSession({ cwd: s.cwd || s.folder, resume: s.sessionId });
+        switchView('terminal');
+      });
+      root.appendChild(row);
+    }
+  }
+}
+
+async function loadConversationList(filter) {
+  const r = await ccx.invoke('chats:index');
+  if (r.ok) convoSessions = r.sessions || [];
+  renderConversationList(filter);
+}
+
+function toggleConversations(force) {
+  const el2 = document.querySelector('#convos');
+  if (!el2) return;
+  const open = force !== undefined ? force : !el2.classList.contains('open');
+  el2.classList.toggle('open', open);
+  if (open) loadConversationList(document.querySelector('.convo-search')?.value);
+}
+
+const basenameOf = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() || String(p || '');
+function fmtAgeOf(ms) {
+  const m = Math.max(1, Math.round((Date.now() - ms) / 60000));
+  if (m < 60) return m + 'm';
+  const h = Math.round(m / 60);
+  if (h < 24) return h + 'h';
+  return Math.round(h / 24) + 'd';
+}
+
+/* ================= split view (#44) ================= */
+
+let splitTerm = null;
+
+function toggleSplit(force) {
+  const main = document.querySelector('#main');
+  const pane = document.querySelector('#splitpane');
+  if (!main || !pane) return;
+  const open = force !== undefined ? force : !main.classList.contains('split');
+  main.classList.toggle('split', open);
+  pane.style.width = open ? '38%' : '0';
+  if (open) renderSplit();
+}
+
+function renderSplit() {
+  const kind = document.querySelector('#split-kind')?.value || 'terminal';
+  const body = document.querySelector('#split-body');
+  if (!body) return;
+  if (kind === 'terminal') {
+    const active = state.sessions.get(state.activeId);
+    const cwd = active ? active.cwd : (state.settings && state.settings.defaultCwd) || '';
+    if (!splitTerm) {
+      splitTerm = new TermCtor({
+        fontSize: 12, scrollback: 2000, cursorBlink: true, theme: TERM_THEME,
+        fontFamily: "'JetBrains Mono','Fira Code','DejaVu Sans Mono',monospace",
+      });
+      const fit = new FitCtor();
+      splitTerm.loadAddon(fit);
+      body.innerHTML = '';
+      body.appendChild(splitTerm);
+      splitTerm.open(body);
+      splitTerm._fit = fit;
+    }
+    try { splitTerm._fit.fit(); } catch { /* hidden */ }
+    return;
+  }
+  body.innerHTML = '';
+  const active = state.sessions.get(state.activeId);
+  const cwd = active ? active.cwd : (state.settings && state.settings.defaultCwd) || '';
+  if (kind === 'changes') {
+    ccx.invoke('git:info', { cwd }).then((r) => {
+      const info = r.ok ? r : {};
+      const line = el('div', 'hint',
+        (info.repo ? '⎇ ' + info.repo : 'not a git repository')
+        + (info.branch ? ' · ' + info.branch : '')
+        + (info.dirty ? ' · ' + info.dirty + ' uncommitted file(s)' : ' · clean'));
+      body.appendChild(line);
+      body.appendChild(el('div', 'hint', 'Open a chat and ask for a diff, or use ▶ run here.'));
+    });
+    return;
+  }
+  const chat = Chat.chats.get(state.activeId);
+  const card = chat && chat.msgs ? chat.msgs.querySelector('.monaco-diff') : null;
+  if (card) {
+    const clone = card.cloneNode(true);
+    body.appendChild(clone);
+    if (card.__init) card.__init();
+    body.appendChild(el('div', 'hint', 'Diff of the most recent file edit in this chat.'));
+  } else {
+    body.appendChild(el('div', 'hint', 'No edit diff yet in this chat.'));
+  }
+}
+window.toggleSplit = toggleSplit;
+window.renderSplit = renderSplit;
 
 function fitSize(s) {
   try { s.fit.fit(); } catch { /* hidden */ }
@@ -386,6 +538,15 @@ function renderProviders() {
     if (p.model) card.appendChild(el('div', 'meta', 'model  ' + p.model + (p.smallFastModel ? '  /  ' + p.smallFastModel : '')));
     if (p.authTokenHint) card.appendChild(el('div', 'meta', 'token  ' + p.authTokenHint));
     if (p.apiKeyHint) card.appendChild(el('div', 'meta', 'key  ' + p.apiKeyHint));
+    if (p.leanTools) card.appendChild(el('div', 'meta', 'lean tools  ' + p.leanTools.join(', ')));
+
+    // Failover chain position, so the order is visible where it is configured.
+    const chain = (state.settings && state.settings.failoverChain) || [];
+    if (chain.includes(p.uid)) {
+      const pos = el('span', 'chip default', 'failover #' + (chain.indexOf(p.uid) + 1));
+      pos.title = 'A failed turn retries on the next provider in the chain (Settings → Small local models)';
+      card.appendChild(pos);
+    }
 
     const row = el('div', 'row');
     if (p.baseUrl) {
@@ -402,6 +563,17 @@ function renderProviders() {
     });
     const edit = el('button', 'btn small', 'Edit');
     edit.addEventListener('click', () => openProviderEditor(p));
+    const foBtn = el('button', 'btn small ghost', '⤺ failover');
+    foBtn.title = 'Retry this turn on the next provider in your chain';
+    foBtn.addEventListener('click', async () => {
+      const active = [...tabRegistry.keys()].find((k) => (tabRegistry.get(k) || {}).kind === 'chat' && state.activeId === k)
+        || state.activeId;
+      if (!active) return toast('No chat tab open', 'err');
+      const r = await ccx.invoke('provider:failover', { id: active });
+      if (!r.ok) return toast(r.error || 'failover failed', 'err');
+      toast('Switched to ' + (r.provider ? r.provider.name : r.to) + ' — conversation resumed', 'ok');
+      await Chat.activateSession(r.newId);
+    });
     const del = el('button', 'btn small danger', 'Delete');
     del.addEventListener('click', async () => {
       if (state.providers.instances.length <= 1) return toast('Keep at least one provider', 'err');
@@ -409,7 +581,7 @@ function renderProviders() {
       if (r.ok) { await refreshProviders(); toast('Provider removed', 'ok'); }
       else toast(r.error, 'err');
     });
-    row.appendChild(star); row.appendChild(edit); row.appendChild(el('span', 'spacer')); row.appendChild(del);
+    row.appendChild(star); row.appendChild(edit); row.appendChild(foBtn); row.appendChild(el('span', 'spacer')); row.appendChild(del);
     card.appendChild(row);
     grid.appendChild(card);
   });
@@ -602,6 +774,21 @@ function renderProviders() {
   let smallFast = instance ? instance.smallFastModel : (preset.smallFastModel || '');
 
   let curatedSel = new Set((instance && instance.models) || []);
+  let leanSel = null;
+  if (state.leanPresets && state.leanPresets.length) {
+    const lf = el('label', 'fld');
+    lf.appendChild(el('span', '', 'Lean tools — cut the tool list for small local models (smaller base prompt)'));
+    leanSel = el('select');
+    const off = el('option', '', 'full tool set (default)'); off.value = ''; leanSel.appendChild(off);
+    for (const pr of state.leanPresets) {
+      const o = el('option', '', pr.label + ' — ' + pr.tools.join(', ')); o.value = pr.id; leanSel.appendChild(o);
+    }
+    leanSel.value = (instance && instance.leanTools && instance.leanTools[0])
+      ? (state.leanPresets.find(p => p.tools[0] === instance.leanTools[0]) || {}).id || ''
+      : '';
+    lf.appendChild(leanSel);
+    grid.appendChild(lf);
+  }
   const baseUrlField = mkField('Base URL (empty = official Anthropic API)', 'f-base', baseUrl, 'text');
   baseUrlInputEl = baseUrlField.querySelector('input');
   grid.appendChild(baseUrlField);
@@ -685,6 +872,8 @@ function renderProviders() {
       presetId: pSel.value,
       protocol: currentProtocol,
       models: [...curatedSel],
+      // Per-provider lean tool allowlist, for small local models. #41
+      leanToolsPreset: leanSel ? leanSel.value : (instance && instance.leanTools ? '__keep' : ''),
       name: nameInput.value.trim() || 'Provider',
       baseUrl: baseUrlField.querySelector('input').value.trim(),
       model: modelField.querySelector('input').value.trim(),
@@ -716,6 +905,7 @@ async function refreshProviders() {
   const r = await ccx.invoke('providers:all');
   if (r.ok) {
     state.providers = { presets: r.presets, instances: r.instances, defaultUid: r.defaultUid };
+    if (r.leanPresets) state.leanPresets = r.leanPresets;
     if (state.view === 'providers') renderProviders();
   }
 }
@@ -966,6 +1156,62 @@ function renderSettings() {
   c8.appendChild(lctxRow);
   body.appendChild(c8);
 
+  // appearance (#47) + window behaviour (#46) + notifications (#36)
+  const c9 = el('div', 'settings-card');
+  c9.appendChild(el('h4', '', 'Appearance & window'));
+  const themeRow = el('div', 'inline');
+  themeRow.appendChild(el('span', 'hint', 'Theme'));
+  const themeSel = el('select'); themeSel.style.width = '160px';
+  for (const [v, n] of [['dark', 'dark'], ['light', 'light']]) {
+    const o = el('option', '', n); o.value = v; themeSel.appendChild(o);
+  }
+  themeSel.value = s.theme === 'light' ? 'light' : 'dark';
+  applyTheme(themeSel.value);
+  themeRow.appendChild(themeSel);
+  c9.appendChild(themeRow);
+  const trayCheck = el('input'); trayCheck.type = 'checkbox'; trayCheck.checked = !!s.closeToTray;
+  const trayLabel = el('label', 'check');
+  trayLabel.appendChild(trayCheck);
+  trayLabel.appendChild(el('span', '', 'Close to tray — keep chats running when the window is closed'));
+  c9.appendChild(trayLabel);
+  const notifyCheck = el('input'); notifyCheck.type = 'checkbox'; notifyCheck.checked = s.notifyOnDone !== false;
+  const notifyLabel = el('label', 'check');
+  notifyLabel.appendChild(notifyCheck);
+  notifyLabel.appendChild(el('span', '', 'Notify when a turn finishes while the window is in the background'));
+  c9.appendChild(notifyLabel);
+  body.appendChild(c9);
+
+  // lean tools (#41) + provider failover chain (#42)
+  const c10 = el('div', 'settings-card');
+  c10.appendChild(el('h4', '', 'Small local models'));
+  c10.appendChild(el('div', 'hint',
+    'The claude engine ships a large base prompt (skills + plugins ≈ 68K tokens). Cutting the tool list is the only real way to make a 3-4B model fit — every tool schema is prompt. Per-provider overrides live in Providers → ⚙ on the provider card.'));
+  const leanSel = el('select'); leanSel.style.width = '260px';
+  const oOff = el('option', '', 'full tool set (default)'); oOff.value = ''; leanSel.appendChild(oOff);
+  for (const p of (state.leanPresets || [])) {
+    const o = el('option', '', p.label + ' — ' + p.tools.length + ' tools'); o.value = p.id; leanSel.appendChild(o);
+  }
+  leanSel.value = s.leanToolsPreset || '';
+  c10.appendChild(leanSel);
+  const preset = (state.leanPresets || []).find(p => p.id === leanSel.value);
+  if (preset) c10.appendChild(el('div', 'hint', 'Allowed: ' + preset.tools.join(', ')));
+
+  const fo = el('label', 'fld');
+  fo.appendChild(el('span', '', 'Provider failover chain (retry a failed turn on the next provider)'));
+  const chain = Array.isArray(s.failoverChain) ? s.failoverChain : [];
+  const chainWrap = el('div', 'chain-wrap');
+  state.providers.instances.forEach((p) => {
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = chain.includes(p.uid); cb.dataset.uid = p.uid;
+    const l = el('label', 'check');
+    l.appendChild(cb);
+    l.appendChild(el('span', '', p.name));
+    chainWrap.appendChild(l);
+  });
+  if (!state.providers.instances.length) chainWrap.appendChild(el('div', 'hint', 'no providers configured'));
+  fo.appendChild(chainWrap);
+  c10.appendChild(fo);
+  body.appendChild(c10);
+
   // save
   const saveBtn = el('button', 'btn primary', 'Save settings');
   saveBtn.style.alignSelf = 'flex-start';
@@ -982,6 +1228,14 @@ function renderSettings() {
       effort: efInput.value.trim(),
       context1m: m1c.checked,
       localNumCtx: Number(localCtxSel.value) || 131072,
+      theme: themeSel.value,
+      closeToTray: trayCheck.checked,
+      notifyOnDone: notifyCheck.checked,
+      // Store the preset id, resolved to a tool list in main so the renderer
+      // never has to send a tool array it could get wrong.
+      leanToolsPreset: leanSel.value,
+      failoverChain: [...chainWrap.querySelectorAll('input[type=checkbox]')]
+        .filter(cb => cb.checked).map(cb => cb.dataset.uid),
       sandbox: {
         enabled: sbEnabled.checked,
         autoAllowBashIfSandboxed: sbAuto.checked,
@@ -1036,6 +1290,34 @@ function wireChrome() {
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
   $('#btn-add-provider').addEventListener('click', () => openProviderEditor(null));
   $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);
+  $('#btn-toggle-convos').addEventListener('click', () => toggleConversations());
+  $('#btn-convo-refresh').addEventListener('click', () => loadConversationList(document.querySelector('.convo-search')?.value));
+  document.querySelector('.convo-search')?.addEventListener('input', (e) => renderConversationList(e.target.value));
+  $('#btn-split-close').addEventListener('click', () => toggleSplit(false));
+  $('#split-kind')?.addEventListener('change', renderSplit);
+
+  // Drag-resize the split pane.
+  (() => {
+    const splitter = $('#splitter');
+    if (!splitter) return;
+    splitter.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const pane = $('#splitpane');
+      const startX = e.clientX;
+      const startW = pane.getBoundingClientRect().width;
+      const move = (ev) => {
+        const w = Math.max(220, Math.min(window.innerWidth - 420, startW - (ev.clientX - startX)));
+        pane.style.width = w + 'px';
+        if (splitTerm && splitTerm._fit) { try { splitTerm._fit.fit(); } catch { /* hidden */ } }
+      };
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+  })();
   $('#btn-mcp-remove').addEventListener('click', async () => {
     const name = $('#mcp-remove-name').value;
     if (!name) return toast('Pick a server to remove', 'err');
@@ -1046,28 +1328,44 @@ function wireChrome() {
 
   // global shortcuts
   document.addEventListener('keydown', (e) => {
+    // The active tab decides what copy/paste and Tab mean: a chat composer must
+    // not have Ctrl+Shift+V hijacked by the PTY. #17
+    const meta = tabRegistry.get(state.activeId);
+    const inChat = !!(meta && meta.kind === 'chat');
     if (e.ctrlKey && e.shiftKey) {
       if (e.key === 'T') { e.preventDefault(); openNewSessionModal(); }
       else if (e.key === 'W') { e.preventDefault(); if (state.activeId) killSession(state.activeId); }
-      else if (e.key === 'C') {
+      else if (e.key === 'C' && !inChat) {
         const s = state.sessions.get(state.activeId);
         if (s && s.term.hasSelection()) {
           navigator.clipboard.writeText(s.term.getSelection());
           e.preventDefault();
         }
-      } else if (e.key === 'V') {
+      } else if (e.key === 'V' && !inChat) {
         e.preventDefault();
         navigator.clipboard.readText().then(t => {
           if (t && state.activeId) ccx.send('session:write', { id: state.activeId, data: t });
         });
-      } else if (e.key === 'Tab') {
-        e.preventDefault();
-        const ids = [...state.sessions.keys()];
-        if (ids.length > 1) {
-          const i = ids.indexOf(state.activeId);
-          activateSession(ids[(i + (e.shiftKey ? ids.length - 1 : 1)) % ids.length]);
-        }
       }
+      return;
+    }
+    // Ctrl+Tab cycles every tab (chat and terminal alike), as documented. #16
+    if (e.ctrlKey && e.key === 'Tab') {
+      e.preventDefault();
+      const ids = [...tabRegistry.keys()];
+      if (ids.length > 1) {
+        const i = ids.indexOf(state.activeId);
+        activateSession(ids[(i + (e.shiftKey ? ids.length - 1 : 1) + ids.length) % ids.length]);
+      }
+      return;
+    }
+    if (e.ctrlKey && String(e.key).toLowerCase() === 'b') {   // conversation list #34
+      e.preventDefault();
+      toggleConversations();
+    }
+    if (e.altKey && String(e.key).toLowerCase() === 'v') {   // split view #44
+      e.preventDefault();
+      toggleSplit();
     }
   });
 
@@ -1151,7 +1449,9 @@ function fmtTokShort(n) {
   }
   state.info = { appVersion: info.appVersion, electron: info.electron, claude: info.claude, home: info.home };
   state.providers = { presets: provAll.presets, instances: provAll.instances, defaultUid: provAll.defaultUid };
+  state.leanPresets = (provAll.leanPresets || (settingsRes.leanPresets || []));
   state.settings = settingsRes.settings;
+  applyTheme(state.settings.theme);   // #47
   state.connectorPresets = connPresets.presets;
   state.booting = false;
 

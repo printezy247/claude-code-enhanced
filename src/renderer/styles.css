@@ -649,3 +649,114 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .usage-bar i { display: block; height: 100%; background: var(--accent); }
 .usage-val { text-align: right; font-family: var(--mono); }
 .usage-meta { color: var(--muted); text-align: right; }
+
+/* ---------- permission queue (#2, #28) ---------- */
+.chat-perm-slot.has-many { border-top: 1px solid var(--warn); }
+.perm-desc { color: var(--text); font-size: 13px; margin: 4px 0 8px; }
+.perm-command {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; font-size: 13px; white-space: pre-wrap; word-break: break-word;
+  margin: 6px 0; color: var(--text); user-select: text; cursor: text;
+}
+.perm-path {
+  background: var(--bg3); border-radius: 6px; padding: 6px 10px; font-size: 12.5px;
+  color: var(--text); margin: 6px 0; word-break: break-all; user-select: text;
+}
+.perm-tool-input .tool-json summary { cursor: pointer; color: var(--muted); font-size: 12px; margin-top: 6px; }
+.perm-countdown { margin-left: auto; font-size: 11.5px; color: var(--warn); white-space: nowrap; }
+.perm-head { display: flex; align-items: center; gap: 8px; }
+
+/* ---------- tool cards (#27) ---------- */
+.tool-elapsed { margin-left: auto; font-size: 11px; color: var(--muted); font-family: var(--mono); }
+.tool-group {
+  border: 1px solid var(--border); border-left: 3px solid var(--muted);
+  border-radius: 8px; margin: 6px 0; background: var(--bg2); user-select: text;
+}
+.tool-group .group-head {
+  cursor: pointer; display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; font-size: 12.5px; color: var(--muted); user-select: none;
+}
+.tool-group .group-head:hover { color: var(--text); }
+.tool-group .group-count { font-family: var(--mono); }
+.tool-group .group-items { padding: 2px 10px 8px 34px; display: flex; flex-direction: column; gap: 3px; }
+.tool-group .group-item { font-size: 12px; color: var(--muted); word-break: break-all; }
+
+/* ---------- todos (#5) ---------- */
+.chat-todos h4 span { color: var(--text); }
+.todo-item { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.todo-item.done .todo-text { color: var(--muted); text-decoration: line-through; }
+.todo-item.active .todo-text { color: var(--text); font-weight: 600; }
+.todo-mark { color: var(--muted); width: 12px; }
+.todo-item.active .todo-mark { color: var(--accent); }
+
+/* ---------- engine notices (#26) ---------- */
+.sys-note.warn { color: var(--warn); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.chat-suggestions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0 4px; }
+.sugg-chip {
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 999px;
+  padding: 5px 12px; font-size: 12px; color: var(--text); cursor: pointer; max-width: 340px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sugg-chip:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+/* ---------- header overflow menu (#33) ---------- */
+.chat-header .hdr-more { margin-left: auto; }
+.chat-menu {
+  position: absolute; z-index: 40; min-width: 220px; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 10px; padding: 6px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .45); display: flex; flex-direction: column; gap: 2px;
+}
+.chat-menu-item {
+  display: flex; gap: 8px; align-items: center; padding: 7px 9px; border-radius: 7px;
+  font-size: 13px; cursor: pointer; color: var(--text); background: none; border: none; text-align: left;
+}
+.chat-menu-item:hover { background: var(--accent-soft); }
+
+/* ---------- conversation list (#34) ---------- */
+#convos { width: 264px; min-width: 264px; background: var(--bg2); border-right: 1px solid var(--border);
+  display: none; flex-direction: column; }
+#convos.open { display: flex; }
+#convos .convo-head { padding: 10px 10px 6px; display: flex; gap: 6px; align-items: center; }
+#convos .convo-search { flex: 1; background: var(--bg3); border: 1px solid var(--border); border-radius: 7px;
+  padding: 6px 8px; color: var(--text); font-size: 12.5px; }
+#convos .convo-list { flex: 1; overflow: auto; padding: 4px 6px 10px; }
+#convos .convo-sec { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 10px 6px 4px; }
+#convos .convo-row { padding: 7px 8px; border-radius: 7px; cursor: pointer; display: flex; gap: 8px; align-items: center; }
+#convos .convo-row:hover { background: var(--bg3); }
+#convos .convo-main { min-width: 0; flex: 1; }
+#convos .convo-preview { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#convos .convo-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#convos .convo-close { opacity: 0; }
+#convos .convo-row:hover .convo-close { opacity: 1; }
+
+/* ---------- split view (#44) ---------- */
+#main.split { flex-direction: row; }
+#splitpane {
+  width: 0; min-width: 0; border-left: 1px solid var(--border); background: var(--bg2);
+  display: none; flex-direction: column; overflow: hidden;
+}
+#main.split #splitpane { display: flex; }
+#splitter { width: 5px; cursor: col-resize; background: transparent; flex: none; }
+#splitter:hover { background: var(--accent-soft); }
+.split-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
+.split-body { flex: 1; overflow: auto; padding: 10px; }
+
+/* ---------- theme (#47) ---------- */
+:root[data-theme="light"] {
+  --bg: #f7f7f9;
+  --bg2: #ffffff;
+  --bg3: #eeeef3;
+  --bg4: #e2e2ea;
+  --border: #d9d9e2;
+  --text: #1b1b22;
+  --muted: #61616f;
+  --accent: #b8542f;
+  --accent-soft: rgba(184, 84, 47, 0.12);
+  --ok: #2f7d46;
+  --warn: #9a6b1a;
+  --danger: #b23b43;
+}
+:root[data-theme="light"] body { background: var(--bg); color: var(--text); }
+:root[data-theme="light"] .perm-command,
+:root[data-theme="light"] .perm-path,
+:root[data-theme="light"] .tool-group { background: var(--bg3); }

@@ -88,26 +88,9 @@ const Chat = (() => {
         <span class="chat-provider" title="provider"></span>
         <span class="chat-header-sep"></span>
         <button class="chat-btn chat-mgr-btn hidden" title="Model manager: load / unload, context size, keep-alive">⚙ models</button>
-        <label class="chat-hlabel">model</label>
-        <select class="chat-model" title="Switch model (applies immediately, mid-conversation)"></select>
-        <label class="chat-hlabel">mode</label>
-        <select class="chat-mode" title="Permission mode">
-          <option value="default">normal</option>
-          <option value="acceptEdits">accept edits</option>
-          <option value="plan">plan</option>
-          <option value="auto">auto — classifier decides</option>
-          <option value="bypassPermissions">yolo</option>
-        </select>
-        <span class="chat-header-sep"></span>
-        <button class="chat-btn chat-skills-btn" title="Skills available in this session">⚡ skills</button>
-        <button class="chat-btn chat-mcp-btn" title="MCP servers in this session">⧉ mcp</button>
-        <button class="chat-btn chat-hist-btn" title="Past conversations for this folder (resume or fork)">🕘 history</button>
-        <button class="chat-btn chat-fork-btn" title="Fork this conversation — branch it without changing the original">⑂ fork</button>
-        <button class="chat-btn chat-rewind-btn" title="Rewind files to an earlier checkpoint — restores files, keeps the conversation">⏪ rewind</button>
-        <button class="chat-btn chat-run-btn" title="Run build / test scripts in a terminal tab">▶ run</button>
-        <button class="chat-btn chat-term-btn" title="Open a terminal tab in this folder (for /login, /mcp auth, git…)">⌨ terminal</button>
-        <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work">▶ continue</button>
         <button class="chat-btn chat-stop hidden" title="Interrupt (Esc)">■ stop</button>
+        <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work">▶ continue</button>
+        <button class="chat-btn hdr-more" title="More actions">⋯</button>
       </div>
       <div class="chat-ctxbar hidden" title="Context window usage"><i></i></div>
       <div class="chat-body">
@@ -131,10 +114,25 @@ const Chat = (() => {
           <button class="wf-chip" data-wf="testfix">🧪 test &amp; fix</button>
         </div>
         <div class="chat-imgs hidden"></div>
+        <div class="chat-queued hidden"></div>
         <div class="chat-slash hidden"></div>
         <div class="chat-input-row">
-          <textarea class="chat-input" rows="1" placeholder="Ask Claude to work on this project…  (@ mentions files · paste images · ↑ history)"></textarea>
+          <button class="chat-attach" title="Attach an image or a file">＋</button>
+          <textarea class="chat-input" rows="1" placeholder="Ask Claude to work on this project…  (@ mentions files · paste or drop images · ↑ history)"></textarea>
           <button class="chat-send" title="Send (Enter)">➤</button>
+        </div>
+        <div class="chat-footbar">
+          <select class="chat-model-foot" title="Model"></select>
+          <select class="chat-mode-foot" title="Permission mode">
+            <option value="default">normal</option>
+            <option value="acceptEdits">accept edits</option>
+            <option value="plan">plan</option>
+            <option value="auto">auto</option>
+            <option value="bypassPermissions">yolo</option>
+          </select>
+          <button class="chat-effort" title="Reasoning effort">effort: auto</button>
+          <span class="foot-spacer"></span>
+          <span class="foot-hint">⏎ send · ⇧⏎ newline · esc stop</span>
         </div>
         <div class="chat-statusline"><span class="sl-left">ready — the session starts with your first message</span><span class="sl-right"></span></div>
       </div>`;
@@ -149,21 +147,22 @@ const Chat = (() => {
       statusRight: pane.querySelector('.chat-statusline .sl-right'),
       dot: pane.querySelector('.chat-dot'), providerEl: pane.querySelector('.chat-provider'),
       projEl: pane.querySelector('.chat-project'),
-      modelSel: pane.querySelector('.chat-model'), modeSel: pane.querySelector('.chat-mode'),
+      modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
+      effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
+      queued: pane.querySelector('.chat-queued'),
       permSlot: pane.querySelector('.chat-perm-slot'), slash: pane.querySelector('.chat-slash'),
       todosEl: pane.querySelector('.chat-todos'), todosList: pane.querySelector('.chat-todos ol'),
-      skillsBtn: pane.querySelector('.chat-skills-btn'), mcpBtn: pane.querySelector('.chat-mcp-btn'),
-      termBtn: pane.querySelector('.chat-term-btn'),
-      histBtn: pane.querySelector('.chat-hist-btn'), forkBtn: pane.querySelector('.chat-fork-btn'),
-      rewindBtn: pane.querySelector('.chat-rewind-btn'), ctxBar: pane.querySelector('.chat-ctxbar'),
+      moreBtn: pane.querySelector('.hdr-more'),
+      ctxBar: pane.querySelector('.chat-ctxbar'),
       ctxFill: pane.querySelector('.chat-ctxbar i'),
-      runBtn: pane.querySelector('.chat-run-btn'), imgs: pane.querySelector('.chat-imgs'),
-      mgrBtn: pane.querySelector('.chat-mgr-btn'), contBtn: pane.querySelector('.chat-cont-btn'),
+      imgs: pane.querySelector('.chat-imgs'),
+      contBtn: pane.querySelector('.chat-cont-btn'),
       init: null, lives: null, tools: new Map(), busy: false, alive: true, dead: false,
       skillsDetail: [], slashIdx: -1, slashItems: [], sandbox: !!res.sandbox,
       pendingImages: [], promptHistory: [], histIdx: -1, filesCache: null,
-      titled: false, atMode: false, compacting: false,
-      permTimer: null, ctxTimer: null, spent: 0, hooks: [], bgTasks: new Map(),
+      titled: false, atMode: false, compacting: false, unread: false,
+      permCount: 0, ctxTimer: null, spent: 0, hooks: [], bgTasks: new Map(),
+      pendingMsgs: [], effort: '', suggested: false,
     };
     chats.set(id, chat);
     if (window.__CCE_SMOKE) console.log('[chat-created]', id, 'map size', chats.size);
@@ -184,11 +183,8 @@ const Chat = (() => {
     // project folder + linked GitHub repo, like the desktop header
     renderProjectInfo(chat);
     if (chat.provider && chat.provider.baseUrl) {
-      chat.mgrBtn.classList.remove('hidden');
-      chat.mgrBtn.addEventListener('click', () => {
-        if (window.openOllamaManager) window.openOllamaManager(chat.provider);
-        else toast('Model manager unavailable in this view — open Providers → ⚙ models', 'err');
-      });
+      const mgr = pane.querySelector('.chat-mgr-btn');
+      if (mgr) mgr.classList.remove('hidden');
     }
     discoverModels(chat);
     if (chat.sandbox) {
@@ -197,7 +193,8 @@ const Chat = (() => {
       chat.projEl.appendChild(chip);
     }
 
-    // header controls
+    // composer controls (model + mode moved out of the header into the footer,
+    // as in the desktop app). #32 #33
     fillModelSelector(chat);
     chat.modeSel.value = chat.mode;
     chat.modelSel.addEventListener('change', async () => {
@@ -209,12 +206,12 @@ const Chat = (() => {
       if (r.ok) { chat.mode = chat.modeSel.value; toast('Mode → ' + modeLabel(chat.mode), 'ok'); }
       else { toast(r.error, 'err'); chat.modeSel.value = chat.mode; }
     });
+    chat.effortBtn.addEventListener('click', () => cycleEffort(chat));
     chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id }));
-    chat.skillsBtn.addEventListener('click', () => toggleSkillsPanel(chat));
-    chat.mcpBtn.addEventListener('click', () => toggleMcpPanel(chat));
-    chat.termBtn.addEventListener('click', () => window.createSession({ cwd: chat.cwd, type: 'shell' }));
-    chat.histBtn.addEventListener('click', () => toggleHistoryPanel(chat));
-    chat.forkBtn.addEventListener('click', async () => {
+
+    // Header overflow menu. 13 buttons wrapped onto three rows; everything that
+    // is not model/mode/stop now lives behind one "⋯". #33
+    const forkConversation = async () => {
       try {
         const p = await ccx.invoke('chat:fork', { id });
         if (!p.ok) throw new Error(p.error || 'fork failed');
@@ -224,7 +221,9 @@ const Chat = (() => {
           permissionMode: p.permissionMode, resume: p.sessionId, fork: true,
         });
       } catch (e) { toast(String(e.message || e), 'err'); }
-    });
+    };
+    chat.forkBtn = { click: forkConversation };   // palette entry points at this
+    wireHeaderMenu(chat, forkConversation);
     wireRunMenu(chat);
     pane.addEventListener('keydown', (e) => {
       if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') {
@@ -232,7 +231,6 @@ const Chat = (() => {
         openPalette(chat);
       }
     });
-    chat.rewindBtn.addEventListener('click', () => toggleRewindPanel(chat));
 
     // composer
     const send = () => {
@@ -247,6 +245,8 @@ const Chat = (() => {
       }
       appendUser(chat, text || '(image)');
       if (chat.busy) {
+        chat.pendingMsgs.push(text);
+        renderQueued(chat);
         chat.msgs.appendChild(el('div', 'sys-note', '↯ steered — Claude will see this mid-turn'));
       }
       if (text && (!chat.promptHistory.length || chat.promptHistory[0] !== text)) {
@@ -313,7 +313,21 @@ const Chat = (() => {
       autosize(chat.composer);
       if (!maybeAt(chat)) maybeSlash(chat);
     });
-    chat.sendBtn.addEventListener('click', send);
+    chat.sendBtn.addEventListener('click', () => {
+      if (chat.busy) ccx.invoke('chat:interrupt', { id });   // button turns into stop
+      else send();
+    });
+    // Attach + drag-and-drop. The native dialog reads the file in main, so the
+    // renderer never has to synthesise a File-like object. #32
+    chat.attachBtn.addEventListener('click', async () => {
+      const r = await ccx.invoke('dialog:pickFiles');
+      if (r.ok && (r.files || []).length) applyAttachedFiles(chat, r.files);
+    });
+    ['dragover', 'drop'].forEach(ev => chat.composer.addEventListener(ev, (e) => {
+      e.preventDefault();
+      if (ev === 'dragover') return;
+      if (e.dataTransfer && e.dataTransfer.files.length) attachFiles(chat, e.dataTransfer.files);
+    }));
     chat.composer.addEventListener('keydown', (e) => {
       if (!chat.slash.classList.contains('hidden')) {
         if (e.key === 'ArrowDown') { e.preventDefault(); moveSlash(chat, 1); return; }
@@ -416,6 +430,107 @@ const Chat = (() => {
     if (window.__activateNext) window.__activateNext(id);
   }
 
+  /* ---------------- composer extras (#32) ---------------- */
+
+  const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
+  async function cycleEffort(chat) {
+    const cur = chat.effort || '';
+    const next = EFFORTS[(EFFORTS.indexOf(cur) + 1) % EFFORTS.length];
+    chat.effort = next;
+    chat.effortBtn.textContent = 'effort: ' + (next || 'auto');
+    const r = await ccx.invoke('chat:effort', { id: chat.id, effort: next });
+    if (!r.ok) toast(r.error || 'effort not supported here', 'err');
+    else if (next) toast('effort → ' + next, 'ok');
+  }
+
+  /** Attach a local file: images become content blocks, others become text. */
+  async function attachFiles(chat, fileList) {
+    for (const file of [...fileList]) {
+      const type = file.type || '';
+      if (type.startsWith('image/') && file.size < 4 * 1024 * 1024) {
+        const data = await new Promise((resolve, reject) => {
+          const r = new FileReader();
+          r.onload = () => resolve(String(r.result).split(',')[1]);
+          r.onerror = reject;
+          r.readAsDataURL(file);
+        });
+        chat.pendingImages.push({ media_type: type || 'image/png', data });
+      } else if (file.size > 400 * 1024) {
+        toast(file.name + ' is too large to attach inline (' + Math.round(file.size / 1024) + ' kB)', 'err');
+        continue;
+      } else {
+        const text = await file.text();
+        chat.composer.value += (chat.composer.value ? '\n' : '') + '@' + file.name + '\n' + text.slice(0, 4000);
+        autosize(chat.composer);
+        continue;
+      }
+    }
+    renderImageChips(chat);
+  }
+
+  /** Files already read by the main process: images become blocks, text inlines. */
+  function applyAttachedFiles(chat, files) {
+    for (const f of files) {
+      if (f.base64 && f.mediaType) {
+        chat.pendingImages.push({ media_type: f.mediaType, data: f.base64 });
+      } else if (f.text != null) {
+        chat.composer.value += (chat.composer.value ? '\n' : '') + '@' + f.name + '\n' + f.text;
+      } else if (f.error) {
+        toast(f.name + ': ' + f.error, 'err');
+      }
+    }
+    renderImageChips(chat);
+    autosize(chat.composer);
+  }
+
+/** Messages sent while a turn is running, shown as pending chips. #32 */
+  function renderQueued(chat) {
+    chat.queued.innerHTML = '';
+    chat.queued.classList.toggle('hidden', !chat.pendingMsgs.length);
+    for (const t of chat.pendingMsgs) {
+      const chip = el('span', 'queued-chip', t.length > 70 ? t.slice(0, 70) + '…' : t);
+      chat.queued.appendChild(chip);
+    }
+  }
+
+/* ---------------- header overflow menu (#33) ---------------- */
+
+  function wireHeaderMenu(chat, forkConversation) {
+    let menu = null;
+    const close = () => { if (menu) { menu.remove(); menu = null; } };
+    const item = (icon, label, run) => {
+      const b = el('button', 'chat-menu-item');
+      b.appendChild(el('span', '', icon));
+      b.appendChild(el('span', '', label));
+      b.addEventListener('click', () => { close(); run(); });
+      return b;
+    };
+    chat.moreBtn.addEventListener('click', () => {
+      if (menu) return close();
+      menu = el('div', 'chat-menu');
+      menu.appendChild(item('⚡', 'Skills, commands, agents, hooks', () => toggleSkillsPanel(chat)));
+      menu.appendChild(item('⧉', 'MCP servers (live)', () => toggleMcpPanel(chat)));
+      menu.appendChild(item('🕘', 'Past conversations', () => toggleHistoryPanel(chat)));
+      menu.appendChild(item('⏪', 'Rewind files', () => toggleRewindPanel(chat)));
+      menu.appendChild(item('🧠', 'Memory & rules', () => toggleMemoryPanel(chat)));
+      menu.appendChild(item('⑂', 'Fork this conversation', forkConversation));
+      menu.appendChild(item('⌨', 'Terminal tab in this folder', () => window.createSession({ cwd: chat.cwd, type: 'shell' })));
+      menu.appendChild(item('▶', 'Run build / test scripts', () => chat.runBtn.click()));
+      menu.appendChild(item('▦', 'Toggle split view', () => window.toggleSplit && window.toggleSplit()));
+      if (chat.provider && chat.provider.baseUrl) {
+        menu.appendChild(item('⚙', 'Model manager (load / unload)',
+          () => window.openOllamaManager && window.openOllamaManager(chat.provider)));
+      }
+      const rect = chat.moreBtn.getBoundingClientRect();
+      menu.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+      menu.style.right = '18px';
+      menu.style.position = 'fixed';
+      document.body.appendChild(menu);
+      const away = (e) => { if (!menu.contains(e.target)) { close(); document.removeEventListener('mousedown', away); } };
+      setTimeout(() => document.addEventListener('mousedown', away), 0);
+    });
+  }
+
   /* ---------------- model selector ---------------- */
 
   function fillModelSelector(chat) {
@@ -428,6 +543,24 @@ const Chat = (() => {
     add('sonnet', 'Sonnet');
     add('haiku', 'Haiku');
     add('__custom', 'Custom…');
+    // Ask the engine what it actually supports; append anything we missed. The
+    // hard-coded aliases above stay as a fallback before the first turn. #39
+    ccx.invoke('chat:supported-models', { id: chat.id }).then((r) => {
+      if (!r || !r.ok || !r.models || !r.models.length) return;
+      const have = new Set([...sel.options].map(o => o.value));
+      const group = document.createElement('optgroup');
+      group.label = 'from the claude engine';
+      let n = 0;
+      for (const m of r.models) {
+        const id2 = m.value || m.id || m.name;
+        if (!id2 || have.has(id2)) continue;
+        const o = el('option', '', m.displayName || m.label || id2 + (m.contextWindow ? ' · ' + Math.round(m.contextWindow / 1000) + 'K' : ''));
+        o.value = id2;
+        group.appendChild(o);
+        n++;
+      }
+      if (n) sel.insertBefore(group, sel.querySelector('[value="__custom"]'));
+    }).catch(() => {});
   }
 
   // Switch model: pre-warm it on the provider first (a local Ollama model must
@@ -477,6 +610,30 @@ const Chat = (() => {
     'granite4.1:3b': '★☆☆ · ⚠ small ctx',
   };
   const CCE_CTX_FLOOR = 70000; // claude engine base prompt — smaller ctx cannot serve chats
+  // Model reliability: how often a model produced a usable tool call on this
+  // machine. Surfaced in the picker so a weak model is visible, not a mystery. #43
+  function toolReliability(model) {
+    const s = readStats();
+    const n = s.models && s.models[model];
+    if (!n || !n.calls) return null;
+    return Math.round((n.ok / n.calls) * 100);
+  }
+  function readStats() {
+    try { return JSON.parse(localStorage.getItem('cce.toolstats') || '{}'); }
+    catch { return {}; }
+  }
+  function noteToolOutcome(model, ok) {
+    if (!model) return;
+    try {
+      const s = readStats();
+      s.models = s.models || {};
+      const e = s.models[model] || { calls: 0, ok: 0 };
+      e.calls++;
+      if (ok) e.ok++;
+      s.models[model] = e;
+      localStorage.setItem('cce.toolstats', JSON.stringify(s));
+    } catch { /* private mode */ }
+  }
   async function discoverModels(chat) {
     if (!chat.provider || !chat.provider.baseUrl) return;
     const r = await ccx.invoke('provider:listModels', { uid: chat.provider.uid });
@@ -497,6 +654,8 @@ const Chat = (() => {
     for (const m of fresh) {
       const o = el('option', '', m.id + (TOOL_TIER[m.id] ? '  ·  ' + TOOL_TIER[m.id] : ''));
       o.value = m.id;
+      const rel = toolReliability(m.id);
+      if (rel !== null) o.textContent += (TOOL_TIER[m.id] ? ' · ' : '  ·  ') + 'tools ' + rel + '%';
       group.appendChild(o);
     }
     if (fresh.length) chat.modelSel.insertBefore(group, chat.modelSel.querySelector('[value="__custom"]'));
@@ -892,7 +1051,8 @@ const Chat = (() => {
       const r = await ccx.invoke('skill:import', { url: /^https?:/.test(url) ? url : 'https://' + url });
       impBtn.disabled = false;
       if (!r.ok) { impHint.textContent = r.error; return; }
-      impHint.textContent = 'imported: ' + r.imported.join(', ');
+      impHint.textContent = 'imported: ' + r.imported.join(', ')
+        + ((r.skipped && r.skipped.length) ? ' · already installed (skipped): ' + r.skipped.join(', ') : '');
       chat.skillsDetail = [];   // refetch on next open
       toast('Skill imported: ' + r.imported.join(', '), 'ok');
     };
@@ -987,7 +1147,28 @@ const Chat = (() => {
       let armed = false;
       b.addEventListener('click', async (e) => {
         e.stopPropagation();
-        if (!armed) { armed = true; b.textContent = 'sure?'; setTimeout(() => { armed = false; b.textContent = 'rewind'; }, 2500); return; }
+        // First click previews the change set; the second one applies it. #31
+        if (!armed) {
+          armed = true;
+          b.textContent = 'checking…';
+          const prev = await ccx.invoke('chat:rewind', { id: chat.id, uuid: c.uuid, dryRun: true });
+          armed = false;
+          if (!prev.ok) { toast(prev.error, 'err'); b.textContent = 'rewind'; return; }
+          const files = (prev.filesChanged || []).length;
+          const detail = prev.canRewind === false
+            ? 'cannot rewind: ' + (prev.error || 'unknown')
+            : (files ? files + ' file(s) would change  +' + (prev.insertions || 0) + ' −' + (prev.deletions || 0)
+              : 'no tracked file changes');
+          b.textContent = 'sure?';
+          b.title = detail;
+          row.appendChild(el('div', 'hint wide-hint', detail));
+          armed = true;
+          setTimeout(() => {
+            if (!armed) return;
+            armed = false; b.textContent = 'rewind'; b.title = '';
+          }, 6000);
+          return;
+        }
         b.disabled = true;
         const rw = await ccx.invoke('chat:rewind', { id: chat.id, uuid: c.uuid });
         if (!rw.ok) { toast(rw.error, 'err'); b.disabled = false; b.textContent = 'rewind'; return; }
@@ -1274,13 +1455,55 @@ const Chat = (() => {
     container.querySelectorAll('pre').forEach(pre => {
       const code = pre.querySelector('code') || pre;
       addCopyBtn(pre, () => code.textContent, 'pre-copy');
+      colorizeCode(pre, code);
     });
+  }
+
+  // Monaco is already vendored for the diff editor, so syntax highlighting
+  // costs no extra dependency. Falls back to plain text when unavailable. #35
+  function colorizeCode(pre, code) {
+    if (!window.monaco || !window.monaco.editor || typeof window.monaco.editor.colorize !== 'function') return;
+    const text = code.textContent || '';
+    if (!text.trim() || text.length > 20000) return;
+    try {
+      const lang = detectLang(code);
+      Promise.resolve(window.monaco.editor.colorize(text, lang, { tabSize: 2 }))
+        .then((html) => { if (html && code.textContent === text) code.innerHTML = html; })
+        .catch(() => { /* leave plain */ });
+    } catch { /* leave plain */ }
+  }
+
+  const LANG_BY_CLASS = {
+    'language-js': 'javascript', 'language-javascript': 'javascript',
+    'language-ts': 'typescript', 'language-typescript': 'typescript',
+    'language-py': 'python', 'language-python': 'python',
+    'language-bash': 'shell', 'language-sh': 'shell', 'language-shell': 'shell',
+    'language-json': 'json', 'language-yaml': 'yaml', 'language-yml': 'yaml',
+    'language-html': 'html', 'language-css': 'css', 'language-sql': 'sql',
+    'language-rust': 'rust', 'language-rs': 'rust', 'language-go': 'go',
+  };
+  function detectLang(code) {
+    const cls = (code.className || '') + ' ' + [...(code.parentElement?.classList || [])].join(' ');
+    for (const [needle, lang] of Object.entries(LANG_BY_CLASS)) {
+      if (cls.includes(needle)) return lang;
+    }
+    const first = (code.textContent || '').trim().split('\n')[0] || '';
+    if (/^#!.*\b(bash|sh)\b/.test(first)) return 'shell';
+    if (/^\s*[{[]/.test(first)) return 'json';
+    return 'plaintext';
   }
 
   function wireRunMenu(chat) {
     let menu = null;
     const close = () => { if (menu) { menu.remove(); menu = null; } };
-    chat.runBtn.addEventListener('click', async () => {
+    // The button lives in the overflow menu now; keep a stable handle so both
+    // the menu item and the Ctrl+K palette can trigger it.
+    const btn = el('button', 'chat-btn', '▶');
+    btn.title = 'Run build / test scripts in a terminal tab';
+    btn.style.display = 'none';
+    chat.pane.appendChild(btn);
+    chat.runBtn = btn;
+    btn.addEventListener('click', async () => {
       if (menu) return close();
       menu = el('div', 'chat-skills-panel chat-run-menu');
       menu.appendChild(el('h4', '', '▶ run in a terminal tab'));
@@ -1373,7 +1596,16 @@ const Chat = (() => {
             const rd = await ccx.invoke('chat:delete', { cwd: s.cwd || s.folder, sessionId: s.sessionId });
             if (rd.ok) { row.remove(); toast('Session deleted', 'ok'); } else toast(rd.error, 'err');
           });
-          acts.appendChild(open); acts.appendChild(fork); acts.appendChild(del);
+          const exp = el('button', 'btn small', '⤓');
+          exp.title = 'Export this conversation as markdown';
+          exp.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const r = await ccx.invoke('chat:export', { cwd: s.cwd || s.folder, sessionId: s.sessionId });
+            if (r.ok && r.saved) toast('Saved ' + r.path, 'ok');
+            else if (r.ok) { /* user cancelled */ }
+            else toast(r.error, 'err');
+          });
+          acts.appendChild(open); acts.appendChild(fork); acts.appendChild(exp); acts.appendChild(del);
           row.appendChild(acts);
           row.addEventListener('click', () => open.click());
           sec.appendChild(row);
@@ -1495,14 +1727,51 @@ const Chat = (() => {
 
   /* ---------------- message rendering ---------------- */
 
-  function appendUser(chat, text) {
+  function appendUser(chat, text, uuid) {
     chat.msgs.querySelector('.chat-empty')?.remove();
     const wrap = el('div', 'msg user-msg');
+    wrap.dataset.uuid = uuid || '';
     const bubble = el('div', 'user-bubble', text);
     addCopyBtn(bubble, () => text);
+    // Hover actions: re-ask from here, and rewind the files to this point. #30
+    const acts = el('div', 'msg-actions');
+    const edit = el('button', 'btn tiny', 'edit & resend');
+    edit.title = 'Branch a new conversation from this message with an edited prompt';
+    edit.addEventListener('click', () => resendFrom(chat, uuid, text));
+    acts.appendChild(edit);
+    const back = el('button', 'btn tiny', 'rewind here');
+    back.title = 'Restore files to the state at this message (conversation keeps going)';
+    back.addEventListener('click', async () => {
+      const r = await ccx.invoke('chat:rewind', { id: chat.id, uuid, dryRun: true });
+      if (!r.ok) return toast(r.error, 'err');
+      const files = (r.filesChanged || []).length;
+      if (!files) return toast('no tracked file changes at this point', '');
+      const go = window.confirm(`Rewind ${files} file(s)? +${r.insertions || 0} −${r.deletions || 0}`);
+      if (!go) return;
+      const rw = await ccx.invoke('chat:rewind', { id: chat.id, uuid });
+      toast(rw.ok ? 'files rewound' : rw.error, rw.ok ? 'ok' : 'err');
+    });
+    if (uuid) acts.appendChild(back);
     wrap.appendChild(bubble);
+    wrap.appendChild(acts);
     chat.msgs.appendChild(wrap);
     scrollDown(chat);
+  }
+
+  /** Branch the conversation from a message with an edited prompt. #30 */
+  function resendFrom(chat, uuid, originalText) {
+    const edited = window.prompt('Re-ask from this message (the conversation branches):', originalText);
+    if (edited === null || !edited.trim() || edited === originalText) return;
+    Chat.createSession({
+      cwd: chat.cwd,
+      providerUid: chat.provider ? chat.provider.uid : null,
+      model: chat.model || '',
+      permissionMode: chat.mode,
+      resume: chat.sessionId,
+      fork: true,
+      resumeAt: uuid,
+      initText: edited,
+    });
   }
 
   function nearBottom(chat) {
@@ -1547,6 +1816,9 @@ const Chat = (() => {
     chat.dot.classList.toggle('busy', busy);
     chat.stopBtn.classList.toggle('hidden', !busy);
     chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
+    // While a turn runs the primary button becomes stop, as in the desktop app.
+    chat.sendBtn.textContent = busy ? '■' : '➤';
+    chat.sendBtn.title = busy ? 'Stop (Esc)' : 'Send (Enter)';
     chat.sendBtn.classList.toggle('busy', busy);
     if (busy) { chat.statusLine.textContent = 'working…'; startContextPolling(chat); }
     else {
@@ -1556,19 +1828,25 @@ const Chat = (() => {
   }
 
   function setStatusLine(chat) {
+    // A local or relayed provider reports Anthropic-derived cost for work it
+    // never billed, so "$0.0204" against Ollama was actively misleading. #15
+    const metered = !chat.provider || !chat.provider.baseUrl;
     const parts = [chat.model ? 'model: ' + chat.model : 'model: provider default', 'mode: ' + modeLabel(chat.mode)];
-    if (chat.spent > 0.0001) parts.push('session $' + chat.spent.toFixed(4));
+    if (metered && chat.spent > 0.0001) parts.push('session $' + chat.spent.toFixed(4));
     if (chat.lastResult) {
       const r = chat.lastResult;
-      if (typeof r.total_cost_usd === 'number') parts.push('$' + r.total_cost_usd.toFixed(4));
-      parts.push(r.num_turns + ' turns', Math.round((r.duration_ms || 0) / 1000) + 's');
+      if (metered && typeof r.total_cost_usd === 'number' && r.total_cost_usd > 0) parts.push('$' + r.total_cost_usd.toFixed(4));
+      parts.push((r.num_turns != null ? r.num_turns : 0) + ' turns', Math.round((r.duration_ms || 0) / 1000) + 's');
       const u = r.usage || {};
       if (u.input_tokens != null) parts.push('↑' + fmtTok(u.input_tokens) + ' ↓' + fmtTok(u.output_tokens));
     }
     chat.statusLine.textContent = parts.join('  ·  ');
     if (chat.init) {
       const auth = chat.init.apiKeySource;
-      const mAuth = { none: 'no auth — /login in a terminal tab' }[auth] || auth;
+      const keyProvider = !!(chat.provider && (chat.provider.hasApiKey || chat.provider.hasAuthToken));
+      const mAuth = auth === 'none'
+        ? (keyProvider ? 'provider key' : 'no auth — /login in a terminal tab')
+        : auth;
       chat.statusRight.textContent = (chat.init.model || '') + ' · ' + mAuth;
       chat.providerEl.textContent = chat.provider ? basename(chat.provider.name) : 'default env';
     }
@@ -1585,7 +1863,7 @@ const Chat = (() => {
           const n = el('div', 'sys-note', '✂ context auto-compacted by the engine — earlier history summarized');
           chat.msgs.appendChild(n);
           scrollDownSoft(chat);
-        }
+        } else handleSystemSubtype(chat, msg);
         break;
       case 'stream_event': handleStream(chat, msg.event, msg.parent_tool_use_id); break;
       case 'assistant': {
@@ -1597,14 +1875,38 @@ const Chat = (() => {
         break;
       }
       case 'user': {
+        // A replayed user turn carries the uuid the engine checkpoints against,
+        // which is what edit-and-resubmit and per-message rewind need.
+        if (msg.uuid && msg.parent_tool_use_id == null) {
+          const c2 = msg.message && msg.message.content;
+          const isResult = Array.isArray(c2) && c2.some(b => b.type === 'tool_result');
+          if (!isResult) {
+            const t = typeof c2 === 'string'
+              ? c2
+              : (Array.isArray(c2) ? c2.filter(b => b.type === 'text').map(b => b.text).join(' ') : '');
+            if (String(t || '').trim()) appendUser(chat, t, msg.uuid);
+          }
+        }
         for (const block of (msg.message?.content || [])) {
           if (block.type === 'tool_result') resolveToolResult(chat, block);
         }
         break;
       }
+      // Frames the UI previously ignored. Several are user-visible states the
+      // desktop app shows: retry notices, rate limits, denials, and the next
+      // prompt suggestions. #26
+      case 'tool_progress': onToolProgress(chat, msg); break;
+      case 'api_retry': onApiRetry(chat, msg); break;
+      case 'rate_limit': onRateLimit(chat, msg); break;
+      case 'prompt_suggestion': onPromptSuggestion(chat, msg); break;
+      case 'permission_denied': onPermissionDenied(chat, msg); break;
+      case 'session_state_changed': onSessionState(chat, msg); break;
+      case 'commands_changed': onCommandsChanged(chat, msg); break;
+      case 'engine_notification': onEngineNotification(chat, msg); break;
       case 'result': {
         chat.lastResult = msg;
-        if (typeof msg.total_cost_usd === 'number') chat.spent = (chat.spent || 0) + msg.total_cost_usd;
+        const metered = !chat.provider || !chat.provider.baseUrl;
+        if (metered && typeof msg.total_cost_usd === 'number') chat.spent = (chat.spent || 0) + msg.total_cost_usd;
         setStatusLine(chat);
         setBusy(chat, false);
         if (chat.compacting) {
@@ -1634,6 +1936,120 @@ const Chat = (() => {
       }
       default: break; // replay/auth_status/etc — ignored in v1
     }
+  }
+
+  /* ---------------- previously ignored engine frames (#26) ---------------- */
+
+  // tool_progress carries elapsed time for a long-running tool; surface it on
+  // the matching card instead of leaving the user staring at a spinner.
+  function onToolProgress(chat, msg) {
+    const ctx = chat.tools.get(msg.tool_use_id);
+    const secs = Math.round(Number(msg.elapsed_time_seconds) || 0);
+    if (ctx) {
+      if (!ctx.statusEl) ctx.statusEl = el('span', 'tool-elapsed', '');
+      ctx.card.querySelector('.tool-head').appendChild(ctx.statusEl);
+      ctx.statusEl.textContent = secs >= 1 ? secs + 's' : '';
+    } else if (chat.msgs && !chat.busy && !secs) {
+      // ignore heartbeats for tools we no longer track
+    }
+  }
+
+  // api_retry: the provider rejected a request and the engine is backing off.
+  // Silence here looks like a hang.
+  function onApiRetry(chat, msg) {
+    chat.msgs.querySelector('.chat-empty')?.remove();
+    const attempt = msg.attempt != null ? ' (attempt ' + msg.attempt + ')' : '';
+    const wait = msg.retry_delay_ms ? ' in ' + Math.round(msg.retry_delay_ms / 1000) + 's' : '';
+    const note = el('div', 'sys-note warn', '↻ provider error, retrying' + wait + attempt
+      + (msg.error ? ' — ' + String(msg.error).slice(0, 160) : ''));
+    chat.msgs.appendChild(note);
+    scrollDownSoft(chat);
+  }
+
+  // rate_limit: surface the reset instead of appearing to hang.
+  function onRateLimit(chat, msg) {
+    const until = msg.resets_at ? new Date(msg.resets_at * 1000).toLocaleTimeString() : '';
+    chat.msgs.appendChild(el('div', 'sys-note warn',
+      '⏳ rate limited by the provider' + (until ? ' — resets at ' + until : '')
+      + (msg.remaining_tokens ? ' · ' + msg.remaining_tokens + ' tokens left' : '')));
+    scrollDownSoft(chat);
+  }
+
+  // permission_denied: the engine denied a tool without asking us (mode change,
+  // subagent rule, or an interrupt race). The user should see it.
+  function onPermissionDenied(chat, msg) {
+    const reason = msg.reason || msg.message || 'no reason given';
+    chat.msgs.appendChild(el('div', 'sys-note warn',
+      '🚫 ' + String(msg.tool_name || 'tool') + ' denied: ' + String(reason).slice(0, 200)));
+    scrollDownSoft(chat);
+  }
+
+  // prompt_suggestion: predicted next prompts, as clickable chips. #37
+  function onPromptSuggestion(chat, msg) {
+    const picks = Array.isArray(msg.suggestions) ? msg.suggestions
+      : (msg.prompt ? [msg.prompt] : []);
+    if (!picks.length) return;
+    chat.suggestions?.remove();
+    const row = el('div', 'chat-suggestions');
+    row.appendChild(el('span', 'hint', 'next:'));
+    for (const raw of picks.slice(0, 4)) {
+      const text = typeof raw === 'string' ? raw : String(raw.prompt || raw.text || '');
+      if (!text) continue;
+      const chip = el('button', 'sugg-chip', text.slice(0, 90));
+      chip.title = text;
+      chip.addEventListener('click', () => {
+        chat.composer.value = text;
+        autosize(chat.composer);
+        chat.composer.focus();
+        row.remove();
+      });
+      row.appendChild(chip);
+    }
+    if (row.children.length > 1) {
+      chat.msgs.appendChild(row);
+      scrollDownSoft(chat);
+    }
+    chat.suggestions = row;
+  }
+
+  // session_state_changed: permission mode or model changed by the engine.
+  function onSessionState(chat, msg) {
+    const s = msg.state || msg;
+    if (s.permission_mode && s.permission_mode !== chat.mode) {
+      chat.mode = s.permission_mode;
+      chat.modeSel.value = s.permission_mode;
+      setStatusLine(chat);
+    }
+    if (s.model && s.model !== chat.model) {
+      chat.model = s.model;
+      setStatusLine(chat);
+    }
+  }
+
+  // commands_changed: the slash-command list changed (a plugin installed, a file
+  // appeared). Refresh so the palette is not stale.
+  function onCommandsChanged(chat, msg) {
+    const list = msg.commands || msg.slash_commands;
+    if (Array.isArray(list)) {
+      chat.commands = list.map(c => (typeof c === 'string' ? c : c.name)).filter(Boolean);
+      chat.commandDetails = Array.isArray(list) && typeof list[0] === 'object' ? list : chat.commandDetails;
+    }
+  }
+
+  function onEngineNotification(chat, msg) {
+    const text = String(msg.message || msg.notification || '');
+    if (text) {
+      chat.msgs.appendChild(el('div', 'sys-note', text.slice(0, 400)));
+      scrollDownSoft(chat);
+    }
+  }
+
+  // System subtypes that are neither init nor compact_boundary.
+  function handleSystemSubtype(chat, msg) {
+    if (msg.subtype === 'permission_denied') return onPermissionDenied(chat, msg);
+    if (msg.subtype === 'commands_changed') return onCommandsChanged(chat, msg);
+    if (msg.subtype === 'session_state_changed') return onSessionState(chat, msg);
+    if (msg.subtype === 'compact_boundary') return;   // already handled
   }
 
   function onInit(chat) {
@@ -1728,6 +2144,21 @@ const Chat = (() => {
     chat.lives.delete(key);
   }
 
+  /** JSON.parse that returns null instead of throwing on partial input. */
+  function tryJson(s) {
+    try { return JSON.parse(s || '{}'); } catch { return null; }
+  }
+
+  // Re-parsing markdown on every streamed token is O(n^2) and visibly stutters
+  // on long answers. Coalesce to one render per frame. #21
+  function scheduleMarkdown(blk) {
+    if (blk._raf) return;
+    blk._raf = requestAnimationFrame(() => {
+      blk._raf = null;
+      blk.body.innerHTML = md(blk.text);
+    });
+  }
+
   function ensureLive(chat, parentId) {
     chat.lives ??= new Map();
     const key = parentId || 'main';
@@ -1755,7 +2186,11 @@ const Chat = (() => {
         } else if (b.type === 'tool_use') {
           const card = makeToolCard(chat, b.id, b.name, {});
           card.setStatus('running', 'preparing…');
-          entry = { type: b.type, node: card.card, toolId: b.id, text: '', json: '' };
+          entry = { type: b.type, node: card.card, toolId: b.id, text: '', json: '', card };
+          // Track the live card so content_block_delta can fill in its input as
+          // it streams. It was never stored, so a streaming tool call showed
+          // "preparing…" forever and the live plan viewer never filled. #4
+          live.tools.set(b.id, card);
           if (b.name === 'ExitPlanMode') openPlanViewer(chat);
         } else return;
         live.blocks.set(event.index, entry);
@@ -1767,7 +2202,7 @@ const Chat = (() => {
         const blk = live.blocks.get(event.index);
         if (!blk) return;
         const d = event.delta || {};
-        if (d.type === 'text_delta') { blk.text += d.text; blk.body.innerHTML = md(blk.text); }
+        if (d.type === 'text_delta') { blk.text += d.text; scheduleMarkdown(blk); }
         else if (d.type === 'thinking_delta') {
           blk.text += d.thinking || '';
           blk.body.textContent = blk.text;
@@ -1776,10 +2211,15 @@ const Chat = (() => {
         } else if (d.type === 'input_json_delta') {
           blk.json += d.partial_json || '';
           const card = live.tools.get(blk.toolId);
-          if (card) card.setStatus('running', 'preparing…');
-          if (card && card.name === 'ExitPlanMode') {
-            const now = Date.now();
-            if (!chat._planT || now - chat._planT > 250) { chat._planT = now; updatePlanViewer(chat, blk.json); }
+          // Feed the card progressively so a long Bash command appears while it
+          // streams instead of only at the end.
+          if (card) {
+            const partial = tryJson(blk.json);
+            if (partial) {
+              card.input = partial;
+              if (card.name !== 'ExitPlanMode') card.title.textContent = toolTitle(card.name, partial);
+              if (card.name === 'ExitPlanMode') updatePlanViewer(chat, blk.json);
+            } else card.setStatus('running', 'preparing…');
           }
         }
         scrollDownSoft(chat);
@@ -1791,9 +2231,7 @@ const Chat = (() => {
         if (blk.type === 'tool_use') {
           const card = live.tools.get(blk.toolId);
           if (card) {
-            let input = {};
-            try { input = JSON.parse(blk.json || '{}'); } catch { /* partial */ }
-            card.setInput(input);
+            card.setInput(tryJson(blk.json) || {});
             card.setStatus('running');
           }
         } else if (blk.type === 'thinking') {
@@ -1821,6 +2259,34 @@ const Chat = (() => {
 
   /* ---------------- blocks (final) ---------------- */
 
+  // Read-only lookups produce long runs of near-identical cards; the desktop app
+  // collapses them. #27
+  const GROUPABLE_TOOLS = new Set(['Read', 'Grep', 'Glob', 'NotebookRead', 'WebFetch']);
+  const lastGroupNode = new WeakMap();
+
+  function makeGroup(host, name) {
+    const wrap = el('details', 'tool-group');
+    const sum = el('summary', 'group-head');
+    sum.appendChild(el('span', 'tool-ico', toolIcon(name)));
+    const countEl = el('span', 'group-count', '');
+    sum.appendChild(countEl);
+    wrap.appendChild(sum);
+    const list = el('div', 'group-items');
+    wrap.appendChild(list);
+    host.appendChild(wrap);
+    // count starts at 0; the caller adds the first item.
+    return { node: wrap, list, countEl, count: 0, name };
+  }
+
+  /** Reuse the previous group only when it is the host's last child. */
+  function lastGroup(host, name) {
+    const g = lastGroupNode.get(host);
+    if (!g) return null;
+    if (g.name !== name) return null;
+    if (g.node.nextElementSibling) return null;   // something else came after it
+    return g;
+  }
+
   function renderBlock(chat, block, parentId) {
     if (!block) return;
     const host = nestedTarget(chat, parentId) || chat.msgs;
@@ -1839,6 +2305,21 @@ const Chat = (() => {
       d.open = false;
       host.appendChild(d);
     } else if (block.type === 'tool_use') {
+      // Group long runs of read-only lookups into one collapsible row, the way
+      // the desktop app does, so a 40-file sweep is 2 lines instead of 40. #27
+      if (GROUPABLE_TOOLS.has(block.name)) {
+        let group = lastGroup(host, block.name);
+        if (!group) {
+          group = makeGroup(host, block.name);
+          lastGroupNode.set(host, group);
+        }
+        group.count++;
+        group.list.appendChild(el('div', 'group-item mono', toolTitle(block.name, block.input || {})));
+        group.countEl.textContent = group.count + ' ' + block.name.toLowerCase() + (group.count === 1 ? ' call' : ' calls');
+        makeToolCard(chat, block.id, block.name, block.input || {}).setStatus('done');
+        if (!parentId) scrollDownSoft(chat);
+        return;
+      }
       const card = makeToolCard(chat, block.id, block.name, block.input || {});
       card.setStatus('running');
       if (block.name === 'ExitPlanMode') {
@@ -1868,7 +2349,7 @@ const Chat = (() => {
       // `body` was missing here even though renderOutput() and nestedTarget()
       // both read ctx.body, so every tool_result threw and the output pane was
       // never rendered (the throw was swallowed by the event handler's catch).
-      card, body, name, input, dot, title, status: 'running',
+      card, body, name, input, dot, title, status: 'running', source: null,
       setStatus(status, note) {
         ctx.status = status;
         dot.className = 'tool-dot ' + status;
@@ -1884,7 +2365,17 @@ const Chat = (() => {
       if (prev && prev.__ed) prev.__ed.dispose();
       body.innerHTML = '';
       if (name === 'Edit' || name === 'MultiEdit' || name === 'Write' || name === 'NotebookEdit') {
-        body.appendChild(renderDiff(name, ctx.input));
+        const wrap = renderDiff(name, ctx.input, ctx.source);
+        body.appendChild(wrap);
+        // Kick off the file read once so the diff gets real context. #29
+        if (!ctx.source && !ctx._sourced && (name === 'Edit' || name === 'MultiEdit')) {
+          ctx._sourced = true;
+          loadDiffSource(ctx.input.file_path).then((src) => {
+            if (!src || !ctx.body) return;
+            ctx.source = src;
+            if (!body.classList.contains('hidden')) renderInput();
+          });
+        }
       }
       const pre = el('pre', 'tool-io mono');
       pre.textContent = JSON.stringify(ctx.input, null, 2).slice(0, 4000);
@@ -1904,30 +2395,78 @@ const Chat = (() => {
       }
     });
     renderInput();
+    // TodoWrite is the only tool whose output is state, not text: keep the
+    // drawer's checklist in sync instead of leaving it permanently empty. #5
+    if (name === 'TodoWrite') renderTodos(chat, ctx.input);
     chat.tools.set(toolUseId, ctx);
     return ctx;
   }
 
-  // Left/right text for a file-modifying tool call (approximate original —
-  // the pre-edit file content is not in the tool input).
-  function diffPair(name, input) {
+  /** Fill the todo drawer from a TodoWrite tool input. #5 */
+  function renderTodos(chat, input) {
+    const items = Array.isArray(input.todos) ? input.todos : [];
+    if (!items.length) {
+      chat.todosEl.classList.add('hidden');
+      return;
+    }
+    chat.todosList.innerHTML = '';
+    for (const t of items) {
+      const li = el('li', 'todo-item' + (t.status === 'completed' ? ' done' : t.status === 'in_progress' ? ' active' : ''));
+      li.appendChild(el('span', 'todo-mark', t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'));
+      li.appendChild(el('span', 'todo-text', String(t.content || '')));
+      if (t.status === 'in_progress') li.appendChild(el('span', 'chip', 'now'));
+      chat.todosList.appendChild(li);
+    }
+    const done = items.filter(t => t.status === 'completed').length;
+    chat.todosEl.querySelector('h4').textContent = 'todos ' + done + '/' + items.length;
+    chat.todosEl.classList.remove('hidden');
+  }
+
+  // Left/right text for a file-modifying tool call. The pre-edit content is not in
+  // the tool input, so a real Edit diff needs the surrounding file; `source`
+  // carries it when the card read the file before the edit landed. #29
+  function diffPair(name, input, source) {
     if (name === 'Write') return ['', String(input.content || '')];
-    if (name === 'Edit') return [String(input.old_string || ''), String(input.new_string || '')];
-    if (name === 'MultiEdit') {
+    if (name === 'Edit' || name === 'MultiEdit') {
+      const edits = name === 'MultiEdit'
+        ? (input.edits || [])
+        : [{ old_string: input.old_string, new_string: input.new_string }];
+      // With the original file, replay the edits on it so the diff shows real
+      // context and the hunks land where they belong. #29
+      const first = edits.find(e => e && e.old_string);
+      if (source && typeof source === 'string' && first && source.includes(first.old_string)) {
+        let mod = source;
+        for (const e of edits) {
+          if (!e || !e.old_string) continue;
+          mod = mod.split(e.old_string).join(String(e.new_string || ''));
+        }
+        return [source, mod];
+      }
+      // Fallback: the replaced region on its own.
       return [
-        (input.edits || []).map(e => e.old_string || '').join('\n'),
-        (input.edits || []).map(e => e.new_string || '').join('\n'),
+        edits.map(e => e.old_string || '').join('\n'),
+        edits.map(e => e.new_string || '').join('\n'),
       ];
     }
     if (name === 'NotebookEdit') return ['', String(input.new_source || '')];
     return ['', ''];
   }
 
+  /** Best-effort original file content for a diff. Never throws. */
+  async function loadDiffSource(filePath) {
+    if (!filePath) return null;
+    try {
+      const r = await ccx.invoke('file:read', { path: filePath });
+      if (r && r.ok && r.content) return r.content;
+    } catch { /* unreadable */ }
+    return null;
+  }
+
   // Monaco side-by-side diff (#29). Built lazily on first card open so a long
   // session does not keep hundreds of editors alive; falls back to the text
   // diff when the vendor bundle is missing (fresh clone, before npm run vendor).
-  function renderDiff(name, input) {
-    const [orig, mod] = diffPair(name, input);
+  function renderDiff(name, input, source) {
+    const [orig, mod] = diffPair(name, input, source);
     const wrap = el('div', 'monaco-diff pending');
     wrap.appendChild(el('div', 'hint', 'click the card header to show the diff'));
     wrap.__init = () => {
@@ -1982,7 +2521,18 @@ const Chat = (() => {
 
   function resolveToolResult(chat, block) {
     const ctx = chat.tools.get(block.tool_use_id);
-    if (!ctx) return;
+    if (!ctx) {
+      // No card for this id: the model emitted a tool call as prose, which is
+      // what small local models do. Count it so the picker can warn. #43
+      if (block.is_error && /tool|function|call/i.test(String(block.content || '').slice(0, 200))) {
+        noteToolOutcome(chat.model, false);
+      }
+      return;
+    }
+    noteToolOutcome(chat.model, !block.is_error);
+    // A streaming card is tracked per thread, not in chat.tools, so look there
+    // too or the live card would never resolve.
+    if (ctx.name === 'TodoWrite') renderTodos(chat, ctx.input);
     let text = '';
     const content = block.content;
     if (typeof content === 'string') text = content;
@@ -2121,7 +2671,23 @@ const Chat = (() => {
     if (toolName === 'ExitPlanMode') {
       actions.appendChild(mk('✓ approve + auto-accept edits', 'primary', 'allow', 'acceptEdits'));
       actions.appendChild(mk('✓ approve', '', 'allow', 'default'));
-      actions.appendChild(mk('✗ keep planning', '', 'deny'));
+      // Keep planning, with a way to say why: the deny message reaches the
+      // model, so the desktop app's "keep planning" is really feedback. #40
+      const feedback = el('input', 'perm-feedback');
+      feedback.type = 'text';
+      feedback.placeholder = 'Keep planning — what should change? (optional)';
+      actions.appendChild(feedback);
+      const keep = el('button', 'btn', '✗ keep planning');
+      keep.addEventListener('click', async () => {
+        const why = feedback.value.trim();
+        finish();
+        await ccx.invoke('chat:permission-answer', {
+          id: chat.id, requestId, decision: 'deny',
+          message: why || 'Keep planning. Do not start implementing yet.',
+        });
+        setBusy(chat, true);
+      });
+      actions.appendChild(keep);
     } else {
       actions.appendChild(mk('Allow once', 'primary', 'allow', null,
         'Approve just this call. Nothing else is remembered.'));

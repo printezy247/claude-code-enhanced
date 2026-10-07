@@ -20,7 +20,8 @@ describe('renderer harness', () => {
   it('loads app.js + chat.js and renders the nav shell', async () => {
     const { window } = loadRenderer({ ipc: bootIpc() });
     await flush();
-    expect(window.document.querySelectorAll('.nav-btn').length).toBe(6);
+    // 6 views + the conversation-list toggle.
+    expect(window.document.querySelectorAll('.nav-btn').length).toBe(7);
     expect(typeof window.switchView).toBe('function');
     expect(typeof window.Chat.createSession).toBe('function');
     window.close();
