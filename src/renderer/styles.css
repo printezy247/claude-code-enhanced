@@ -760,3 +760,46 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 :root[data-theme="light"] .perm-command,
 :root[data-theme="light"] .perm-path,
 :root[data-theme="light"] .tool-group { background: var(--bg3); }
+
+/* ---------- composer footer (#32) ---------- */
+.chat-footbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 6px 10px 8px; border-top: 1px solid var(--border);
+}
+.chat-footbar select {
+  flex: 0 0 auto;
+  background: var(--bg3); color: var(--text); border: 1px solid var(--border);
+  border-radius: 7px; padding: 4px 8px; font-size: 12px; max-width: 240px;
+}
+.chat-model-foot { flex: 0 1 220px; max-width: 220px; min-width: 120px; }
+.chat-mode-foot { flex: 0 0 auto; width: 130px; }
+.chat-footbar .chat-effort { flex: 0 0 auto; white-space: nowrap;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 7px; padding: 4px 9px; font-size: 12px; cursor: pointer;
+}
+.chat-footbar .chat-effort:hover { color: var(--text); border-color: var(--accent); }
+.foot-spacer { flex: 1; }
+.foot-hint { color: var(--muted); font-size: 11px; white-space: nowrap; flex: 0 0 auto; }
+.chat-attach {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 7px; width: 28px; height: 28px; cursor: pointer; font-size: 14px;
+  align-self: flex-end; flex: none;
+}
+.chat-attach:hover { color: var(--text); border-color: var(--accent); }
+.chat-queued { display: flex; gap: 6px; flex-wrap: wrap; padding: 4px 12px 0; }
+.queued-chip {
+  background: var(--bg3); border: 1px solid var(--border); border-radius: 999px;
+  padding: 3px 10px; font-size: 11.5px; color: var(--muted);
+}
+.chat-perm-slot { display: flex; flex-direction: column; gap: 8px; padding: 0 10px; }
+.perm-feedback { flex: 1; min-width: 180px; background: var(--bg3); border: 1px solid var(--border);
+  border-radius: 7px; color: var(--text); padding: 6px 9px; font-size: 12.5px; }
+.msg-actions { display: none; gap: 6px; margin-top: 4px; }
+.user-msg:hover .msg-actions { display: flex; }
+.btn.tiny { padding: 2px 8px; font-size: 11px; }
+.wide-hint { flex-basis: 100%; }
+
+/* MCP chips stay on one line so the header does not wrap to three rows. */
+.chat-mcp-chips { display: flex; gap: 6px; overflow-x: auto; max-width: 100%; scrollbar-width: none; }
+.chat-mcp-chips::-webkit-scrollbar { display: none; }
+.chat-mcp-chips .chip { flex: none; }

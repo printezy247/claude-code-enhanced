@@ -42,8 +42,9 @@ terminal when you want it:
 
 ```bash
 # from the repo root
-sudo apt install ./dist/claude-code-enhanced-0.1.0-amd64.deb
-# or: sudo dpkg -i dist/claude-code-enhanced-0.1.0-amd64.deb
+VER=$(node -p "require('./package.json').version")
+sudo apt install ./dist/claude-code-enhanced-${VER}-amd64.deb
+# or: sudo dpkg -i dist/claude-code-enhanced-${VER}-amd64.deb
 ```
 
 Launch **Claude Code Enhanced** from your application menu, or run `claude-code-enhanced`.
@@ -57,6 +58,8 @@ Requirements: the [claude CLI](https://github.com/anthropics/claude-code)
 ```bash
 npm install        # also compiles node-pty for Electron
 npm start          # run unpackaged
+npm test           # vitest: main-process units + renderer (jsdom) tests
+npm run smoke      # headless boot check under xvfb
 npm run dist       # build dist/claude-code-enhanced-<version>-amd64.deb
 ```
 
@@ -105,7 +108,8 @@ servers and settings from `~/.claude` all apply exactly as in the terminal.
 ### Keyboard
 
 `Ctrl+Shift+T` new session · `Ctrl+Shift+W` close tab · `Ctrl+Tab` next tab ·
-`Ctrl+Shift+C/V` copy/paste
+`Ctrl+K` command palette · `Ctrl+B` conversation list · `Alt+V` split view ·
+`Esc` stop / close panel · `Ctrl+Shift+C/V` copy/paste (terminal tabs only)
 
 ## References
 
@@ -125,10 +129,36 @@ servers and settings from `~/.claude` all apply exactly as in the terminal.
 
 ## Roadmap ideas
 
-- FCC-style provider **failover chains** (retry a turn across providers)
 - RTK-style output filtering to cut token usage
-- Session resume picker (`claude --resume`) per project
-- Light theme, split panes, multi-window
+- Multi-window (one engine process per window)
+- Streaming Bash output inside the tool card
+
+## Small local models
+
+The claude engine's own base prompt (skills + plugins) is already around 68K tokens, so a 3-4B
+model usually cannot host a chat at all. Three things in this app attack that:
+
+- **Lean tools** — cut the tool list for one provider (Providers → Edit) or globally
+  (Settings → Small local models). Fewer tool schemas means a smaller prompt.
+- **Tool-call repair** — local models often emit a tool call as prose
+  (`<tool_call>{…}</tool_call>` or bare JSON). Local providers are routed through the
+  built-in translator proxy, which parses that back into a real tool call.
+- **Context sizing** — the Ollama manager loads a model at a context size that fits in free
+  RAM, stepping down until the server accepts it.
+
+Check a model's track record in the model picker: the percentage is measured from your own
+tool calls on this machine.
+
+## Tests
+
+`npm test` runs vitest with two harnesses:
+
+- **main process** — `test/stubs/electron.js` replaces Electron, so `src/main/*` runs in plain
+  node. `chat:create` uses a fake Agent SDK, and the proxy tests use local fake HTTP servers.
+- **renderer** — `test/helpers/renderer.js` boots `index.html` in jsdom, installs a recording
+  `ccx` bridge, and evaluates `chat.js` + `app.js` in one shared scope.
+
+No network access and no API keys are required.
 
 ## Troubleshooting
 
