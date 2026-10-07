@@ -1,7 +1,7 @@
 {
   "name": "claude-code-enhanced",
   "productName": "Claude Code Enhanced",
-  "version": "0.7.4",
+  "version": "0.8.0",
   "description": "Chat UI, terminal sessions and MCP connectors for Claude Code.",
   "main": "src/main/main.js",
   "license": "MIT",
@@ -67,6 +67,7 @@
     "deb": {
       "artifactName": "claude-code-enhanced-${version}-${arch}.deb",
       "synopsis": "Desktop harness for the Claude Code CLI (chat, terminals, MCP)",
+      "description": "Agent-SDK chat with tool cards, diffs, permissions, rewind and\nplan mode, plus real claude TUI terminals in tabs, an OpenCode-style\nprovider manager and a Claude-Desktop-style MCP connector list.",
       "depends": [
         "libgtk-3-0",
         "libnotify4",

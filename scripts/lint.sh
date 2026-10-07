@@ -29,4 +29,5 @@ postrm-removes-alternative,\
 missing-dep-for-interpreter,\
 program-not-linked-against-libc,\
 no-copyright-file \
+  --suppress-tags description-starts-with-leading-spaces \
   "${deb[@]}"
