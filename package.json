@@ -1,0 +1,85 @@
+{
+  "name": "claude-code-enhanced",
+  "productName": "Claude Code Enhanced",
+  "version": "0.7.4",
+  "description": "Chat UI, terminal sessions and MCP connectors for Claude Code.",
+  "main": "src/main/main.js",
+  "license": "MIT",
+  "author": "CCE Builders",
+  "scripts": {
+    "postinstall": "electron-builder install-app-deps",
+    "icons": "node scripts/gen-icon.js",
+    "start": "electron .",
+    "rebuild": "electron-builder install-app-deps",
+    "smoke": "CCE_SMOKE=1 xvfb-run -a -s \"-screen 0 1280x860x24\" electron .",
+    "check": "node scripts/check.js",
+    "dist": "node scripts/vendor-monaco.js && electron-builder --linux",
+    "vendor": "node scripts/vendor-monaco.js",
+    "lint": "bash scripts/lint.sh",
+    "bump": "npm version patch --no-git-tag-version"
+  },
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.290",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-web-links": "^0.11.0",
+    "@xterm/xterm": "^5.5.0",
+    "dompurify": "^3.4.16",
+    "marked": "^18.1.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "electron": "^33.4.11",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.2",
+    "monaco-editor": "^0.57.0"
+  },
+  "build": {
+    "appId": "io.github.cce.claude-code-enhanced",
+    "productName": "Claude Code Enhanced",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "**/node-pty/**",
+      "**/@anthropic-ai/claude-agent-sdk/**"
+    ],
+    "linux": {
+      "target": [
+        "deb",
+        "AppImage"
+      ],
+      "category": "Development",
+      "maintainer": "CCE Builders <cce@users.noreply.github.com>",
+      "icon": "build/icon.png",
+      "desktop": {
+        "StartupWMClass": "claude-code-enhanced",
+        "Comment": "Enhanced desktop harness for the Claude Code CLI"
+      }
+    },
+    "deb": {
+      "artifactName": "claude-code-enhanced-${version}-${arch}.deb",
+      "synopsis": "Desktop harness for the Claude Code CLI (chat, terminals, MCP)",
+      "depends": [
+        "libgtk-3-0",
+        "libnotify4",
+        "libnss3",
+        "libxss1",
+        "libxtst6",
+        "xdg-utils",
+        "libatspi2.0-0",
+        "libuuid1",
+        "libsecret-1-0",
+        "libc6"
+      ]
+    },
+    "appImage": {
+      "artifactName": "claude-code-enhanced-${version}-${arch}.AppImage"
+    }
+  },
+  "homepage": "https://github.com/printezy247/claude-code-enhanced"
+}

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'" />
+  <title>Claude Code Enhanced</title>
+  <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="logo">
+        <span class="logo-mark">❯</span>
+        <span class="logo-text">Claude Code<br /><em>Enhanced</em></span>
+      </div>
+      <nav id="nav">
+        <button class="nav-btn active" data-view="terminal"><span class="ico">⌨</span><span>Sessions</span><span id="sess-count" class="badge">0</span></button>
+        <button class="nav-btn" data-view="chats"><span class="ico">🕘</span><span>History</span></button>
+        <button class="nav-btn" data-view="usage"><span class="ico">📊</span><span>Usage</span></button>
+        <button class="nav-btn" data-view="providers"><span class="ico">⬡</span><span>Providers</span></button>
+        <button class="nav-btn" data-view="connectors"><span class="ico">⧉</span><span>Connectors</span></button>
+        <button class="nav-btn" data-view="settings"><span class="ico">⚙</span><span>Settings</span></button>
+      </nav>
+      <div id="claude-banner" class="hidden"></div>
+      <div class="sidebar-foot" id="foot-info"></div>
+    </aside>
+
+    <main id="main">
+      <section id="view-terminal" class="view active">
+        <div id="tabbar">
+          <div id="tabs"></div>
+          <button id="btn-new-session" title="New session (Ctrl+Shift+T)">＋ new</button>
+        </div>
+        <div id="terminals"></div>
+        <div id="statusbar">
+          <span id="st-provider">—</span>
+          <span id="st-cwd"></span>
+          <span id="st-right"></span>
+        </div>
+      </section>
+
+      <section id="view-chats" class="view">
+        <div class="panel-head">
+          <h2>🕘 History</h2>
+          <button id="btn-chats-refresh" class="btn">↻ Refresh</button>
+        </div>
+        <div class="banner">
+          Every conversation the claude engine has on disk — desktop and terminal sessions alike,
+          grouped by recency. <b>open</b> resumes; <b>⑂</b> forks without touching the original; <b>🗑</b> deletes from disk.
+        </div>
+        <div id="chats-index"></div>
+      </section>
+
+      <section id="view-usage" class="view">
+        <div class="panel-head">
+          <h2>📊 Usage</h2>
+          <button id="btn-usage-refresh" class="btn">↻ Refresh</button>
+        </div>
+        <div class="banner">
+          Daily tokens and message counts parsed from the transcripts this machine stores under
+          <code>~/.claude/projects</code>. Cost is shown when the engine reports
+          <code>total_cost_usd</code> — relay and local models usually report $0.
+        </div>
+        <div id="usage-summary" class="banner"></div>
+        <div id="usage-days"></div>
+      </section>
+
+      <section id="view-providers" class="view">
+        <div class="panel-head">
+          <h2>Providers</h2>
+          <button id="btn-add-provider" class="btn primary">＋ Add provider</button>
+        </div>
+        <div id="provider-banner" class="banner"></div>
+        <div id="provider-grid" class="card-grid"></div>
+      </section>
+
+      <section id="view-connectors" class="view">
+        <div class="panel-head">
+          <h2>Connectors</h2>
+          <span id="connector-scope-wrap" class="scope-wrap">scope
+            <select id="connector-scope">
+              <option value="user" selected>user (all projects)</option>
+              <option value="project">project (.mcp.json)</option>
+              <option value="local">local (this project, private)</option>
+            </select>
+          </span>
+        </div>
+        <div class="banner">
+          Connectors are MCP servers added to the claude CLI. OAuth servers
+          authenticate on first use: run <code>/mcp</code> in any terminal session and
+          choose <b>Authenticate</b> — the browser flow is handled by claude itself.
+        </div>
+        <div id="connector-grid" class="card-grid"></div>
+        <div class="panel-head sub"><h3>Installed</h3><button id="btn-mcp-refresh" class="btn">↻ Refresh</button></div>
+        <div id="mcp-list-wrap">
+          <pre id="mcp-list" class="mcp-pre">click “Refresh” to run <code>claude mcp list</code>…</pre>
+        </div>
+        <div id="mcp-remove-row">
+          <select id="mcp-remove-name"><option value="">— server to remove —</option></select>
+          <button id="btn-mcp-remove" class="btn danger">Remove</button>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view">
+        <div class="panel-head"><h2>Settings</h2></div>
+        <div id="settings-body"></div>
+      </section>
+    </main>
+  </div>
+
+  <div id="modal-root"></div>
+  <div id="toasts"></div>
+
+  <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
+  <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>
+  <script src="../../node_modules/@xterm/addon-web-links/lib/addon-web-links.js"></script>
+  <script src="../../node_modules/marked/lib/marked.umd.js"></script>
+  <script src="../../node_modules/dompurify/dist/purify.min.js"></script>
+  <link rel="stylesheet" href="vendor/monaco.css">
+  <script src="vendor/monaco-env.js"></script>
+  <script src="vendor/monaco.js"></script>
+  <script src="chat.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
