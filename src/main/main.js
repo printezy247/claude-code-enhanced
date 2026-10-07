@@ -25,6 +25,10 @@ const tools = require('./tools');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = require('./localmodels');
 const SessionManager = require('./sessions');
 const { startProxy } = require('./proxy');
+// Per-launch secret the translator proxy requires on every request. The proxy
+// attaches real provider API keys, so without it any local process could spend
+// them. See issue #8.
+const proxyToken = require('crypto').randomBytes(24).toString('hex');
 let proxyPort = null;
 const ChatManager = require('./chats');
 
@@ -852,24 +856,48 @@ function registerIpc() {
 }
 
 // ---------- lifecycle ---------------------------------------------------------
-app.whenReady().then(async () => {
-  if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: app ready');
-  const proxy = await startProxy((uid) => {
-    const inst = store.providers.find(x => x.uid === uid);
-    return inst ? { baseUrl: inst.baseUrl, apiKey: inst.apiKey || inst.authToken || '' } : null;
+// Single-instance guard. Without it a second launch binds no proxy (fixed port
+// taken) and the user gets a window where every OpenAI-protocol chat silently
+// fails. See issue #22.
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    if (win && !win.isDestroyed()) {
+      if (win.isMinimized()) win.restore();
+      win.focus();
+    }
   });
-  proxyPort = proxy.port;
-  store.init();
-  if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: store ready');
-  providers.ensureDefaults(store);
-  claudeInfo = await detectClaude();
-  if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
-  registerIpc();
-  createWindow();
-  app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
-}).catch((err) => {
-  console.error('[cce] startup failed:', (err && err.stack) || err);
-});
+
+  app.whenReady().then(async () => {
+    if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: app ready');
+    // Bind an ephemeral port: a fixed one collides with any other listener and
+    // leaks provider API keys to whoever grabs it.
+    const proxy = await startProxy((uid) => {
+      const inst = store.providers.find(x => x.uid === uid);
+      return inst ? { baseUrl: inst.baseUrl, apiKey: inst.apiKey || inst.authToken || '' } : null;
+    }, { token: proxyToken, port: Number(process.env.CCE_PROXY_PORT || 0) });
+    proxyPort = proxy.port;
+    store.init();
+    if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: store ready');
+    providers.ensureDefaults(store);
+    // Register IPC before the CLI probe: detectClaude() shells out to
+    // `claude --version` (up to 15s), and the renderer calls handlers as soon
+    // as it loads. Handlers that need claudeInfo already read the mutable
+    // module-level variable, so registering first is safe.
+    registerIpc();
+    createWindow();
+    detectClaude().then((info) => {
+      claudeInfo = info;
+      if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
+      if (win && !win.isDestroyed()) win.webContents.send('claude:detected', claudeInfo);
+    });
+    app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
+  }).catch((err) => {
+    console.error('[cce] startup failed:', (err && err.stack) || err);
+  });
+}
 
 app.on('window-all-closed', () => app.quit());
 app.on('before-quit', () => { sessions.killAll(); chats.killAll(); });
