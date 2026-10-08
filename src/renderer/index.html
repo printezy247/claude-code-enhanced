@@ -16,9 +16,7 @@
         <span class="logo-text">Claude Code<br /><em>Enhanced</em></span>
       </div>
       <nav id="nav">
-        <button class="nav-btn active" data-view="terminal"><span class="ico">⌨</span><span>Sessions</span><span id="sess-count" class="badge">0</span></button>
-        <button class="nav-btn" data-view="chats"><span class="ico">🕘</span><span>History</span></button>
-        <button class="nav-btn" id="btn-toggle-convos" title="Conversation list (Ctrl+B)"><span class="ico">▤</span><span>Conversations</span></button>
+        <button class="nav-btn active" data-view="conversations"><span class="ico">▤</span><span>Conversations</span><span id="sess-count" class="badge">0</span></button>
         <button class="nav-btn" data-view="usage"><span class="ico">📊</span><span>Usage</span></button>
         <button class="nav-btn" data-view="providers"><span class="ico">⬡</span><span>Providers</span></button>
         <button class="nav-btn" data-view="connectors"><span class="ico">⧉</span><span>Connectors</span></button>
@@ -31,13 +29,23 @@
     <aside id="convos">
       <div class="convo-head">
         <input class="convo-search" type="text" placeholder="Search conversations…" />
-        <button class="btn small primary" id="btn-convo-refresh" title="Reload">↻</button>
+        <select class="convo-sort" title="Sort order">
+          <option value="new">newest first</option>
+          <option value="old">oldest first</option>
+          <option value="name">by name</option>
+        </select>
+        <select class="convo-filter" title="Filter by project folder">
+          <option value="">all folders</option>
+        </select>
+        <button class="btn small" id="btn-convo-refresh" title="Reload from disk">↻</button>
+        <button class="btn small" id="btn-convo-hide" title="Hide the list (Ctrl+B)">‹</button>
       </div>
       <div class="convo-list" id="convo-list"></div>
+      <div class="convo-foot" id="convo-foot"></div>
     </aside>
 
     <main id="main">
-      <section id="view-terminal" class="view active">
+      <section id="view-conversations" class="view active">
         <div id="tabbar">
           <div id="tabs"></div>
           <button id="btn-new-session" title="New session (Ctrl+Shift+T)">＋ new</button>
@@ -48,18 +56,6 @@
           <span id="st-cwd"></span>
           <span id="st-right"></span>
         </div>
-      </section>
-
-      <section id="view-chats" class="view">
-        <div class="panel-head">
-          <h2>🕘 History</h2>
-          <button id="btn-chats-refresh" class="btn">↻ Refresh</button>
-        </div>
-        <div class="banner">
-          Every conversation the claude engine has on disk — desktop and terminal sessions alike,
-          grouped by recency. <b>open</b> resumes; <b>⑂</b> forks without touching the original; <b>🗑</b> deletes from disk.
-        </div>
-        <div id="chats-index"></div>
       </section>
 
       <section id="view-usage" class="view">

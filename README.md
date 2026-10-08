@@ -107,7 +107,19 @@ servers and settings from `~/.claude` all apply exactly as in the terminal.
 `providers:all/save/delete/default` · `connectors:presets/list/add/remove` ·
 `settings:get/set` · `dialog:pickDir`
 
-### Keyboard
+### Conversations
+
+One list, next to the workspace, covering both open chat/terminal tabs and every stored session:
+
+- grouped by the **folder** the conversation ran in, with time buckets (Today / Yesterday /
+  Earlier this week / Older) inside each group
+- **sort** dropdown (newest / oldest / by name) and a **folder filter**
+- **▾ per row**: open, fork, read-only transcript, export to markdown, new chat in that folder,
+  delete (two-step confirm)
+- clicking a row resumes that session live, with its transcript restored
+- `Ctrl+B` hides the list when you want more room for the chat
+
+## Keyboard
 
 `Ctrl+Shift+T` new session · `Ctrl+Shift+W` close tab · `Ctrl+Tab` next tab ·
 `Ctrl+K` command palette · `Ctrl+B` conversation list · `Alt+V` split view ·

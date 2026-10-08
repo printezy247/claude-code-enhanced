@@ -298,11 +298,16 @@ describe('shortcuts (#16, #17)', () => {
     expect(win.tabRegistry.size).toBeGreaterThanOrEqual(1);
   });
 
-  it('Ctrl+B toggles the conversation list', () => {
+  it('Ctrl+B hides the conversation list for more chat room, and back again', () => {
     const win = h.window;
-    const ev = new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true });
-    win.document.dispatchEvent(ev);
-    expect(win.document.querySelector('#convos').classList.contains('open')).toBe(true);
+    const box = win.document.querySelector('#convos');
+    // The list belongs to the Conversations view, so it starts open.
+    win.switchView('conversations');
+    expect(box.classList.contains('open')).toBe(true);
+    win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(box.classList.contains('open')).toBe(false);
+    win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true }));
+    expect(box.classList.contains('open')).toBe(true);
   });
 });
 

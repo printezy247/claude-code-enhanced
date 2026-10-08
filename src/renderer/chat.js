@@ -178,7 +178,9 @@ const Chat = (() => {
     $('#tabs').appendChild(tab);
     chat.tabEl = tab;
 
-    registerTab(id, { kind: 'chat', pane, tabEl: tab, focus: () => { if (chat.alive) chat.composer.focus(); } });
+    registerTab(id, { kind: 'chat', pane, tabEl: tab, sessionId: null, cwd: chat.cwd, focus: () => { if (chat.alive) chat.composer.focus(); } });
+    // The nav badge counts every open tab, chat tabs included.
+    if (typeof window.updateTabCount === 'function') window.updateTabCount();
 
     // project folder + linked GitHub repo, like the desktop header
     renderProjectInfo(chat);
@@ -427,6 +429,7 @@ const Chat = (() => {
     if (chat.alive) await ccx.invoke('chat:close', { id });
     chat.pane.remove(); chat.tabEl.remove(); chats.delete(id);
     if (window.__tabs) window.__tabs.delete(id);
+    if (typeof window.updateTabCount === 'function') window.updateTabCount();
     if (window.__activateNext) window.__activateNext(id);
   }
 
@@ -1530,95 +1533,10 @@ const Chat = (() => {
     });
   }
 
-  /* ---------------- sessions browser (claude-desktop / z.ai style) ---------------- */
+  /* ---------------- history panel (per-folder, inside a chat) ---------------- */
+  // The flat, all-projects conversation list now lives in app.js next to the
+  // workspace; this panel stays for the per-folder variant.
 
-  async function renderChatsIndex() {
-    const root = document.querySelector('#chats-index');
-    if (!root) return;
-    root.innerHTML = '';
-    const toolbar = el('div', 'hist-toolbar');
-    const search = el('input', 'skills-search');
-    search.type = 'text';
-    search.placeholder = 'Search conversations…';
-    toolbar.appendChild(search);
-    const fresh = el('button', 'btn primary small', '＋ new chat');
-    fresh.addEventListener('click', () => openNewSessionModal());
-    toolbar.appendChild(fresh);
-    root.appendChild(toolbar);
-    const listWrap = el('div', 'hist-list');
-    root.appendChild(listWrap);
-    listWrap.appendChild(el('div', 'hint', 'Loading sessions from the claude engine transcript store…'));
-
-    const r = await ccx.invoke('chats:index');
-    listWrap.innerHTML = '';
-    if (!r.ok) { listWrap.appendChild(el('div', 'hint', 'Failed to load: ' + r.error)); return; }
-    const sessions = r.sessions || [];
-    if (!sessions.length) { listWrap.appendChild(el('div', 'hint', 'No sessions yet — start a chat and it will appear here.')); }
-
-    const render = () => {
-      const q = (search.value || '').trim().toLowerCase();
-      listWrap.innerHTML = '';
-      const filtered = sessions.filter(s => !q ||
-        (s.preview || '').toLowerCase().includes(q) ||
-        (s.cwd || s.folder || '').toLowerCase().includes(q));
-      const now = Date.now();
-      const buckets = [
-        ['Today', 24 * 3600e3], ['Yesterday', 48 * 3600e3], ['Previous 7 days', 7 * 86400e3],
-        ['Previous 30 days', 30 * 86400e3], ['Older', Infinity],
-      ];
-      let shown = 0;
-      for (let bi = 0; bi < buckets.length; bi++) {
-        const [label, within] = buckets[bi];
-        const prevWithin = bi === 0 ? 0 : buckets[bi - 1][1];
-        const items = filtered.filter(s => now - s.mtime <= within && now - s.mtime > prevWithin);
-        if (!items.length) continue;
-        const sec = el('div', 'hist-section');
-        sec.appendChild(el('h5', '', label));
-        for (const s of items) {
-          shown++;
-          const row = el('div', 'hist-row');
-          const main = el('div', 'hist-main');
-          main.appendChild(el('div', 'hist-preview', s.preview));
-          main.appendChild(el('div', 'hist-meta', '📁 ' + basename(s.cwd || s.folder)));
-          row.appendChild(main);
-          row.appendChild(el('span', 'chip', fmtAge(s.mtime)));
-          const acts = el('div', 'hist-actions');
-          const open = el('button', 'btn small primary', 'open');
-          open.addEventListener('click', () => createSession({ cwd: s.cwd || s.folder, resume: s.sessionId }));
-          const fork = el('button', 'btn small', '⑂');
-          fork.title = 'Fork — branch without touching the original';
-          fork.addEventListener('click', () => createSession({ cwd: s.cwd || s.folder, resume: s.sessionId, fork: true }));
-          const del = el('button', 'btn small danger', '🗑');
-          let armed = false;
-          del.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            if (!armed) { armed = true; del.textContent = 'sure?'; setTimeout(() => { armed = false; del.textContent = '🗑'; }, 2500); return; }
-            const rd = await ccx.invoke('chat:delete', { cwd: s.cwd || s.folder, sessionId: s.sessionId });
-            if (rd.ok) { row.remove(); toast('Session deleted', 'ok'); } else toast(rd.error, 'err');
-          });
-          const exp = el('button', 'btn small', '⤓');
-          exp.title = 'Export this conversation as markdown';
-          exp.addEventListener('click', async (e) => {
-            e.stopPropagation();
-            const r = await ccx.invoke('chat:export', { cwd: s.cwd || s.folder, sessionId: s.sessionId });
-            if (r.ok && r.saved) toast('Saved ' + r.path, 'ok');
-            else if (r.ok) { /* user cancelled */ }
-            else toast(r.error, 'err');
-          });
-          acts.appendChild(open); acts.appendChild(fork); acts.appendChild(exp); acts.appendChild(del);
-          row.appendChild(acts);
-          row.addEventListener('click', () => open.click());
-          sec.appendChild(row);
-        }
-        listWrap.appendChild(sec);
-      }
-      if (!shown) listWrap.appendChild(el('div', 'hint', 'Nothing matches “' + q + '”.'));
-    };
-    search.addEventListener('input', render);
-    render();
-  }
-
-  /* ---------------- history panel ---------------- */
 
   async function toggleHistoryPanel(chat) {
     let panel = chat.pane.querySelector('.chat-history-panel');
@@ -1855,6 +1773,15 @@ const Chat = (() => {
 
   function handleMessage(chat, msg) {
     if (!msg || !msg.type) return;
+    // Track the engine session id on the tab so the conversation list can mark
+    // which rows are already open.
+    if (msg.session_id && chat.tabEl) {
+      const meta = window.__tabs && window.__tabs.get(chat.id);
+      if (meta && meta.sessionId !== msg.session_id) {
+        meta.sessionId = msg.session_id;
+        window.onConvoSessionsChanged && window.onConvoSessionsChanged();
+      }
+    }
     switch (msg.type) {
       case 'system':
         if (msg.subtype === 'init') { chat.init = msg; onInit(chat); }
@@ -2944,5 +2871,5 @@ const Chat = (() => {
     }
   });
 
-  return { createSession, handleEvent, chats, closeChat, activateChat, renderChatsIndex };
+  return { createSession, handleEvent, chats, closeChat, activateChat };
 })();

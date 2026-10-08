@@ -55,16 +55,22 @@ const TERM_THEME = {
 /* ================= view switching ================= */
 
 function switchView(view) {
+  // 'terminal' is the old name for the Conversations workspace; keep it working
+  // for any caller that has not been updated.
+  if (view === 'terminal') view = 'conversations';
   state.view = view;
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
   document.querySelectorAll('.view').forEach(v =>
     v.classList.toggle('active', v.id === 'view-' + view));
-  if (view === 'terminal') {
+  if (view === 'conversations') {
+    // The list belongs to this tab, so it is always present here.
+    const box = document.querySelector('#convos');
+    if (box) box.classList.add('open');
     const s = state.sessions.get(state.activeId);
     if (s) { s.fit && s.fit.fit(); s.term && s.term.focus(); }
+    if (convoSessions.length) renderConversationList(); else loadConversationList();
   }
-  if (view === 'chats') Chat.renderChatsIndex();
   if (view === 'usage') renderUsage();
   if (view === 'providers') renderProviders();
   if (view === 'connectors') renderConnectors();
@@ -102,80 +108,276 @@ function applyTheme(theme) {
 window.applyTheme = applyTheme;
 
 /* ================= conversation list (#34) ================= */
+/*
+ * One list for everything: open chat/terminal tabs and every stored session.
+ * Grouped by the folder the conversation ran in, with time buckets inside
+ * each group. Clicking a row resumes that session live.
+ */
 
 let convoSessions = [];
 
-function renderConversationList(filter) {
+/** Folders present in the current list, most recent first. */
+function convoFolders() {
+  const counts = new Map();
+  for (const s of convoSessions) {
+    const key = String(s.cwd || s.folder || '~');
+    const cur = counts.get(key);
+    if (!cur || s.mtime > cur.mtime) counts.set(key, { cwd: key, mtime: s.mtime });
+  }
+  return [...counts.values()].sort((a, b) => b.mtime - a.mtime);
+}
+
+/** "3 minutes ago" style label, shorter than the old 1m/1h/1d buckets. */
+function convoAge(ms) {
+  const s = Math.max(0, (Date.now() - ms) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + 'm ago';
+  if (s < 86400) return Math.round(s / 3600) + 'h ago';
+  if (s < 604800) return Math.round(s / 86400) + 'd ago';
+  return new Date(ms).toLocaleDateString();
+}
+
+/** Time buckets used inside each folder group. */
+const CONVO_BUCKETS = [
+  ['Today', 24 * 3600e3],
+  ['Yesterday', 48 * 3600e3],
+  ['Earlier this week', 7 * 86400e3],
+  ['Older', Infinity],
+];
+
+function renderConversationList() {
   const root = document.querySelector('#convo-list');
   if (!root) return;
-  root.innerHTML = '';
-  const q = String(filter || '').trim().toLowerCase();
-  const items = convoSessions.filter((s) => !q
+  const foot = document.querySelector('#convo-foot');
+  const q = String((document.querySelector('.convo-search') || {}).value || '').trim().toLowerCase();
+  const folder = (document.querySelector('.convo-filter') || {}).value || '';
+  const sort = (document.querySelector('.convo-sort') || {}).value || 'new';
+
+  let items = convoSessions.filter((s) => !q
     || String(s.preview || '').toLowerCase().includes(q)
     || String(s.cwd || s.folder || '').toLowerCase().includes(q));
+  if (folder) items = items.filter((s) => String(s.cwd || s.folder || '~') === folder);
+
+  // Sort first, then bucket: the bucket pass preserves this order inside groups.
+  if (sort === 'new') items.sort((a, b) => b.mtime - a.mtime);
+  else if (sort === 'old') items.sort((a, b) => a.mtime - b.mtime);
+  else items.sort((a, b) => String(a.preview || '').localeCompare(String(b.preview || '')));
+
+  root.innerHTML = '';
+  if (foot) {
+    foot.textContent = items.length === convoSessions.length
+      ? convoSessions.length + ' conversation' + (convoSessions.length === 1 ? '' : 's')
+      : items.length + ' of ' + convoSessions.length + ' conversations';
+  }
   if (!items.length) {
-    root.appendChild(el('div', 'hint', q ? 'Nothing matches.' : 'No conversations yet.'));
+    root.appendChild(el('div', 'hint', q || folder ? 'Nothing matches.' : 'No conversations yet.'));
     return;
   }
+
+  // Group by folder, folders ordered by their newest conversation.
+  const groups = new Map();
+  for (const s of items) {
+    const key = String(s.cwd || s.folder || '~');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(s);
+  }
+  // Folders follow the chosen direction too, so the whole list reads one way.
+  const byNewest = sort !== 'old';
+  const ordered = [...groups.entries()].sort((a, b) =>
+    byNewest ? b[1][0].mtime - a[1][0].mtime : a[1][0].mtime - b[1][0].mtime);
+
   const now = Date.now();
-  const buckets = [
-    ['Today', 24 * 3600e3], ['Yesterday', 48 * 3600e3],
-    ['Earlier this week', 7 * 86400e3], ['Older', Infinity],
-  ];
-  for (let bi = 0; bi < buckets.length; bi++) {
-    const [label, within] = buckets[bi];
-    const prev = bi === 0 ? 0 : buckets[bi - 1][1];
-    const rows = items.filter((s) => now - s.mtime <= within && now - s.mtime > prev);
-    if (!rows.length) continue;
-    root.appendChild(el('div', 'convo-sec', label));
-    for (const s of rows) {
-      const row = el('div', 'convo-row');
-      const main = el('div', 'convo-main');
-      main.appendChild(el('div', 'convo-preview', s.preview || '(empty session)'));
-      main.appendChild(el('div', 'convo-meta', basenameOf(s.cwd || s.folder) + ' · ' + fmtAgeOf(s.mtime)));
-      row.appendChild(main);
-      const close = el('button', 'btn small danger convo-close', '✕');
-      close.title = 'Delete this conversation from disk';
-      let armed = false;
-      close.addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (!armed) { armed = true; close.textContent = 'sure?'; setTimeout(() => { armed = false; close.textContent = '✕'; }, 2500); return; }
-        const r = await ccx.invoke('chat:delete', { cwd: s.cwd || s.folder, sessionId: s.sessionId });
-        if (r.ok) { convoSessions = convoSessions.filter((x) => x.sessionId !== s.sessionId); renderConversationList(q); }
-        else toast(r.error, 'err');
-      });
-      row.appendChild(close);
-      row.addEventListener('click', () => {
-        Chat.createSession({ cwd: s.cwd || s.folder, resume: s.sessionId });
-        switchView('terminal');
-      });
-      root.appendChild(row);
+  for (const [cwd, rows] of ordered) {
+    const sec = el('div', 'convo-group');
+    const head = el('div', 'convo-sec');
+    head.appendChild(el('span', 'cs-name', basenameOf(cwd)));
+    head.appendChild(el('span', 'cs-path', cwd === '~' ? '~' : cwd));
+    head.appendChild(el('span', 'cs-count', String(rows.length)));
+    head.title = cwd;
+    sec.appendChild(head);
+    const listEl = el('div', 'convo-rows');
+    sec.appendChild(listEl);
+
+    // Time buckets inside the folder, preserving the chosen sort within a bucket.
+    let bi = 0;
+    while (bi < CONVO_BUCKETS.length) {
+      const [label, within] = CONVO_BUCKETS[bi];
+      const prev = bi === 0 ? 0 : CONVO_BUCKETS[bi - 1][1];
+      const inBucket = rows.filter((s) => now - s.mtime <= within && now - s.mtime > prev);
+      if (inBucket.length) {
+        const bhead = el('div', 'convo-bucket', label);
+        listEl.appendChild(bhead);
+        for (const s of inBucket) listEl.appendChild(convoRow(s, cwd));
+      }
+      bi++;
     }
+    root.appendChild(sec);
   }
 }
 
-async function loadConversationList(filter) {
-  const r = await ccx.invoke('chats:index');
-  if (r.ok) convoSessions = r.sessions || [];
-  renderConversationList(filter);
+/** One conversation row: preview, age, and a ▾ actions menu. */
+function convoRow(s, cwd) {
+  const row = el('div', 'convo-row');
+  row.title = (s.preview || '(empty session)') + '\n' + cwd;
+  const main = el('div', 'convo-main');
+  main.appendChild(el('div', 'convo-preview', s.preview || '(empty session)'));
+  main.appendChild(el('div', 'convo-meta', basenameOf(cwd) + ' · ' + convoAge(s.mtime)));
+  row.appendChild(main);
+
+  // Live tab state, so the row shows which conversations are already open.
+  const openTab = [...tabRegistry.entries()].find(([, meta]) =>
+    meta.sessionId === s.sessionId);
+  if (openTab) {
+    row.classList.add('is-open');
+    row.appendChild(el('span', 'chip open-chip', 'open'));
+  }
+
+  const menu = el('button', 'convo-more', '▾');
+  menu.title = 'Conversation actions';
+  menu.addEventListener('click', (e) => {
+    e.stopPropagation();
+    openConvoMenu(menu, s, cwd);
+  });
+  row.appendChild(menu);
+
+  row.addEventListener('click', () => {
+    Chat.createSession({ cwd, resume: s.sessionId });
+    switchView('conversations');
+  });
+  return row;
 }
 
+/** The ▾ dropdown for one conversation. */
+function openConvoMenu(anchor, s, cwd) {
+  document.querySelectorAll('.convo-menu').forEach(m => m.remove());
+  const menu = el('div', 'convo-menu');
+  const add = (label, hint, run) => {
+    const b = el('button', 'convo-menu-item');
+    b.appendChild(el('span', 'cm-label', label));
+    if (hint) b.appendChild(el('span', 'cm-hint', hint));
+    b.addEventListener('click', () => { menu.remove(); run(); });
+    menu.appendChild(b);
+    return b;
+  };
+  add('Open', 'resume live', () => {
+    Chat.createSession({ cwd, resume: s.sessionId });
+    switchView('conversations');
+  });
+  add('Fork', 'branch a copy', () => {
+    Chat.createSession({ cwd, resume: s.sessionId, fork: true });
+    switchView('conversations');
+  });
+  add('Transcript', 'read it first', () => showTranscript(s, cwd));
+  add('Export', 'markdown file', async () => {
+    const r = await ccx.invoke('chat:export', { cwd, sessionId: s.sessionId });
+    if (r.ok && r.saved) toast('Saved ' + r.path, 'ok');
+    else if (!r.ok) toast(r.error, 'err');
+  });
+  add('New chat in this folder', basenameOf(cwd), () => {
+    Chat.createSession({ cwd });
+    switchView('conversations');
+  });
+  const del = add('Delete', 'removes from disk', async () => {
+    const r = await ccx.invoke('chat:delete', { cwd, sessionId: s.sessionId });
+    if (!r.ok) return toast(r.error, 'err');
+    convoSessions = convoSessions.filter((x) => x.sessionId !== s.sessionId);
+    renderConversationList();
+    toast('Conversation deleted', 'ok');
+  });
+  del.classList.add('danger');
+  let armed = false;
+  del.addEventListener('click', (e) => {
+    if (!armed) { e.stopPropagation(); armed = true; del.querySelector('.cm-hint').textContent = 'sure?'; setTimeout(() => { armed = false; }, 2500); return; }
+  }, true);
+
+  const r = anchor.getBoundingClientRect();
+  menu.style.position = 'fixed';
+  menu.style.top = r.bottom + 4 + 'px';
+  menu.style.left = Math.max(8, r.right - 240) + 'px';
+  document.body.appendChild(menu);
+  const away = (e) => {
+    if (menu.contains(e.target) || anchor.contains(e.target)) return;
+    menu.remove();
+    document.removeEventListener('mousedown', away);
+  };
+  setTimeout(() => document.addEventListener('mousedown', away), 0);
+}
+
+/** Read-only transcript modal, with Resume / Fork at the bottom. */
+async function showTranscript(s, cwd) {
+  const overlay = el('div', 'modal-overlay');
+  const modal = el('div', 'modal wide');
+  modal.appendChild(el('h3', '', (s.preview || 'Conversation').slice(0, 90)));
+  modal.appendChild(el('div', 'hint', cwd + ' · ' + new Date(s.mtime).toLocaleString()));
+  const body = el('pre', 'transcript-pre', 'loading…');
+  modal.appendChild(body);
+  const r = await ccx.invoke('chat:transcript', { cwd, sessionId: s.sessionId });
+  if (r && r.ok && r.items) {
+    body.textContent = r.items.map((it) => {
+      if (it.t === 'user') return '## You\n' + it.text;
+      if (it.t === 'assistant') return '## Claude\n' + it.text;
+      if (it.t === 'thinking') return '(thinking) ' + it.text.slice(0, 400);
+      return '[' + it.name + '] ' + JSON.stringify(it.input || {}).slice(0, 300);
+    }).join('\n\n') || '(empty)';
+  } else {
+    body.textContent = 'could not read this transcript' + (r && r.error ? ': ' + r.error : '');
+  }
+  const actions = el('div', 'actions');
+  const close = el('button', 'btn', 'Close');
+  close.addEventListener('click', () => overlay.remove());
+  const resume = el('button', 'btn primary', 'Resume');
+  resume.addEventListener('click', () => {
+    overlay.remove();
+    Chat.createSession({ cwd, resume: s.sessionId });
+    switchView('conversations');
+  });
+  const fork = el('button', 'btn', 'Fork');
+  fork.addEventListener('click', () => {
+    overlay.remove();
+    Chat.createSession({ cwd, resume: s.sessionId, fork: true });
+    switchView('conversations');
+  });
+  actions.appendChild(close); actions.appendChild(fork); actions.appendChild(resume);
+  modal.appendChild(actions);
+  overlay.appendChild(modal);
+  overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
+  document.querySelector('#modal-root').appendChild(overlay);
+}
+
+/** Repopulate the folder dropdown, preserving the current selection. */
+function refreshConvoFolderFilter() {
+  const sel = document.querySelector('.convo-filter');
+  if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = '';
+  const all = el('option', '', 'all folders');
+  all.value = '';
+  sel.appendChild(all);
+  for (const f of convoFolders()) {
+    const o = el('option', '', basenameOf(f.cwd) + '  (' + f.cwd + ')');
+    o.value = f.cwd;
+    sel.appendChild(o);
+  }
+  sel.value = keep;
+}
+
+async function loadConversationList() {
+  const r = await ccx.invoke('chats:index');
+  if (r.ok) convoSessions = r.sessions || [];
+  refreshConvoFolderFilter();
+  renderConversationList();
+}
+
+/** Show or hide the list. It is open by default in the Conversations view. */
 function toggleConversations(force) {
-  const el2 = document.querySelector('#convos');
-  if (!el2) return;
-  const open = force !== undefined ? force : !el2.classList.contains('open');
-  el2.classList.toggle('open', open);
-  if (open) loadConversationList(document.querySelector('.convo-search')?.value);
+  const box = document.querySelector('#convos');
+  if (!box) return;
+  const open = force !== undefined ? force : !box.classList.contains('open');
+  box.classList.toggle('open', open);
+  if (open) loadConversationList();
 }
 
 const basenameOf = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() || String(p || '');
-function fmtAgeOf(ms) {
-  const m = Math.max(1, Math.round((Date.now() - ms) / 60000));
-  if (m < 60) return m + 'm';
-  const h = Math.round(m / 60);
-  if (h < 24) return h + 'h';
-  return Math.round(h / 24) + 'd';
-}
 
 /* ================= split view (#44) ================= */
 
@@ -241,6 +443,11 @@ function renderSplit() {
 }
 window.toggleSplit = toggleSplit;
 window.renderSplit = renderSplit;
+
+/** Chat.js calls this when a tab learns its engine session id. */
+window.onConvoSessionsChanged = () => {
+  if (state.view === 'conversations' && convoSessions.length) renderConversationList();
+};
 
 function fitSize(s) {
   try { s.fit.fit(); } catch { /* hidden */ }
@@ -357,6 +564,7 @@ async function killSession(id) {
 function updateSessionCount() {
   $('#sess-count').textContent = String(tabRegistry.size);
 }
+window.updateTabCount = updateSessionCount;
 
 function updateStatusbar(sess) {
   const p = sess.provider;
@@ -1286,13 +1494,14 @@ function wireChrome() {
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.addEventListener('click', () => switchView(b.dataset.view)));
   $('#btn-new-session').addEventListener('click', openNewSessionModal);
-  $('#btn-chats-refresh').addEventListener('click', () => Chat.renderChatsIndex());
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
   $('#btn-add-provider').addEventListener('click', () => openProviderEditor(null));
   $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);
-  $('#btn-toggle-convos').addEventListener('click', () => toggleConversations());
-  $('#btn-convo-refresh').addEventListener('click', () => loadConversationList(document.querySelector('.convo-search')?.value));
-  document.querySelector('.convo-search')?.addEventListener('input', (e) => renderConversationList(e.target.value));
+  $('#btn-convo-refresh').addEventListener('click', () => loadConversationList());
+  $('#btn-convo-hide').addEventListener('click', () => toggleConversations(false));
+  document.querySelector('.convo-search')?.addEventListener('input', () => renderConversationList());
+  document.querySelector('.convo-sort')?.addEventListener('change', () => renderConversationList());
+  document.querySelector('.convo-filter')?.addEventListener('change', () => renderConversationList());
   $('#btn-split-close').addEventListener('click', () => toggleSplit(false));
   $('#split-kind')?.addEventListener('change', renderSplit);
 
@@ -1398,6 +1607,8 @@ async function renderUsage() {
   sum.textContent = 'loading…';
   box.innerHTML = '';
   const r = await ccx.invoke('usage:scan');
+  // The view can be torn down while the (slow) transcript scan runs.
+  if (!sum || !box || !sum.isConnected) return;
   if (!r.ok) { sum.textContent = 'failed: ' + r.error; return; }
   const days = r.days || [];
   const max = Math.max(...days.map(d => d.tokens), 1);

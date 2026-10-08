@@ -174,7 +174,16 @@ describe('message rendering', () => {
 });
 
 describe('chat tab count (#14)', () => {
-  it('reports the number of open chat tabs', () => {
+  it('counts chat tabs in the nav badge', async () => {
     expect(h.window.tabRegistry.size).toBeGreaterThanOrEqual(1);
+    expect(h.window.document.querySelector('#sess-count').textContent)
+      .toBe(String(h.window.tabRegistry.size));
+  });
+
+  it('decrements when a chat tab closes', async () => {
+    const before = Number(h.window.document.querySelector('#sess-count').textContent);
+    await h.window.Chat.closeChat('c1');
+    await flush();
+    expect(Number(h.window.document.querySelector('#sess-count').textContent)).toBe(before - 1);
   });
 });
