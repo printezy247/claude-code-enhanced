@@ -29,6 +29,7 @@ const DEFAULT_SETTINGS = {
     allowedDomains: [],
   },
   localNumCtx: 131072,       // context to load local Ollama models with (claude base prompt needs ≥70K)
+  forceCtx: {},             // per-model override: { "qwen3-4b": 32000 } skips the floor (#11)
 };
 
 class Store {

@@ -407,3 +407,30 @@ describe('aggregate (non-streamed) translation', () => {
     expect(j.stop_reason).toBe('tool_use');
   });
 });
+
+describe('pathological input guards (#16, #17)', () => {
+  it('bails out of brace-heavy prose instead of scanning quadratic', async () => {
+    const { findBareToolStart } = require('../src/main/proxy.js');
+    // 3000 braces: without the attempt cap this walks ~3000 balanced scans.
+    const prose = ('log {key: 1} '.repeat(1500)).slice(0, 20000);
+    const t0 = Date.now();
+    const at = findBareToolStart(prose);
+    expect(Date.now() - t0).toBeLessThan(1000);
+    expect(at).toBe(-1);
+  });
+
+  it('exposes findBareToolStart for the guard test', async () => {
+    const m = require('../src/main/proxy.js');
+    expect(typeof m.findBareToolStart).toBe('function');
+  });
+
+  it('drops a call whose arguments are not JSON instead of inventing _raw', async () => {
+    const { parseToolJson } = require('../src/main/proxy.js');
+    expect(parseToolJson('{"name":"Bash","arguments":"just run it"}')).toBeNull();
+    // Real JSON strings still parse.
+    expect(parseToolJson('{"name":"Bash","arguments":"{\\"command\\":\\"ls\\"}"}'))
+      .toEqual({ name: 'Bash', args: { command: 'ls' } });
+    // Non-object args are rejected too.
+    expect(parseToolJson('{"name":"Bash","arguments":42}')).toBeNull();
+  });
+});

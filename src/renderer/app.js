@@ -31,6 +31,7 @@ const state = {
   settings: null,
   providers: { presets: [], instances: [], defaultUid: null },
   leanPresets: [],
+  leanAllTools: [],
   theme: 'dark',
   connectorPresets: [],
   sessions: new Map(),   // id -> { term, fit, tabEl, pane, alive, label, cwd, provider }
@@ -1034,6 +1035,8 @@ function renderProviders() {
 
   let curatedSel = new Set((instance && instance.models) || []);
   let leanSel = null;
+  let leanCustomWrap = null;
+  let leanCustomBoxes = [];
   if (state.leanPresets && state.leanPresets.length) {
     const lf = el('label', 'fld');
     lf.appendChild(el('span', '', 'Lean tools — cut the tool list for small local models (smaller base prompt)'));
@@ -1042,11 +1045,33 @@ function renderProviders() {
     for (const pr of state.leanPresets) {
       const o = el('option', '', pr.label + ' — ' + pr.tools.join(', ')); o.value = pr.id; leanSel.appendChild(o);
     }
-    leanSel.value = (instance && instance.leanTools && instance.leanTools[0])
-      ? (state.leanPresets.find(p => p.tools[0] === instance.leanTools[0]) || {}).id || ''
+    const custom = el('option', '', 'custom — pick tools below'); custom.value = 'custom'; leanSel.appendChild(custom);
+    // A hand-picked list matches no preset; show it as custom with its boxes ticked. #12
+    const current = (instance && instance.leanTools) || [];
+    const matched = current.length
+      ? (state.leanPresets.find(p => p.tools.length === current.length && p.tools.every(t => current.includes(t))) || {}).id
       : '';
+    leanSel.value = matched || (current.length ? 'custom' : '');
     lf.appendChild(leanSel);
     grid.appendChild(lf);
+    // Per-tool checklist, visible only for the custom preset. #12
+    leanCustomWrap = el('div', 'lean-custom');
+    const tools = (state.leanAllTools && state.leanAllTools.length) ? state.leanAllTools : [];
+    for (const t of tools) {
+      const cb = el('input'); cb.type = 'checkbox'; cb.value = t;
+      cb.checked = current.includes(t);
+      if (!current.length) cb.checked = ['Read', 'Grep', 'Glob', 'Bash', 'TodoWrite'].includes(t);
+      const l = el('label', 'check lean-tool');
+      l.appendChild(cb); l.appendChild(el('span', 'mono', t));
+      leanCustomWrap.appendChild(l);
+      leanCustomBoxes.push(cb);
+    }
+    leanCustomWrap.appendChild(el('div', 'hint', 'MCP tools (mcp__*) are dynamic per session and always stay on. Unticking the tools a model needs will break it — when in doubt, keep Read, Bash and TodoWrite.'));
+    leanCustomWrap.style.display = leanSel.value === 'custom' ? '' : 'none';
+    leanSel.addEventListener('change', () => {
+      leanCustomWrap.style.display = leanSel.value === 'custom' ? '' : 'none';
+    });
+    grid.appendChild(leanCustomWrap);
   }
   const baseUrlField = mkField('Base URL (empty = official Anthropic API)', 'f-base', baseUrl, 'text');
   baseUrlInputEl = baseUrlField.querySelector('input');
@@ -1131,8 +1156,11 @@ function renderProviders() {
       presetId: pSel.value,
       protocol: currentProtocol,
       models: [...curatedSel],
-      // Per-provider lean tool allowlist, for small local models. #41
+      // Per-provider lean tool allowlist, for small local models. #41 #12
       leanToolsPreset: leanSel ? leanSel.value : (instance && instance.leanTools ? '__keep' : ''),
+      leanToolsCustom: leanSel && leanSel.value === 'custom'
+        ? leanCustomBoxes.filter(cb => cb.checked).map(cb => cb.value)
+        : undefined,
       name: nameInput.value.trim() || 'Provider',
       baseUrl: baseUrlField.querySelector('input').value.trim(),
       model: modelField.querySelector('input').value.trim(),
@@ -1165,6 +1193,7 @@ async function refreshProviders() {
   if (r.ok) {
     state.providers = { presets: r.presets, instances: r.instances, defaultUid: r.defaultUid };
     if (r.leanPresets) state.leanPresets = r.leanPresets;
+    if (r.leanAllTools) state.leanAllTools = r.leanAllTools;
     if (state.view === 'providers') renderProviders();
   }
 }
@@ -1269,6 +1298,18 @@ async function refreshMcpList() {
 
 /* ================= settings view ================= */
 
+/** Parse the `model=number` per-line force-context box into {model: ctx}. */
+function parseForceCtx(text) {
+  const out = {};
+  for (const line of String(text || '').split('\n')) {
+    const m = line.trim().match(/^(.+?)\s*=\s*(\d+)\s*$/);
+    if (!m) continue;
+    const ctx = Number(m[2]);
+    if (ctx >= 4096 && ctx <= 4000000) out[m[1].trim().toLowerCase()] = ctx;
+  }
+  return out;
+}
+
 function renderSettings() {
   const body = $('#settings-body');
   if (body.childElementCount) return;
@@ -1303,6 +1344,25 @@ function renderSettings() {
   fontRow.appendChild(sbInput);
   c2.appendChild(fontRow);
   c2.appendChild(el('div', 'hint', 'Font size applies to new sessions; scrollback to new sessions. Copy: Ctrl+Shift+C · Paste: Ctrl+Shift+V · New tab: Ctrl+Shift+T'));
+  const pathRow = el('div', 'inline');
+  pathRow.appendChild(el('span', 'hint', 'Agent PATH'));
+  const pathState = el('span', 'hint mono', (s.loginEnv && s.loginEnv.PATH ? s.loginEnv.PATH.split(':').length + ' dirs' : 'from login shell'));
+  pathState.title = (s.loginEnv && s.loginEnv.PATH) || '';
+  const pathBtn = el('button', 'btn small', 'Refresh PATH');
+  pathBtn.title = 'Re-read your login shell (picks up tools installed while the app is running). Applies to new sessions.';
+  pathBtn.addEventListener('click', async () => {
+    pathBtn.disabled = true;
+    const r = await ccx.invoke('env:refresh');
+    pathBtn.disabled = false;
+    if (r.ok) {
+      state.settings.loginEnv = { PATH: r.PATH };
+      pathState.textContent = r.PATH.split(':').length + ' dirs';
+      pathState.title = r.PATH;
+      toast('PATH refreshed — new sessions see newly installed tools', 'ok');
+    } else toast(r.error, 'err');
+  });
+  pathRow.appendChild(pathState); pathRow.appendChild(pathBtn);
+  c2.appendChild(pathRow);
   body.appendChild(c2);
 
   // privacy
@@ -1413,6 +1473,16 @@ function renderSettings() {
   localCtxSel.value = String(s.localNumCtx || 131072);
   lctxRow.appendChild(localCtxSel);
   c8.appendChild(lctxRow);
+  // Per-model context override: skips the 70K floor for that model. Warn, don't
+  // block — a small model may still serve simple turns, and it is the user's call. #11
+  const forceLbl = el('label', 'fld');
+  forceLbl.appendChild(el('span', '', 'Force context per model — one `model=number` per line. The engine usually rejects turns past the model\u2019s real context, so use this only for models you know.'));
+  const forceInput = el('textarea', 'force-ctx');
+  forceInput.rows = 2;
+  forceInput.placeholder = 'qwen3-4b=32768';
+  forceInput.value = Object.entries(s.forceCtx || {}).map(([k, v]) => k + '=' + v).join('\n');
+  forceLbl.appendChild(forceInput);
+  c8.appendChild(forceLbl);
   body.appendChild(c8);
 
   // appearance (#47) + window behaviour (#46) + notifications (#36)
@@ -1487,6 +1557,7 @@ function renderSettings() {
       effort: efInput.value.trim(),
       context1m: m1c.checked,
       localNumCtx: Number(localCtxSel.value) || 131072,
+      forceCtx: parseForceCtx(forceInput.value),
       theme: themeSel.value,
       closeToTray: trayCheck.checked,
       notifyOnDone: notifyCheck.checked,
@@ -1719,6 +1790,7 @@ function fmtTokShort(n) {
   state.info = { appVersion: info.appVersion, electron: info.electron, claude: info.claude, home: info.home };
   state.providers = { presets: provAll.presets, instances: provAll.instances, defaultUid: provAll.defaultUid };
   state.leanPresets = (provAll.leanPresets || (settingsRes.leanPresets || []));
+  state.leanAllTools = (provAll.leanAllTools || settingsRes.leanAllTools || []);
   state.settings = settingsRes.settings;
   applyTheme(state.settings.theme);   // #47
   state.connectorPresets = connPresets.presets;

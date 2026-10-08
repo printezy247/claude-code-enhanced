@@ -344,3 +344,13 @@ describe('local model reliability (#43)', () => {
     withProvider.window.close();
   });
 });
+describe('force-context parsing (#11)', () => {
+  it('parses model=number lines and rejects junk', () => {
+    const parse = h.window.parseForceCtx;
+    expect(parse('qwen3-4b=32768')).toEqual({ 'qwen3-4b': 32768 });
+    expect(parse('QWEN3-4B = 16384\nnot-a-line\nx=abc\ny=100')).toEqual({ 'qwen3-4b': 16384 });
+    expect(parse('')).toEqual({});
+    // Bounds: too small or absurd values are dropped.
+    expect(parse('m=100')).toEqual({});
+  });
+});

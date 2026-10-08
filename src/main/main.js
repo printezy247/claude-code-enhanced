@@ -106,6 +106,11 @@ function loginEnv() {
   } catch { loginEnvCache = {}; }
   return loginEnvCache;
 }
+/** Re-probe the login shell (newly installed tools appear). #21 */
+function refreshLoginEnv() {
+  loginEnvCache = null;
+  return loginEnv();
+}
 /** PATH first, then anything the login shell added that we lack. */
 function envWithLoginPath(base = {}) {
   const le = loginEnv();
@@ -121,6 +126,21 @@ const LEAN_PRESETS = {
   lean: { label: 'Lean coding', tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'TodoWrite'] },
   minimal: { label: 'Minimal (read + bash)', tools: ['Read', 'Grep', 'Bash'] },
 };
+
+// Every tool the checklist can offer. MCP tools (mcp__*) are dynamic per
+// session and always stay on — the allowlist only trims built-ins. #12
+const LEAN_ALL_TOOLS = ['Read', 'Write', 'Edit', 'MultiEdit', 'NotebookRead', 'NotebookEdit',
+  'Bash', 'BashOutput', 'KillShell', 'Grep', 'Glob', 'Task', 'Agent', 'TodoWrite',
+  'Skill', 'WebFetch', 'WebSearch', 'AskUserQuestion', 'ExitPlanMode'];
+const LEAN_KNOWN = new Set(LEAN_ALL_TOOLS);
+
+// Per-model context override (Settings → Local models). A model name mapped
+// here skips the 70K floor and loads at exactly that size. #11
+function forcedCtxFor(settings, model) {
+  const map = (settings && settings.forceCtx) || {};
+  const hit = map[String(model || '').toLowerCase()];
+  return Number(hit) > 0 ? Number(hit) : 0;
+}
 
 const MIME_BY_EXT = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
@@ -381,6 +401,7 @@ function registerIpc() {
   handle('providers:all', async () => ({
     presets: providers.PRESETS,
     leanPresets: Object.entries(LEAN_PRESETS).map(([id, p]) => ({ id, label: p.label, tools: p.tools })),
+    leanAllTools: LEAN_ALL_TOOLS.slice(),
     instances: store.providers.map(providers.publicInstance),
     defaultUid: store.settings.defaultProviderUid,
   }));
@@ -431,9 +452,13 @@ function registerIpc() {
         // Editing an existing provider without touching the field.
       } else if (id && LEAN_PRESETS[id]) {
         instance.leanTools = LEAN_PRESETS[id].tools.slice();
+      } else if (id === 'custom' && Array.isArray(instance.leanToolsCustom)) {
+        // Per-tool checklist from the provider editor. #12
+        instance.leanTools = instance.leanToolsCustom.map(String).filter(t => LEAN_KNOWN.has(t));
+        if (!instance.leanTools.length) instance.leanTools = null;
+        delete instance.leanToolsCustom;
       } else if (Array.isArray(instance.leanTools)) {
-        const known = new Set([].concat(...Object.values(LEAN_PRESETS).map(p => p.tools)));
-        instance.leanTools = instance.leanTools.map(String).filter(t => known.has(t));
+        instance.leanTools = instance.leanTools.map(String).filter(t => LEAN_KNOWN.has(t));
         if (!instance.leanTools.length) instance.leanTools = null;
       } else {
         instance.leanTools = null;
@@ -684,7 +709,7 @@ function registerIpc() {
       if (picked) { effModel = picked; model = picked; }
     }
     if (provider && provider.baseUrl && effModel && !useProxy) {
-      const warm = await warmOllamaModel(provider.baseUrl, effModel, Number(store.settings.localNumCtx || 131072));
+      const warm = await warmOllamaModel(provider.baseUrl, effModel, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, effModel) });
       if (!warm.ok) return { ok: false, error: warm.error };
       if (warm.corrected) model = warm.corrected;   // typo/alias fixed against the server's real tags
     }
@@ -719,7 +744,7 @@ function registerIpc() {
     model = sanitizeModel(model);
     const isNativeOllama = !!(prov && prov.baseUrl) && !usesProxy(prov);
     if (isNativeOllama && eff) {
-      const warm = await warmOllamaModel(prov.baseUrl, eff, Number(store.settings.localNumCtx || 131072));
+      const warm = await warmOllamaModel(prov.baseUrl, eff, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, eff) });
       if (!warm.ok) return { blocked: true, modelCtx: warm.native, error: warm.error };
       if (warm.corrected) model = warm.corrected;   // dropdown/custom entry fixed to a real tag
     }
@@ -775,6 +800,13 @@ function registerIpc() {
   handle('chat:stopTask', async ({ id, taskId }) => await chats.stopTask(id, taskId));
   // Runtime tools skills rely on (bun/uv run skill scripts, git imports skills).
   handle('tools:check', async () => await tools.check());
+
+  // Re-read the login-shell environment so tools installed while the app is
+  // running become visible to new sessions. #21
+  handle('env:refresh', async () => {
+    const env = refreshLoginEnv();
+    return { PATH: env.PATH || process.env.PATH || '' };
+  });
 
   // Import skills from a git repo: clone shallow, copy every directory that
   // holds a SKILL.md into ~/.claude/skills/<name>.
@@ -855,7 +887,7 @@ function registerIpc() {
     if (action === 'load') {
       // Same memory-aware step-down as chat pre-warm — a too-large num_ctx
       // kills the runner instead of loading.
-      const warm = await warmOllamaModel(base, model, numCtx || Number(store.settings.localNumCtx || 131072));
+      const warm = await warmOllamaModel(base, model, numCtx || Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, model) });
       return { ok: warm.ok, ctx: warm.ctx, error: warm.error };
     }
     const body = { model, prompt: '', stream: false };
@@ -1144,6 +1176,7 @@ function registerIpc() {
     settings: { ...store.settings, loginEnv: { PATH: loginEnv().PATH || '' } },
     claude: claudeInfo,
     leanPresets: Object.entries(LEAN_PRESETS).map(([id, p]) => ({ id, label: p.label, tools: p.tools })),
+    leanAllTools: LEAN_ALL_TOOLS.slice(),
   }));
   handle('settings:set', async ({ settings }) => {
     const incoming = { ...settings };

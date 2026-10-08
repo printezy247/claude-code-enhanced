@@ -91,6 +91,7 @@ window.toast = toast;
 window.state = state;
 window.tabRegistry = tabRegistry;
 window.__activate = window.__activate;
+window.parseForceCtx = (typeof parseForceCtx !== 'undefined') ? parseForceCtx : undefined;
 `);
 
   return { dom, window, ccx, calls, listeners };

@@ -187,3 +187,64 @@ describe('chat tab count (#14)', () => {
     expect(Number(h.window.document.querySelector('#sess-count').textContent)).toBe(before - 1);
   });
 });
+describe('early tool results (#4) and registry cap (#8)', () => {
+  it('buffers a result that beats its card and applies it on arrival', () => {
+    const send = (msg) => h.window.Chat.handleEvent({ id: 'c1', kind: 'message', msg });
+    // Result first: no card exists yet.
+    send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'early1', content: 'file contents here' }] } });
+    const chat = h.window.Chat.chats.get('c1');
+    expect(chat.pendingResults.has('early1')).toBe(true);
+    // Card arrives later and resolves immediately.
+    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'early1', name: 'Bash', input: { command: 'echo hi' } }] } });
+    const card = chat.msgs.querySelector('.tool-card');
+    expect(card).toBeTruthy();
+    expect(card.querySelector('.tool-output').textContent).toContain('file contents here');
+    expect(chat.pendingResults.has('early1')).toBe(false);
+  });
+
+  it('caps the tool registry instead of growing forever', () => {
+    const chat = h.window.Chat.chats.get('c1');
+    const send = (msg) => h.window.Chat.handleEvent({ id: 'c1', kind: 'message', msg });
+    for (let i = 0; i < 350; i++) {
+      send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'cap' + i, name: 'Bash', input: { command: 'echo ' + i } }] } });
+    }
+    expect(chat.tools.size).toBeLessThanOrEqual(300);
+    // The newest card still resolves.
+    send({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'cap349', content: 'hit' }] } });
+    expect(chat.msgs.querySelector('.tool-output')).toBeTruthy();
+  });
+});
+
+describe('depth indicator (#18)', () => {
+  it('marks nested subagent calls with their depth', () => {
+    const send = (msg) => h.window.Chat.handleEvent({ id: 'c1', kind: 'message', msg });
+    send({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'task1', name: 'Task', input: { description: 'explore' } }] } });
+    // A Bash call nested inside the Task frame carries the parent id.
+    send({
+      type: 'assistant', parent_tool_use_id: 'task1',
+      message: { content: [{ type: 'tool_use', id: 'bash1', name: 'Bash', input: { command: 'ls' } }] },
+    });
+    const chips = [...h.window.document.querySelectorAll('.depth-chip')];
+    expect(chips.length).toBe(1);
+    expect(chips[0].textContent).toContain('depth 1');
+    // Top-level cards get no chip.
+    expect(h.window.document.querySelectorAll('.tool-card').length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+describe('resume refusal (#5)', () => {
+  it('explains a refused branch with a recovery action', () => {
+    h.window.Chat.handleEvent({
+      id: 'c1', kind: 'message',
+      msg: { type: 'result', subtype: 'error_during_execution', is_error: true, result: 'Resume rejected by --resume-drops-turn: turn has appends' },
+    });
+    const pane = h.window.document.querySelector('.chat-pane');
+    expect(pane.textContent).toContain('Could not branch from that message');
+    const retry = [...pane.querySelectorAll('.btn')].find(b => b.textContent.includes('latest message'));
+    expect(retry).toBeTruthy();
+    retry.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    const created = h.calls.filter(c => c.channel === 'chat:create').pop();
+    expect(created.payload.fork).toBe(true);
+    expect(created.payload.resumeAt).toBeUndefined();
+  });
+});

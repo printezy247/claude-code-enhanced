@@ -566,7 +566,12 @@ const TOOL_TAG_OPEN_RE = /<\s*(?:tool_call|tool_use)\s*>/i;
  */
 function findBareToolStart(text) {
   let from = 0;
+  // Brace-heavy prose (log files, code dumps) would otherwise make this scan
+  // quadratic: every '{' pays for a balanced-JSON walk. Bail out after a
+  // bounded number of attempts — a real call starts near the buffer head. #16
+  let attempts = 0;
   for (;;) {
+    if (++attempts > 200) return -1;
     const at = text.indexOf('{', from);
     if (at < 0) return -1;
     const bal = matchBalancedToolJson(text.slice(at));
@@ -633,7 +638,13 @@ function parseToolJson(raw) {
   if (!name || typeof name !== 'string') return null;
   let args = j.arguments != null ? j.arguments : j.input != null ? j.input : (j.function && j.function.arguments);
   if (args == null) args = {};
-  if (typeof args === 'string') { try { args = JSON.parse(args); } catch { args = { _raw: args }; } }
+  if (typeof args === 'string') {
+    // A string that is not JSON cannot become a tool input object. Drop the
+    // call (leaving the text visible) rather than inventing a bogus {_raw}
+    // key the engine would try to execute. #17
+    try { args = JSON.parse(args); } catch { return null; }
+  }
+  if (typeof args !== 'object' || Array.isArray(args)) return null;
   return { name, args };
 }
 
@@ -646,6 +657,7 @@ module.exports = {
   extractTextToolCalls,
   parseToolJson,
   matchBalancedToolJson,
+  findBareToolStart,
   inTokens,
   openaiBase,
 };

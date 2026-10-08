@@ -163,6 +163,7 @@ const Chat = (() => {
       titled: false, atMode: false, compacting: false, unread: false,
       permCount: 0, ctxTimer: null, spent: 0, hooks: [], bgTasks: new Map(),
       pendingMsgs: [], effort: '', suggested: false,
+      pendingResults: new Map(),
     };
     chats.set(id, chat);
     if (window.__CCE_SMOKE) console.log('[chat-created]', id, 'map size', chats.size);
@@ -426,6 +427,13 @@ const Chat = (() => {
     // Stop every pending countdown, not just one shared interval. #2
     for (const card of chat.permSlot.querySelectorAll('.perm-card')) endPermCountdown(card);
     clearInterval(chat.ctxTimer);
+    // Release every Monaco diff editor: each holds a full editor instance, and
+    // removing the pane without disposing leaks them all. #3
+    for (const d of chat.pane.querySelectorAll('.monaco-diff')) {
+      try { if (d.__ed) d.__ed.dispose(); } catch { /* already disposed */ }
+      d.__ed = null;
+      d.__init = null;
+    }
     if (chat.alive) await ccx.invoke('chat:close', { id });
     chat.pane.remove(); chat.tabEl.remove(); chats.delete(id);
     if (window.__tabs) window.__tabs.delete(id);
@@ -1852,7 +1860,31 @@ const Chat = (() => {
             appendError(chat, 'Compaction failed (' + msg.subtype + '). The engine auto-compacts near the context limit regardless.');
           }
         } else if (msg.subtype !== 'success' || msg.is_error) {
-          appendError(chat, 'Turn failed (' + msg.subtype + '): ' + (msg.result || '').slice(0, 300));
+          // A refused branch (edit-and-resubmit picked a message the engine
+          // cannot fork at) carries this prefix per the SDK docs. Say what it
+          // means instead of dumping the raw error. #5
+          const text = String(msg.result || '');
+          if (/Resume rejected by --resume-drops-turn:/.test(text)) {
+            const m = el('div', 'msg error-msg');
+            m.appendChild(el('div', '', '⚠ Could not branch from that message — the engine only allows forking at certain points.'));
+            const row = el('div', 'perm-actions');
+            const retry = el('button', 'btn small primary', 'Branch from the latest message instead');
+            retry.addEventListener('click', () => {
+              Chat.createSession({
+                cwd: chat.cwd,
+                providerUid: chat.provider ? chat.provider.uid : null,
+                model: chat.model || '',
+                permissionMode: chat.mode,
+                resume: chat.sessionId, fork: true,
+              });
+            });
+            row.appendChild(retry);
+            m.appendChild(row);
+            chat.msgs.appendChild(m);
+            scrollDownSoft(chat);
+          } else {
+            appendError(chat, 'Turn failed (' + msg.subtype + '): ' + text.slice(0, 300));
+          }
         }
         break;
       }
@@ -2111,8 +2143,9 @@ const Chat = (() => {
           const node = buildThinking('Thinking…');
           entry = { type: b.type, node, body: node.querySelector('.think-body'), text: '', t0: Date.now() };
         } else if (b.type === 'tool_use') {
-          const card = makeToolCard(chat, b.id, b.name, {});
-          card.setStatus('running', 'preparing…');
+          const card = makeToolCard(chat, b.id, b.name, {}, parentId);
+          if (card.earlyResolved) card.setStatus(card.isError ? 'err' : 'done');
+          else card.setStatus('running', 'preparing…');
           entry = { type: b.type, node: card.card, toolId: b.id, text: '', json: '', card };
           // Track the live card so content_block_delta can fill in its input as
           // it streams. It was never stored, so a streaming tool call showed
@@ -2243,12 +2276,14 @@ const Chat = (() => {
         group.count++;
         group.list.appendChild(el('div', 'group-item mono', toolTitle(block.name, block.input || {})));
         group.countEl.textContent = group.count + ' ' + block.name.toLowerCase() + (group.count === 1 ? ' call' : ' calls');
-        makeToolCard(chat, block.id, block.name, block.input || {}).setStatus('done');
+        makeToolCard(chat, block.id, block.name, block.input || {}, parentId).setStatus('done');
         if (!parentId) scrollDownSoft(chat);
         return;
       }
-      const card = makeToolCard(chat, block.id, block.name, block.input || {});
-      card.setStatus('running');
+      const card = makeToolCard(chat, block.id, block.name, block.input || {}, parentId);
+      // A result that beat its card resolves immediately instead of flashing 'running'.
+      if (card.earlyResolved) card.setStatus(card.isError ? 'err' : 'done');
+      else card.setStatus('running');
       if (block.name === 'ExitPlanMode') {
         openPlanViewer(chat);
         updatePlanViewer(chat, JSON.stringify({ plan: (block.input || {}).plan || '' }));
@@ -2260,7 +2295,22 @@ const Chat = (() => {
 
   /* ---------------- tool cards ---------------- */
 
-  function makeToolCard(chat, toolUseId, name, input) {
+  /** Nesting depth of a tool call: how many subagent layers produced it. */
+  function toolDepth(chat, parentId) {
+    let depth = 0;
+    let cur = parentId;
+    const seen = new Set();
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      const ctx = chat.tools.get(cur);
+      if (!ctx) break;
+      depth++;
+      cur = ctx.parentId || null;
+    }
+    return depth;
+  }
+
+  function makeToolCard(chat, toolUseId, name, input, parentId) {
     chat.msgs.querySelector('.chat-empty')?.remove();
     const card = el('div', 'tool-card kind-' + toolKind(name));
     const head = el('div', 'tool-head');
@@ -2269,6 +2319,14 @@ const Chat = (() => {
     const title = el('span', 'tool-title mono', toolTitle(name, input));
     const chip = el('span', 'chip', name.startsWith('mcp__') ? 'mcp' : toolKind(name));
     head.appendChild(dot); head.appendChild(icon); head.appendChild(title); head.appendChild(chip);
+    // Depth indicator: without it a Agent → Bash → Agent → Bash loop looks
+    // like a flat list and the user cannot tell how deep the model is. #18
+    const depth = toolDepth(chat, parentId);
+    if (depth > 0) {
+      const d = el('span', 'chip depth-chip', '↳'.repeat(Math.min(depth, 3)) + ' depth ' + depth);
+      d.title = 'Nested ' + depth + ' subagent layer' + (depth === 1 ? '' : 's') + ' deep';
+      head.appendChild(d);
+    }
     const body = el('div', 'tool-body hidden');
     card.appendChild(head); card.appendChild(body);
 
@@ -2277,6 +2335,7 @@ const Chat = (() => {
       // both read ctx.body, so every tool_result threw and the output pane was
       // never rendered (the throw was swallowed by the event handler's catch).
       card, body, name, input, dot, title, status: 'running', source: null,
+      parentId: parentId || null,
       setStatus(status, note) {
         ctx.status = status;
         dot.className = 'tool-dot ' + status;
@@ -2325,7 +2384,24 @@ const Chat = (() => {
     // TodoWrite is the only tool whose output is state, not text: keep the
     // drawer's checklist in sync instead of leaving it permanently empty. #5
     if (name === 'TodoWrite') renderTodos(chat, ctx.input);
+    // A result that arrived before its card (out-of-order frames) waits here;
+    // apply it now instead of losing the output. #4
+    const early = chat.pendingResults && chat.pendingResults.get(toolUseId);
+    if (early) {
+      chat.pendingResults.delete(toolUseId);
+      ctx.output = early.text;
+      ctx.isError = early.isError;
+    }
     chat.tools.set(toolUseId, ctx);
+    // Bound the registry: entries are only needed to resolve results, and a
+    // long session would otherwise hold every card's context forever. #8
+    if (chat.tools.size > 300) {
+      const oldest = chat.tools.keys().next().value;
+      chat.tools.delete(oldest);
+    }
+    // Callers set the card to 'running' after creation; when a result arrived
+    // first they must resolve instead — see the earlyResolved guards there.
+    if (early) ctx.earlyResolved = true;
     return ctx;
   }
 
@@ -2446,13 +2522,30 @@ const Chat = (() => {
     }
   }
 
+  /** Flatten a tool_result content payload to text. Shared by resolve + buffer. */
+  function resultText(content) {
+    if (typeof content === 'string') return content;
+    if (Array.isArray(content)) {
+      return content.map(c => c.type === 'text' ? c.text : (c.type === 'image' ? '[image]' : '[' + c.type + ']')).join('\n');
+    }
+    return '';
+  }
+
   function resolveToolResult(chat, block) {
     const ctx = chat.tools.get(block.tool_use_id);
     if (!ctx) {
-      // No card for this id: the model emitted a tool call as prose, which is
-      // what small local models do. Count it so the picker can warn. #43
-      if (block.is_error && /tool|function|call/i.test(String(block.content || '').slice(0, 200))) {
+      // No card yet for this id: either the result beat its card (buffer it so
+      // the output is not lost — #4) or the model emitted the call as prose
+      // (small local models — count it so the picker can warn — #43).
+      if (block.is_error && /tool|function|call/i.test(resultText(block.content).slice(0, 200))) {
         noteToolOutcome(chat.model, false);
+      }
+      chat.pendingResults = chat.pendingResults || new Map();
+      chat.pendingResults.set(block.tool_use_id, { text: resultText(block.content), isError: !!block.is_error });
+      // Don't hold stale entries: a card that never comes is a lost cause.
+      if (chat.pendingResults.size > 50) {
+        const oldest = chat.pendingResults.keys().next().value;
+        chat.pendingResults.delete(oldest);
       }
       return;
     }
@@ -2460,13 +2553,7 @@ const Chat = (() => {
     // A streaming card is tracked per thread, not in chat.tools, so look there
     // too or the live card would never resolve.
     if (ctx.name === 'TodoWrite') renderTodos(chat, ctx.input);
-    let text = '';
-    const content = block.content;
-    if (typeof content === 'string') text = content;
-    else if (Array.isArray(content)) {
-      text = content.map(c => c.type === 'text' ? c.text : (c.type === 'image' ? '[image]' : '[' + c.type + ']')).join('\n');
-    }
-    ctx.output = text;
+    ctx.output = resultText(block.content);
     ctx.isError = !!block.is_error;
     ctx.setStatus(block.is_error ? 'err' : 'done');
   }

@@ -56,7 +56,7 @@ function editDistance(a, b) {
     dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return dp[a.length][b.length];
 }
-async function warmOllamaModel(base, model, desiredCtx) {
+async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
   base = base.replace(/\/+$/, '');
   const resolved0 = model; // original request, for the corrected-model report
   // Resolve the requested name against what the server actually serves:
@@ -90,11 +90,16 @@ async function warmOllamaModel(base, model, desiredCtx) {
   if (!isOllama) return { ok: true, skipped: true, model };
   model = resolved;
   const native = await ollamaModelCtx(base, model);
-  if (native !== null && native < CCE_CTX_FLOOR) {
+  // A per-model override lets the user knowingly try a smaller context (the
+  // engine will likely reject turns past it — the override screen says so).
+  const forced = Number(opts.forceCtx) > 0 ? Number(opts.forceCtx) : 0;
+  const floor = forced > 0 ? forced : CCE_CTX_FLOOR;
+  if (!forced && native !== null && native < CCE_CTX_FLOOR) {
     return { ok: false, native, error: model + ' serves only ' + native.toLocaleString() + ' tokens of context — the claude engine base prompt needs ≥' + CCE_CTX_FLOOR.toLocaleString() + '. Load a larger-context model instead.' };
   }
   const cacheKey = base + '|' + model;
-  let ctx = Math.max(CCE_CTX_FLOOR, Math.min(desiredCtx || 131072, native || Infinity));
+  let ctx = Math.max(floor, Math.min(desiredCtx || 131072, native || Infinity));
+  if (forced > 0) ctx = forced;   // the user asked for exactly this size
   if (warmCtxCache.has(cacheKey)) {
     ctx = Math.min(ctx, warmCtxCache.get(cacheKey));
   } else {
@@ -116,6 +121,11 @@ async function warmOllamaModel(base, model, desiredCtx) {
   }
   const tried = new Set();
   let lastErr = '';
+  // Binary search between the floor (known too small only if it fails) and the
+  // last failure: each attempt halves the range instead of shaving 15%, so a
+  // 128K target settles in ~3 loads instead of ~5. #10
+  let lo = floor;   // denotes the bottom of the search range
+  let hi = ctx;     // smallest size known to fail (starts as the first attempt)
   while (true) {
     tried.add(ctx);
     try {
@@ -124,17 +134,25 @@ async function warmOllamaModel(base, model, desiredCtx) {
         body: JSON.stringify({ model, prompt: '', keep_alive: '30m', stream: false, options: { num_ctx: ctx } }),
         signal: AbortSignal.timeout(300_000),
       });
-      if (res.ok) { warmCtxCache.set(cacheKey, ctx); return { ok: true, ctx, native, model, corrected: model !== resolved0 ? model : undefined }; }
+      if (res.ok) {
+        warmCtxCache.set(cacheKey, ctx);
+        return { ok: true, ctx, native, model, corrected: model !== resolved0 ? model : undefined };
+      }
       const j = await res.json().catch(() => ({}));
       lastErr = String(j.error || ('HTTP ' + res.status));
     } catch (err) { lastErr = String((err && err.message) || err); }
-    const next = Math.floor(ctx * 0.85 / 4096) * 4096;
-    if (next >= CCE_CTX_FLOOR && !tried.has(next)) { ctx = next; continue; }
-    if (ctx > CCE_CTX_FLOOR && !tried.has(CCE_CTX_FLOOR)) { ctx = CCE_CTX_FLOOR; continue; }
-    break;
+    if (ctx === floor) break;   // the floor itself failed: nothing smaller is useful
+    hi = ctx;
+    const next = Math.floor((lo + hi) / 2 / 4096) * 4096;
+    if (next >= hi || next < floor || tried.has(next)) {
+      // Range exhausted without a success: try the floor once as a last resort.
+      if (!tried.has(floor)) { ctx = floor; continue; }
+      break;
+    }
+    ctx = next;
   }
   warmCtxCache.delete(cacheKey);
-  return { ok: false, native, error: 'Ollama could not load ' + model + ' at ≥' + CCE_CTX_FLOOR.toLocaleString() + ' context (' + lastErr + '). Free memory by unloading other models (⚙ models → unload), lower Settings → Local models → num_ctx, or pick a lighter model.' };
+  return { ok: false, native, error: 'Ollama could not load ' + model + ' at ≥' + floor.toLocaleString() + ' context (' + lastErr + '). Free memory by unloading other models (⚙ models → unload), lower Settings → Local models → num_ctx, or pick a lighter model.' };
 }
 
 // Best default for a local provider when nothing is selected: a loaded model

@@ -64,3 +64,34 @@ describe('main process IPC surface', () => {
     expect(typeof res.error).toBe('string');
   });
 });
+describe('env refresh and custom lean tools (#21, #12)', () => {
+  it('env:refresh re-reads the login shell', async () => {
+    const stub = require('electron');
+    const { handlers } = stub.__state;
+    const res = await handlers.get('env:refresh')({});
+    expect(res.ok).toBe(true);
+    expect(typeof res.PATH).toBe('string');
+    expect(res.PATH.length).toBeGreaterThan(0);
+  });
+
+  it('providers:save accepts a custom tool checklist, validated', async () => {
+    const stub = require('electron');
+    const { handlers } = stub.__state;
+    // NOTE: main-process handlers are registered Electron-style as
+    // (_event, payload) — the payload is the SECOND argument.
+    const saved = await handlers.get('providers:save')(null, {
+      instance: {
+        name: 'CustomLean-' + Date.now(),
+        baseUrl: 'http://localhost:11434',
+        leanToolsPreset: 'custom',
+        leanToolsCustom: ['Read', 'Grep', 'BogusTool', 'Bash'],
+      },
+    });
+    expect(saved.ok).toBe(true);
+    const all = await handlers.get('providers:all')(null, {});
+    const inst = all.instances.find(p => p.uid === saved.uid);
+    expect(inst.leanTools).toEqual(['Read', 'Grep', 'Bash']);
+    // Cleanup so later runs see a stable provider list.
+    await handlers.get('providers:delete')(null, { uid: saved.uid });
+  });
+});

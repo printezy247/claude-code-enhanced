@@ -153,13 +153,16 @@ tabs and every stored session — no separate Sessions or History tabs:
 The claude engine's own base prompt (skills + plugins) is already around 68K tokens, so a 3-4B
 model usually cannot host a chat at all. Three things in this app attack that:
 
-- **Lean tools** — cut the tool list for one provider (Providers → Edit) or globally
-  (Settings → Small local models). Fewer tool schemas means a smaller prompt.
+- **Lean tools** — cut the tool list for one provider (Providers → Edit: three presets or a
+  custom per-tool checklist) or globally (Settings → Small local models). Fewer tool schemas
+  means a smaller prompt.
 - **Tool-call repair** — local models often emit a tool call as prose
   (`<tool_call>{…}</tool_call>` or bare JSON). Local providers are routed through the
   built-in translator proxy, which parses that back into a real tool call.
 - **Context sizing** — the Ollama manager loads a model at a context size that fits in free
-  RAM, stepping down until the server accepts it.
+  RAM, halving the range until the server accepts it. **Force context** (Settings → Local
+  models, one `model=number` per line) skips the 70K floor for a named model — only for models
+  you know; the engine usually rejects turns past a model's real context.
 
 Check a model's track record in the model picker: the percentage is measured from your own
 tool calls on this machine.
