@@ -713,68 +713,60 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .chat-menu-item:hover { background: var(--accent-soft); }
 
 /* ---------- conversation list (#34) ---------- */
-#convos { width: 288px; min-width: 288px; background: var(--bg2); border-right: 1px solid var(--border);
-  display: none; flex-direction: column; }
-#convos.open { display: flex; }
-#convos .convo-head { padding: 10px 8px 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
-#convos .convo-search { flex: 1 1 100%; background: var(--bg3); border: 1px solid var(--border);
+/* ---------- conversations dropdown (anchored under the tabbar) ---------- */
+#btn-convo-drop {
+  background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 8px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; flex: none;
+}
+#btn-convo-drop:hover { border-color: var(--accent); }
+#btn-convo-drop.active { background: var(--accent-soft); border-color: var(--accent); }
+#view-conversations { position: relative; }
+#convo-drop {
+  position: absolute; top: 46px; left: 10px; z-index: 50;
+  width: min(400px, 92%); max-height: calc(100% - 120px);
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 16px 44px rgba(0, 0, 0, .55);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+#convo-drop.hidden { display: none; }
+#convo-drop .convo-head { padding: 10px 8px 8px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+#convo-drop .convo-search { flex: 1 1 100%; background: var(--bg3); border: 1px solid var(--border);
   border-radius: 7px; padding: 6px 8px; color: var(--text); font-size: 12.5px; }
-#convos .convo-sort, #convos .convo-filter {
+#convo-drop .convo-sort, #convo-drop .convo-filter {
   flex: 1 1 0; min-width: 0; background: var(--bg3); border: 1px solid var(--border);
   border-radius: 7px; color: var(--text); font-size: 11.5px; padding: 4px 6px;
 }
-#convos .convo-filter { flex: 2 1 0; }
-#convos .convo-list { flex: 1; overflow: auto; padding: 2px 6px 8px; }
-#convos .convo-foot { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 11px;
+#convo-drop .convo-filter { flex: 2 1 0; }
+#convo-drop .convo-list { flex: 1; overflow: auto; padding: 2px 6px 8px; min-height: 120px; }
+#convo-drop .convo-foot { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 11px;
   color: var(--muted); }
-#convos .convo-group { margin-bottom: 10px; }
-#convos .convo-sec {
+#convo-drop .convo-group { margin-bottom: 10px; }
+#convo-drop .convo-sec {
   display: flex; align-items: baseline; gap: 6px; margin: 8px 6px 4px;
-  font-size: 12px; color: var(--text); font-weight: 600; position: sticky; top: 0;
-  background: var(--bg2); padding: 4px 0; z-index: 2;
+  font-size: 12px; color: var(--text); font-weight: 600;
+  background: var(--bg2); padding: 4px 0;
 }
-#convos .cs-path { font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+#convo-drop .cs-path { font-size: 10.5px; color: var(--muted); font-family: var(--mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-#convos .cs-count { font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+#convo-drop .cs-count { font-size: 10.5px; color: var(--muted); font-family: var(--mono);
   background: var(--bg3); border-radius: 999px; padding: 1px 6px; }
-#convos .convo-bucket { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+#convo-drop .convo-bucket { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
   color: var(--muted); margin: 6px 6px 2px; }
-#convos .convo-rows { display: flex; flex-direction: column; gap: 2px; }
-#convos .convo-row { padding: 6px 6px 6px 8px; border-radius: 7px; cursor: pointer;
+#convo-drop .convo-rows { display: flex; flex-direction: column; gap: 2px; }
+#convo-drop .convo-row { padding: 6px 6px 6px 8px; border-radius: 7px; cursor: pointer;
   display: flex; gap: 6px; align-items: center; border: 1px solid transparent; }
-#convos .convo-row:hover { background: var(--bg3); }
-#convos .convo-row.is-open { border-color: var(--accent); background: var(--accent-soft); }
-#convos .convo-main { min-width: 0; flex: 1; }
-#convos .convo-preview { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#convos .convo-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#convos .open-chip { flex: none; font-size: 10px; padding: 1px 6px; color: var(--accent); }
-#convos .convo-more {
+#convo-drop .convo-row:hover { background: var(--bg3); }
+#convo-drop .convo-row.is-open { border-color: var(--accent); background: var(--accent-soft); }
+#convo-drop .convo-main { min-width: 0; flex: 1; }
+#convo-drop .convo-preview { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#convo-drop .convo-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#convo-drop .open-chip { flex: none; font-size: 10px; padding: 1px 6px; color: var(--accent); }
+#convo-drop .convo-more {
   flex: none; background: transparent; border: 1px solid transparent; color: var(--muted);
   border-radius: 6px; cursor: pointer; padding: 1px 5px; font-size: 12px; opacity: 0;
 }
-#convos .convo-row:hover .convo-more, #convos .convo-more:focus { opacity: 1; }
-#convos .convo-more:hover { color: var(--text); border-color: var(--border); background: var(--bg2); }
-
-.convo-menu {
-  z-index: 60; min-width: 232px; background: var(--bg2); border: 1px solid var(--border);
-  border-radius: 10px; padding: 5px; box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
-  display: flex; flex-direction: column; gap: 1px;
-}
-.convo-menu-item {
-  display: flex; align-items: baseline; gap: 8px; width: 100%; text-align: left;
-  background: none; border: none; color: var(--text); cursor: pointer;
-  padding: 6px 9px; border-radius: 7px; font-size: 12.5px;
-}
-.convo-menu-item:hover { background: var(--accent-soft); }
-.convo-menu-item .cm-label { flex: none; }
-.convo-menu-item .cm-hint { margin-left: auto; font-size: 10.5px; color: var(--muted); }
-.convo-menu-item.danger { color: var(--danger); }
-.transcript-pre {
-  background: var(--bg3); border-radius: 8px; padding: 10px; max-height: 52vh; overflow: auto;
-  font-family: var(--mono); font-size: 12px; white-space: pre-wrap; word-break: break-word;
-  margin: 10px 0; user-select: text;
-}
-.modal.wide { width: min(880px, 92vw); }
+#convo-drop .convo-row:hover .convo-more, #convo-drop .convo-more:focus { opacity: 1; }
+#convo-drop .convo-more:hover { color: var(--text); border-color: var(--border); background: var(--bg2); }
 
 /* ---------- split view (#44) ---------- */
 #main.split { flex-direction: row; }

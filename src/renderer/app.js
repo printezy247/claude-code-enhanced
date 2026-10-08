@@ -64,12 +64,8 @@ function switchView(view) {
   document.querySelectorAll('.view').forEach(v =>
     v.classList.toggle('active', v.id === 'view-' + view));
   if (view === 'conversations') {
-    // The list belongs to this tab, so it is always present here.
-    const box = document.querySelector('#convos');
-    if (box) box.classList.add('open');
     const s = state.sessions.get(state.activeId);
     if (s) { s.fit && s.fit.fit(); s.term && s.term.focus(); }
-    if (convoSessions.length) renderConversationList(); else loadConversationList();
   }
   if (view === 'usage') renderUsage();
   if (view === 'providers') renderProviders();
@@ -146,12 +142,14 @@ const CONVO_BUCKETS = [
 ];
 
 function renderConversationList() {
-  const root = document.querySelector('#convo-list');
+  // Async data can land after the window is gone; bail out instead of throwing.
+  if (typeof document === 'undefined') return;
+  const root = document.querySelector('#convo-drop #convo-list');
   if (!root) return;
-  const foot = document.querySelector('#convo-foot');
-  const q = String((document.querySelector('.convo-search') || {}).value || '').trim().toLowerCase();
-  const folder = (document.querySelector('.convo-filter') || {}).value || '';
-  const sort = (document.querySelector('.convo-sort') || {}).value || 'new';
+  const foot = document.querySelector('#convo-drop #convo-foot');
+  const q = String((document.querySelector('#convo-drop .convo-search') || {}).value || '').trim().toLowerCase();
+  const folder = (document.querySelector('#convo-drop .convo-filter') || {}).value || '';
+  const sort = (document.querySelector('#convo-drop .convo-sort') || {}).value || 'new';
 
   let items = convoSessions.filter((s) => !q
     || String(s.preview || '').toLowerCase().includes(q)
@@ -242,6 +240,7 @@ function convoRow(s, cwd) {
 
   row.addEventListener('click', () => {
     Chat.createSession({ cwd, resume: s.sessionId });
+    toggleConversations(false);
     switchView('conversations');
   });
   return row;
@@ -261,10 +260,12 @@ function openConvoMenu(anchor, s, cwd) {
   };
   add('Open', 'resume live', () => {
     Chat.createSession({ cwd, resume: s.sessionId });
+    toggleConversations(false);
     switchView('conversations');
   });
   add('Fork', 'branch a copy', () => {
     Chat.createSession({ cwd, resume: s.sessionId, fork: true });
+    toggleConversations(false);
     switchView('conversations');
   });
   add('Transcript', 'read it first', () => showTranscript(s, cwd));
@@ -275,6 +276,7 @@ function openConvoMenu(anchor, s, cwd) {
   });
   add('New chat in this folder', basenameOf(cwd), () => {
     Chat.createSession({ cwd });
+    toggleConversations(false);
     switchView('conversations');
   });
   const del = add('Delete', 'removes from disk', async () => {
@@ -329,12 +331,14 @@ async function showTranscript(s, cwd) {
   resume.addEventListener('click', () => {
     overlay.remove();
     Chat.createSession({ cwd, resume: s.sessionId });
+    toggleConversations(false);
     switchView('conversations');
   });
   const fork = el('button', 'btn', 'Fork');
   fork.addEventListener('click', () => {
     overlay.remove();
     Chat.createSession({ cwd, resume: s.sessionId, fork: true });
+    toggleConversations(false);
     switchView('conversations');
   });
   actions.appendChild(close); actions.appendChild(fork); actions.appendChild(resume);
@@ -346,7 +350,10 @@ async function showTranscript(s, cwd) {
 
 /** Repopulate the folder dropdown, preserving the current selection. */
 function refreshConvoFolderFilter() {
-  const sel = document.querySelector('.convo-filter');
+  // The list data arrives asynchronously; the window may be gone by then
+  // (tests close it, and so does a fast user). Bail out instead of throwing.
+  if (typeof document === 'undefined') return;
+  const sel = document.querySelector('#convo-drop .convo-filter');
   if (!sel) return;
   const keep = sel.value;
   sel.innerHTML = '';
@@ -368,13 +375,56 @@ async function loadConversationList() {
   renderConversationList();
 }
 
-/** Show or hide the list. It is open by default in the Conversations view. */
+/** Show or hide the Conversations dropdown. Opens with a fresh disk read. */
 function toggleConversations(force) {
-  const box = document.querySelector('#convos');
-  if (!box) return;
-  const open = force !== undefined ? force : !box.classList.contains('open');
-  box.classList.toggle('open', open);
-  if (open) loadConversationList();
+  const drop = ensureConvoDrop();
+  const open = force !== undefined ? force : drop.classList.contains('hidden');
+  drop.classList.toggle('hidden', !open);
+  document.querySelector('#btn-convo-drop')?.classList.toggle('active', open);
+  if (open) {
+    loadConversationList();
+    drop.querySelector('.convo-search')?.focus();
+  }
+}
+
+/** Build the dropdown panel once; all list markup lives here, not in index.html. */
+function ensureConvoDrop() {
+  let drop = document.querySelector('#convo-drop');
+  if (drop) return drop;
+  drop = el('div', 'hidden');
+  drop.id = 'convo-drop';
+  drop.innerHTML = `
+    <div class="convo-head">
+      <input class="convo-search" type="text" placeholder="Search conversations…" />
+      <select class="convo-sort" title="Sort order">
+        <option value="new">newest first</option>
+        <option value="old">oldest first</option>
+        <option value="name">by name</option>
+      </select>
+      <select class="convo-filter" title="Filter by project folder">
+        <option value="">all folders</option>
+      </select>
+      <button class="btn small" id="btn-convo-refresh" title="Reload from disk">↻</button>
+      <button class="btn small" id="btn-convo-hide" title="Close (Ctrl+B)">✕</button>
+    </div>
+    <div class="convo-list" id="convo-list"></div>
+    <div class="convo-foot" id="convo-foot"></div>`;
+  document.querySelector('#view-conversations').appendChild(drop);
+  drop.querySelector('#btn-convo-refresh').addEventListener('click', () => loadConversationList());
+  drop.querySelector('#btn-convo-hide').addEventListener('click', () => toggleConversations(false));
+  drop.querySelector('.convo-search').addEventListener('input', () => renderConversationList());
+  drop.querySelector('.convo-sort').addEventListener('change', () => renderConversationList());
+  drop.querySelector('.convo-filter').addEventListener('change', () => renderConversationList());
+  // Clicking outside closes it; Escape is handled globally.
+  document.addEventListener('mousedown', (e) => {
+    const d = document.querySelector('#convo-drop');
+    if (!d || d.classList.contains('hidden')) return;
+    if (d.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('#btn-convo-drop')) return;
+    if (e.target.closest && e.target.closest('.convo-menu')) return;
+    toggleConversations(false);
+  });
+  return drop;
 }
 
 const basenameOf = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() || String(p || '');
@@ -446,7 +496,8 @@ window.renderSplit = renderSplit;
 
 /** Chat.js calls this when a tab learns its engine session id. */
 window.onConvoSessionsChanged = () => {
-  if (state.view === 'conversations' && convoSessions.length) renderConversationList();
+  const drop = document.querySelector('#convo-drop');
+  if (drop && !drop.classList.contains('hidden') && convoSessions.length) renderConversationList();
 };
 
 function fitSize(s) {
@@ -1494,14 +1545,12 @@ function wireChrome() {
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.addEventListener('click', () => switchView(b.dataset.view)));
   $('#btn-new-session').addEventListener('click', openNewSessionModal);
+  $('#btn-convo-drop').addEventListener('click', () => toggleConversations());
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
   $('#btn-add-provider').addEventListener('click', () => openProviderEditor(null));
   $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);
-  $('#btn-convo-refresh').addEventListener('click', () => loadConversationList());
-  $('#btn-convo-hide').addEventListener('click', () => toggleConversations(false));
-  document.querySelector('.convo-search')?.addEventListener('input', () => renderConversationList());
-  document.querySelector('.convo-sort')?.addEventListener('change', () => renderConversationList());
-  document.querySelector('.convo-filter')?.addEventListener('change', () => renderConversationList());
+  // (The per-dropdown wiring — search/sort/filter/refresh/close — lives in
+  // ensureConvoDrop, which builds that markup. Nothing to wire here.)
   $('#btn-split-close').addEventListener('click', () => toggleSplit(false));
   $('#split-kind')?.addEventListener('change', renderSplit);
 
@@ -1567,6 +1616,15 @@ function wireChrome() {
         activateSession(ids[(i + (e.shiftKey ? ids.length - 1 : 1) + ids.length) % ids.length]);
       }
       return;
+    }
+    // Escape closes the Conversations dropdown before anything else claims it.
+    if (e.key === 'Escape') {
+      const drop = document.querySelector('#convo-drop');
+      if (drop && !drop.classList.contains('hidden')) {
+        e.preventDefault();
+        toggleConversations(false);
+        return;
+      }
     }
     if (e.ctrlKey && String(e.key).toLowerCase() === 'b') {   // conversation list #34
       e.preventDefault();

@@ -9,7 +9,7 @@ import http from 'node:http';
 
 const require = createRequire(import.meta.url);
 process.env.CCE_PROXY_PORT = '0';
-const { startProxy, isTokenValid, extractTextToolCalls, parseToolJson } = require('../src/main/proxy.js');
+const { startProxy, isTokenValid, extractTextToolCalls, parseToolJson, openaiBase } = require('../src/main/proxy.js');
 
 /** Listen on an ephemeral port. */
 const listen = (server) => new Promise(r => server.listen(0, '127.0.0.1', r));
@@ -294,5 +294,116 @@ describe('streamed translation end to end (#1, #9)', () => {
     await p;
     await new Promise(r => setTimeout(r, 120));
     expect(upstreamClosed).toBe(true);
+  });
+});
+describe('upstream URL building (bare Ollama roots)', () => {
+  it('appends /v1 to a bare server root', () => {
+    expect(openaiBase('http://localhost:11434')).toBe('http://localhost:11434/v1');
+    expect(openaiBase('http://localhost:11434/')).toBe('http://localhost:11434/v1');
+    expect(openaiBase('http://127.0.0.1:11434')).toBe('http://127.0.0.1:11434/v1');
+  });
+
+  it('leaves full OpenAI roots alone', () => {
+    expect(openaiBase('https://api.mistral.ai/v1')).toBe('https://api.mistral.ai/v1');
+    expect(openaiBase('https://api.groq.com/openai/v1')).toBe('https://api.groq.com/openai/v1');
+    expect(openaiBase('https://generativelanguage.googleapis.com/v1beta/openai'))
+      .toBe('https://generativelanguage.googleapis.com/v1beta/openai');
+    expect(openaiBase('https://openrouter.ai/api/v1')).toBe('https://openrouter.ai/api/v1');
+  });
+
+  it('normalises provider-style roots that omit /v1', () => {
+    expect(openaiBase('https://openrouter.ai/api')).toBe('https://openrouter.ai/api/v1');
+  });
+
+  it('forwards chat completions to the /v1 root', async () => {
+    let seenPath = null;
+    const upstream = http.createServer((req, res) => {
+      seenPath = req.url;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ choices: [{ message: { content: 'hi' } }], usage: {} }));
+    });
+    await listen(upstream);
+    const upPort = upstream.address().port;
+    // A bare root, exactly how the Ollama provider is configured.
+    const proxy = await startProxy(() => ({ baseUrl: 'http://127.0.0.1:' + upPort, apiKey: '' }), { port: 0 });
+    const res = await fetch('http://127.0.0.1:' + proxy.port + '/px/t1/v1/messages', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', max_tokens: 8, messages: [{ role: 'user', content: 'x' }] }),
+    });
+    expect(res.status).toBe(200);
+    expect(seenPath).toBe('/v1/chat/completions');
+    await close(proxy.server);
+    await close(upstream);
+  });
+
+  it('fetches the model list from the /v1 root', async () => {
+    let seenPath = null;
+    const upstream = http.createServer((req, res) => {
+      seenPath = req.url;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: [] }));
+    });
+    await listen(upstream);
+    const upPort = upstream.address().port;
+    const proxy = await startProxy(() => ({ baseUrl: 'http://127.0.0.1:' + upPort, apiKey: '' }), { port: 0 });
+    const res = await fetch('http://127.0.0.1:' + proxy.port + '/px/t1/v1/models');
+    expect(res.status).toBe(200);
+    expect(seenPath).toBe('/v1/models');
+    await close(proxy.server);
+    await close(upstream);
+  });
+});
+
+describe('aggregate (non-streamed) translation', () => {
+  /** POST a non-streamed turn and return the Anthropic body. */
+  async function aggregate(upstreamBody) {
+    const upstream = http.createServer((_q, res) => {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(upstreamBody));
+    });
+    await listen(upstream);
+    const upPort = upstream.address().port;
+    const proxy = await startProxy(() => ({ baseUrl: 'http://127.0.0.1:' + upPort, apiKey: '' }), { port: 0 });
+    const res = await fetch('http://127.0.0.1:' + proxy.port + '/px/t1/v1/messages', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'm', max_tokens: 64, stream: false, messages: [{ role: 'user', content: 'x' }] }),
+    });
+    const j = await res.json();
+    await close(proxy.server);
+    await close(upstream);
+    return j;
+  }
+
+  it('surfaces the reasoning field as a thinking block', async () => {
+    const j = await aggregate({ choices: [{ message: { content: 'OK', reasoning: 'because reasons' } }], usage: {} });
+    const thinking = (j.content || []).find(c => c.type === 'thinking');
+    expect(thinking && thinking.thinking).toContain('because reasons');
+    expect((j.content || []).find(c => c.type === 'text').text).toBe('OK');
+  });
+
+  it('omits the thinking block when reasoning is empty', async () => {
+    const j = await aggregate({ choices: [{ message: { content: 'OK', reasoning: '' } }], usage: {} });
+    expect((j.content || []).some(c => c.type === 'thinking')).toBe(false);
+  });
+
+  it('recovers a bare-JSON tool call from the content channel', async () => {
+    const j = await aggregate({
+      choices: [{ message: { content: '{"name":"Read","arguments":{"file_path":"/x"}}', finish_reason: 'stop' } }],
+      usage: {},
+    });
+    const tool = (j.content || []).find(c => c.type === 'tool_use');
+    expect(tool && tool.name).toBe('Read');
+    expect(tool.input).toEqual({ file_path: '/x' });
+    expect(j.stop_reason).toBe('tool_use');
+  });
+
+  it('recovers a tool call hidden in the reasoning channel', async () => {
+    const j = await aggregate({
+      choices: [{ message: { content: 'looking it up', reasoning: 'need the file <tool_call>{"name":"Read","arguments":{"file_path":"/y"}}</tool_call>' } }],
+      usage: {},
+    });
+    const tool = (j.content || []).find(c => c.type === 'tool_use');
+    expect(tool && tool.name).toBe('Read');
+    expect(j.stop_reason).toBe('tool_use');
   });
 });

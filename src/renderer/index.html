@@ -26,27 +26,10 @@
       <div class="sidebar-foot" id="foot-info"></div>
     </aside>
 
-    <aside id="convos">
-      <div class="convo-head">
-        <input class="convo-search" type="text" placeholder="Search conversations…" />
-        <select class="convo-sort" title="Sort order">
-          <option value="new">newest first</option>
-          <option value="old">oldest first</option>
-          <option value="name">by name</option>
-        </select>
-        <select class="convo-filter" title="Filter by project folder">
-          <option value="">all folders</option>
-        </select>
-        <button class="btn small" id="btn-convo-refresh" title="Reload from disk">↻</button>
-        <button class="btn small" id="btn-convo-hide" title="Hide the list (Ctrl+B)">‹</button>
-      </div>
-      <div class="convo-list" id="convo-list"></div>
-      <div class="convo-foot" id="convo-foot"></div>
-    </aside>
-
     <main id="main">
       <section id="view-conversations" class="view active">
         <div id="tabbar">
+          <button id="btn-convo-drop" title="Conversations — past and open chats (Ctrl+B)">▤ Conversations ▾</button>
           <div id="tabs"></div>
           <button id="btn-new-session" title="New session (Ctrl+Shift+T)">＋ new</button>
         </div>

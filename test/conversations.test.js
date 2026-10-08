@@ -41,9 +41,15 @@ async function boot(sessions = SESSIONS) {
   const h = loadRenderer({ ipc: bootIpc(sessions) });
   await flush(10);
   h.window.switchView('conversations');
+  // The list is a dropdown now: open it the way the button does.
+  h.window.document.querySelector('#btn-convo-drop')
+    .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
   await flush(10);
   return h;
 }
+
+const drop = (win) => win.document.querySelector('#convo-drop');
+const isOpen = (win) => !!drop(win) && !drop(win).classList.contains('hidden');
 
 const list = (win) => win.document.querySelector('#convo-list');
 const rows = (win) => [...win.document.querySelectorAll('.convo-row')];
@@ -189,24 +195,39 @@ describe('per-row actions menu', () => {
   });
 });
 
-describe('nav consolidation', () => {
-  it('has no Sessions or History entries', async () => {
-    const h = await boot();
-    const views = [...h.window.document.querySelectorAll('.nav-btn')].map(b => b.dataset.view);
-    expect(views).not.toContain('terminal');
-    expect(views).not.toContain('chats');
+describe('dropdown behaviour', () => {
+  it('starts closed and opens from the tabbar button', async () => {
+    const h = loadRenderer({ ipc: bootIpc() });
+    await flush(10);
+    h.window.switchView('conversations');
+    await flush(4);
+    expect(drop(h.window)).toBeNull();
+    h.window.document.querySelector('#btn-convo-drop')
+      .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    await flush(10);
+    expect(isOpen(h.window)).toBe(true);
     h.window.close();
   });
 
-  it('opens the conversation list with the Conversations tab', async () => {
-    const h = loadRenderer({ ipc: bootIpc() });
-    await flush(10);
-    const box = h.window.document.querySelector('#convos');
-    box.classList.remove('open');
-    h.window.switchView('usage');
-    expect(box.classList.contains('open')).toBe(false);
-    h.window.switchView('conversations');
-    expect(box.classList.contains('open')).toBe(true);
+  it('Ctrl+B toggles it and Escape closes it', async () => {
+    const h = await boot();
+    expect(isOpen(h.window)).toBe(true);
+    h.window.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+    expect(isOpen(h.window)).toBe(false);
+    h.window.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
+    expect(isOpen(h.window)).toBe(true);
+    h.window.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(isOpen(h.window)).toBe(false);
+    h.window.close();
+  });
+
+  it('closing it from a row opens the session', async () => {
+    const h = await boot();
+    rows(h.window)[0].dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    await flush(6);
+    expect(isOpen(h.window)).toBe(false);
+    const created = h.calls.filter(c => c.channel === 'chat:create').pop();
+    expect(created.payload.resume).toBeTruthy();
     h.window.close();
   });
 });

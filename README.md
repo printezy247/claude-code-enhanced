@@ -109,7 +109,8 @@ servers and settings from `~/.claude` all apply exactly as in the terminal.
 
 ### Conversations
 
-One list, next to the workspace, covering both open chat/terminal tabs and every stored session:
+The **▤ Conversations** button in the tabbar opens a dropdown covering both open chat/terminal
+tabs and every stored session — no separate Sessions or History tabs:
 
 - grouped by the **folder** the conversation ran in, with time buckets (Today / Yesterday /
   Earlier this week / Older) inside each group
@@ -117,7 +118,7 @@ One list, next to the workspace, covering both open chat/terminal tabs and every
 - **▾ per row**: open, fork, read-only transcript, export to markdown, new chat in that folder,
   delete (two-step confirm)
 - clicking a row resumes that session live, with its transcript restored
-- `Ctrl+B` hides the list when you want more room for the chat
+- `Ctrl+B` toggles the dropdown, `Esc` closes it, clicking outside closes it
 
 ## Keyboard
 

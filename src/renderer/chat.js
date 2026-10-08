@@ -2859,6 +2859,9 @@ const Chat = (() => {
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      // The Conversations dropdown outranks everything: close it, don't stop the turn.
+      const drop = document.querySelector('#convo-drop');
+      if (drop && !drop.classList.contains('hidden')) return;
       for (const [, chat] of chats) {
         if (chat.pane.classList.contains('active')) {
           const panel = chat.pane.querySelector('.chat-skills-panel');

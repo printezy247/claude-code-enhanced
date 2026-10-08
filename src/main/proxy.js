@@ -33,7 +33,7 @@ function startProxy(resolveProvider, opts = {}) {
     const prov = resolveProvider(uid);
     if (!prov || !prov.baseUrl) { res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unknown proxy provider' })); return; }
     if (isGet && restPath === '/v1/models') {
-      fetch(prov.baseUrl.replace(/\/+$/, '') + '/models', { headers: upHeaders(prov) })
+      fetch(openaiBase(prov.baseUrl) + '/models', { headers: upHeaders(prov) })
         .then(async (r) => { res.writeHead(r.status, { 'content-type': 'application/json' }); res.end(await r.text()); })
         .catch((e) => { res.writeHead(502, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(e.message || e) })); });
       return;
@@ -365,7 +365,7 @@ async function callOpenAI(body, prov, wantStream, signal) {
     if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) out.stop = body.stop_sequences[0];
   }
 
-  let url = prov.baseUrl.replace(/\/+$/, '') + '/chat/completions';
+  let url = openaiBase(prov.baseUrl) + '/chat/completions';
   // Google's OpenAI-compatible endpoint rejects Bearer-only auth on chat
   // completions — it wants the key in the query string.
   if (prov.baseUrl.includes('generativelanguage.googleapis.com')) {
@@ -384,6 +384,10 @@ async function callOpenAI(body, prov, wantStream, signal) {
 function aggregateToAnthropic(j, body) {
   const choice = (j.choices || [])[0] || {};
   const m = choice.message || {};
+  // Thinking models (qwen3.5, gemma-through-Ollama) put reasoning in a
+  // separate field, not in content. Surface it as a thinking block so the
+  // engine sees the reasoning and the reply is not an empty message.
+  const reasoning = [m.reasoning, m.reasoning_content].filter(Boolean).join('');
   if (m.content && m.content.includes('<tool_call>')) {
     // tool-call-in-reasoning style (Qwen3-toolcall etc.)
     for (const mm of m.content.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)) {
@@ -397,7 +401,27 @@ function aggregateToAnthropic(j, body) {
     }
     m.content = m.content.replace(/<tool_call>[\s\S]*?<\/tool_call>/g, '').trim();
   }
+  // Tool calls hiding in the text channel (bare JSON or dangling tags), and in
+  // the reasoning channel: same recovery as the streamed path.
+  const split = extractTextToolCalls(String(m.content || ''), '');
+  m.content = split.text;
+  for (const t of split.tools) {
+    (m.tool_calls = m.tool_calls || []).push({
+      id: 'call_agg_txt_' + (m.tool_calls || []).length, type: 'function',
+      function: { name: t.name, arguments: JSON.stringify(t.args || {}) },
+    });
+  }
+  if (reasoning) {
+    const rsplit = extractTextToolCalls(reasoning, '');
+    for (const t of rsplit.tools) {
+      (m.tool_calls = m.tool_calls || []).push({
+        id: 'call_agg_rsn_' + (m.tool_calls || []).length, type: 'function',
+        function: { name: t.name, arguments: JSON.stringify(t.args || {}) },
+      });
+    }
+  }
   const content = [];
+  if (reasoning.trim()) content.push({ type: 'thinking', thinking: reasoning.trim().slice(0, 8000) });
   if (m.content) content.push({ type: 'text', text: m.content });
   for (const tc of m.tool_calls || []) {
     let input = {};
@@ -405,7 +429,12 @@ function aggregateToAnthropic(j, body) {
     content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: tc.function.name, input });
   }
   if (!content.length) content.push({ type: 'text', text: '' });
-  const stop = choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn';
+  // A recovered call means the turn ends in tool_use even when the provider
+  // said "stop": the engine only continues the turn on tool_use.
+  const hasTools = (m.tool_calls || []).length > 0;
+  const stop = hasTools ? 'tool_use'
+    : choice.finish_reason === 'tool_calls' ? 'tool_use'
+    : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn';
   return {
     id: j.id || 'chatcmpl-proxy',
     type: 'message',
@@ -419,6 +448,21 @@ function aggregateToAnthropic(j, body) {
       output_tokens: (j.usage && j.usage.completion_tokens) || 0,
     },
   };
+}
+
+/**
+ * OpenAI-compatible root for a provider base URL.
+ *
+ * Providers configured with a full OpenAI root (…/v1, …/openai/v1) are used
+ * as-is. A bare Ollama URL (http://localhost:11434) exposes its OpenAI API
+ * under /v1, so without this the proxy called /chat/completions and
+ * /models at the server root — both 404, and every local model looked dead.
+ */
+function openaiBase(baseUrl) {
+  const base = String(baseUrl || '').replace(/\/+$/, '');
+  // Full OpenAI roots stay as-is: …/v1, …/openai/v1, and Google's …/v1beta/openai.
+  if (/(^|\/)v1$/.test(base) || /\/openai(\/v1)?$/.test(base)) return base;
+  return base + '/v1';
 }
 
 /**
@@ -603,4 +647,5 @@ module.exports = {
   parseToolJson,
   matchBalancedToolJson,
   inTokens,
+  openaiBase,
 };
