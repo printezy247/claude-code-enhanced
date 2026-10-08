@@ -71,7 +71,9 @@ npm run dist       # build dist/claude-code-enhanced-<version>-amd64.deb
 4. Anthropic subscription users don't need a key: tick **Send /login after launch** (or type
    `/login` in any session) and complete the OAuth flow in the browser.
 
-Secrets are stored in `~/.config/Claude Code Enhanced/config.json` with `0600` permissions.
+Secrets are stored in `~/.config/claude-code-enhanced/config.json` with `0600` permissions. The
+directory name comes from `app.setName('claude-code-enhanced')`, not from the product name, so
+it is all lower-case.
 
 ## Using connectors
 
