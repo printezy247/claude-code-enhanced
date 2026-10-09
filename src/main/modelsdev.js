@@ -53,12 +53,12 @@ async function refresh() {
   if (!res.ok) throw new Error('models.dev returned HTTP ' + res.status);
   const raw = await res.json();
   if (!raw || typeof raw !== 'object' || !Object.keys(raw).length) throw new Error('models.dev returned no providers');
-  const compact = compact(raw);
+  const slim = compact(raw);
   if (cacheFile) {
     fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-    fs.writeFileSync(cacheFile, JSON.stringify(compact));
+    fs.writeFileSync(cacheFile, JSON.stringify(slim));
   }
-  cache = compact;
+  cache = slim;
   return { ...stat(), source: 'live', updated: Date.now() };
 }
 

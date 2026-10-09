@@ -841,6 +841,21 @@ function registerIpc() {
         ? { ok: true, note: 'official Anthropic API', detail: key ? 'API key set' : 'no key — run /login in a terminal, or add one' }
         : { ok: false, error: 'No base URL set for this provider.' };
     }
+    // A local runtime is tested by asking it what it has, not by sending a
+    // Claude model name it cannot know (which 404s and looks like a dead server).
+    if (isLocalBase(base)) {
+      try {
+        const root = String(base).replace(/\/+$/, '').replace(/\/v1$/, '');
+        const r = await fetch(root + '/api/tags', { signal: AbortSignal.timeout(6000) });
+        if (r.ok) {
+          const names = (((await r.json()).models) || []).map(m => m.name || m.model).filter(Boolean);
+          if (!names.length) return { ok: false, error: 'Ollama is running but has no models. Pull one, e.g. `ollama pull qwen3:4b`.' };
+          return { ok: true, modelCount: names.length, detail: names.length + ' local models', endpoint: 'ollama /api/tags' };
+        }
+      } catch (err) {
+        return { ok: false, error: 'Nothing is listening at ' + base + '. Start Ollama with `ollama serve`.' };
+      }
+    }
     if (proto === 'anthropic') {
       const t = await testAnthropic(base, key, keyHeader || (p && p.keyHeader) || 'bearer', (p && p.model) || '');
       return { ...t, endpoint: 'anthropic /v1/messages' };

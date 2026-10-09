@@ -483,3 +483,16 @@ describe('fetchUpstream rate-limit retry', () => {
     await s.close();
   });
 });
+
+describe('models.dev refresh', () => {
+  it('compacts a live catalog without a shadowed-name crash', async () => {
+    const md = require('../src/main/modelsdev.js');
+    const real = globalThis.fetch;
+    globalThis.fetch = async () => ({ ok: true, json: async () => ({ acme: { id: 'acme', name: 'Acme', models: { m1: { id: 'm1', name: 'M1', limit: { context: 1000 } } } } }) });
+    try {
+      const r = await md.refresh();
+      expect(r.source).toBe('live');
+      expect(r.providers).toBeGreaterThan(0);
+    } finally { globalThis.fetch = real; }
+  });
+});

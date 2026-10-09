@@ -95,6 +95,7 @@ const ProvidersUI = (() => {
     if (p.model) card.appendChild(el('div', 'meta', 'model  ' + p.model + (p.smallFastModel ? '  /  ' + p.smallFastModel : '')));
     if (p.authHint) card.appendChild(el('div', 'meta', (p.authType === 'oauth' ? 'oauth  ' : 'key  ') + p.authHint
       + (p.authExpired ? '  (expired — reconnect)' : '')));
+    else if (p.local) card.appendChild(el('div', 'meta', 'local runtime — no key needed'));
     else card.appendChild(el('div', 'meta auth-none', 'no credential — add a key or sign in'));
 
     const caps = el('div', 'cap-row');
