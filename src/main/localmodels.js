@@ -83,7 +83,14 @@ async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
         }
       }
     }
-  } catch { /* tags endpoint absent — non-Ollama server, send the name as-is */ }
+  } catch (err) {
+    // A refused connection to a local server means nothing is listening —
+    // fail now with a fix instead of on the first turn.
+    if (opts.local && /ECONNREFUSED|fetch failed|ENOTFOUND|timeout/i.test(String((err && err.message) || err) + String((err && err.cause && err.cause.code) || ''))) {
+      return { ok: false, error: 'Nothing is listening at ' + base + '. Start Ollama with `ollama serve`, then try again.' };
+    }
+    /* tags endpoint absent — non-Ollama server, send the name as-is */
+  }
   // Only Ollama exposes /api/generate. Every other baseUrl provider (DeepSeek,
   // Kimi, OpenRouter, LM Studio…) 404s below and would wrongly block chat
   // creation with "Ollama could not load <model>".

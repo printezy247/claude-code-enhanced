@@ -615,7 +615,7 @@ const ProvidersUI = (() => {
       loadBtn.disabled = true; loadBtn.textContent = 'loading…';
       const r = await ccx.invoke('provider:listModels', { uid: p.uid });
       loadBtn.disabled = false; loadBtn.textContent = '↻ list from provider'; loadBtn.dataset.loaded = '1';
-      if (r.ok) { liveModels = (r.models || []).map(m => ({ id: m.id, ctx: m.ctx, live: true })); draw(); }
+      if (r.ok) { liveModels = (r.models || []).filter(m => !m.declared).map(m => ({ id: m.id, ctx: m.ctx, live: true })); draw(); if (r.error) toast(r.error, 'err'); }
       else toast('Could not list models: ' + (r.error || ''), 'err');
     });
     search.addEventListener('input', draw);

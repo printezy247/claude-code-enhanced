@@ -791,6 +791,11 @@ function registerIpc() {
     const declared = p ? [...(p.models || []), ...(entry && entry.recommendedModels || [])] : [];
     const have = new Set((r.models || []).map(m => m.id));
     const extra = [...new Set(declared)].filter(id => id && !have.has(id)).map(id => ({ id, ctx: null, declared: true }));
+    // Say what to do when a local runtime is simply not running.
+    const base = args.baseUrl || (p && p.baseUrl) || '';
+    if (r.error && isLocalBase(base) && !(r.models || []).length) {
+      r.error = 'Nothing is listening at ' + base + ' (' + r.error + '). Start your local runtime, e.g. `ollama serve`.';
+    }
     return { ...r, models: [...(r.models || []), ...extra], curated: r.curated || (p ? (p.models || []) : []) };
   });
 
@@ -1085,7 +1090,7 @@ function registerIpc() {
     // warm they load at the Modelfile default (4-16K) and the engine's base
     // prompt can't fit. warmOllamaModel self-skips non-Ollama servers.
     if (provider && provider.baseUrl && effModel && (isLocalBase(provider.baseUrl) || !useProxy)) {
-      const warm = await warmOllamaModel(provider.baseUrl, effModel, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, effModel) });
+      const warm = await warmOllamaModel(provider.baseUrl, effModel, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, effModel), local: isLocalBase(provider.baseUrl) });
       if (!warm.ok) return { ok: false, error: warm.error };
       if (warm.corrected) model = warm.corrected;   // typo/alias fixed against the server's real tags
     }
@@ -1123,7 +1128,7 @@ function registerIpc() {
     // chats need it just as much, since the proxy cannot carry num_ctx.
     const needsWarm = !!(prov && prov.baseUrl) && (isLocalBase(prov.baseUrl) || !usesProxy(prov));
     if (needsWarm && eff) {
-      const warm = await warmOllamaModel(prov.baseUrl, eff, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, eff) });
+      const warm = await warmOllamaModel(prov.baseUrl, eff, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, eff), local: isLocalBase(prov.baseUrl) });
       if (!warm.ok) return { blocked: true, modelCtx: warm.native, error: warm.error };
       if (warm.corrected) model = warm.corrected;   // dropdown/custom entry fixed to a real tag
     }

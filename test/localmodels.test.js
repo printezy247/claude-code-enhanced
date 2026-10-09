@@ -86,3 +86,14 @@ describe('per-model force override (#11)', () => {
     expect(r.error).toContain('serves only');
   });
 });
+describe('warmOllamaModel when the server is down', () => {
+  it('fails fast with a start-it hint for a local base', async () => {
+    const r = await lm.warmOllamaModel('http://127.0.0.1:1', 'm1', 131072, { local: true });
+    expect(r.ok).toBe(false);
+    expect(r.error).toContain('ollama serve');
+  });
+  it('does not block non-local providers on a network error', async () => {
+    const r = await lm.warmOllamaModel('http://127.0.0.1:1', 'm1', 131072, {});
+    expect(r.ok).toBe(true);
+  });
+});
