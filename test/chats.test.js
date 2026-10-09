@@ -301,3 +301,25 @@ describe('control surface', () => {
     expect(ctrl.setModel).toHaveBeenCalledWith('sonnet');
   });
 });
+describe('local providers start lean', () => {
+  const ollama = { uid: 'o1', presetId: 'ollama', protocol: 'anthropic', baseUrl: 'http://localhost:11434' };
+  it('drops MCP servers and trims built-in tools for a local runtime', async () => {
+    await openChat({ providerInstance: ollama });
+    expect(lastOptions.strictMcpConfig).toBe(true);
+    expect(lastOptions.tools).toEqual(['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'TodoWrite']);
+  });
+  it('keeps a tool list the user configured', async () => {
+    await openChat({ providerInstance: ollama, settings: { leanTools: ['Read'] } });
+    expect(lastOptions.tools).toEqual(['Read']);
+    expect(lastOptions.strictMcpConfig).toBe(true);
+  });
+  it('lets the user opt back in to MCP', async () => {
+    await openChat({ providerInstance: ollama, settings: { localMcp: true } });
+    expect(lastOptions.strictMcpConfig).toBeUndefined();
+  });
+  it('does not touch cloud providers', async () => {
+    await openChat({ providerInstance: { uid: 'r1', presetId: 'openrouter', protocol: 'anthropic', baseUrl: 'https://openrouter.ai/api' } });
+    expect(lastOptions.strictMcpConfig).toBeUndefined();
+    expect(lastOptions.tools).toBeUndefined();
+  });
+});
