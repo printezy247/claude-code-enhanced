@@ -29,7 +29,7 @@ function esc(s) {
 const state = {
   info: null,
   settings: null,
-  providers: { presets: [], instances: [], defaultUid: null },
+  providers: { presets: [], catalog: [], modelsdev: null, instances: [], defaultUid: null },
   leanPresets: [],
   leanAllTools: [],
   theme: 'dark',
@@ -773,78 +773,11 @@ function openNewSessionModal() {
 /* ================= providers view ================= */
 
 function renderProviders() {
+  // The whole providers surface (Connect picker, detail tabs, local manager)
+  // lives in providers.js; this stays as the nav entry point.
+  if (window.ProvidersUI) return ProvidersUI.render();
   const grid = $('#provider-grid');
-  grid.innerHTML = '';
-  $('#provider-banner').innerHTML = '';
-  const banner = $('#provider-banner');
-  banner.appendChild(el('span', '', 'Providers inject environment variables into new sessions: '));
-  for (const v of ['ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'ANTHROPIC_MODEL']) {
-    banner.appendChild(el('code', '', v));
-    banner.appendChild(el('span', '', ' '));
-  }
-  banner.appendChild(el('span', '', '— the claude CLI itself stays unmodified. Anthropic subscription users authenticate with /login (OAuth) instead of a key.'));
-
-  state.providers.instances.forEach(p => {
-    const card = el('div', 'card');
-    const head = el('h4');
-    head.appendChild(el('span', '', p.name));
-    if (p.uid === state.providers.defaultUid) head.appendChild(el('span', 'chip default', 'default'));
-    const preset = state.providers.presets.find(x => x.id === p.presetId);
-    if (preset) head.appendChild(el('span', 'chip kind-' + preset.kind, preset.kind === 'oauth' ? 'OAuth' : preset.kind === 'stdio' ? 'local' : 'API key'));
-    card.appendChild(head);
-
-    if (preset) card.appendChild(el('div', 'blurb', preset.blurb));
-    if (p.baseUrl) card.appendChild(el('div', 'meta', 'URL  ' + p.baseUrl));
-    if (p.model) card.appendChild(el('div', 'meta', 'model  ' + p.model + (p.smallFastModel ? '  /  ' + p.smallFastModel : '')));
-    if (p.authTokenHint) card.appendChild(el('div', 'meta', 'token  ' + p.authTokenHint));
-    if (p.apiKeyHint) card.appendChild(el('div', 'meta', 'key  ' + p.apiKeyHint));
-    if (p.leanTools) card.appendChild(el('div', 'meta', 'lean tools  ' + p.leanTools.join(', ')));
-
-    // Failover chain position, so the order is visible where it is configured.
-    const chain = (state.settings && state.settings.failoverChain) || [];
-    if (chain.includes(p.uid)) {
-      const pos = el('span', 'chip default', 'failover #' + (chain.indexOf(p.uid) + 1));
-      pos.title = 'A failed turn retries on the next provider in the chain (Settings → Small local models)';
-      card.appendChild(pos);
-    }
-
-    const row = el('div', 'row');
-    if (p.baseUrl) {
-      const manage = el('button', 'btn small', '⚙ models');
-      manage.title = 'Load / unload models, context size, keep-alive';
-      manage.addEventListener('click', () => openOllamaManager(p));
-      row.appendChild(manage);
-    }
-    const star = el('button', 'btn small ghost', p.uid === state.providers.defaultUid ? '★ default' : '☆ set default');
-    star.addEventListener('click', async () => {
-      const r = await ccx.invoke('providers:default', { uid: p.uid });
-      if (r.ok) { await refreshProviders(); toast('Default provider updated', 'ok'); }
-      else toast(r.error, 'err');
-    });
-    const edit = el('button', 'btn small', 'Edit');
-    edit.addEventListener('click', () => openProviderEditor(p));
-    const foBtn = el('button', 'btn small ghost', '⤺ failover');
-    foBtn.title = 'Retry this turn on the next provider in your chain';
-    foBtn.addEventListener('click', async () => {
-      const active = [...tabRegistry.keys()].find((k) => (tabRegistry.get(k) || {}).kind === 'chat' && state.activeId === k)
-        || state.activeId;
-      if (!active) return toast('No chat tab open', 'err');
-      const r = await ccx.invoke('provider:failover', { id: active });
-      if (!r.ok) return toast(r.error || 'failover failed', 'err');
-      toast('Switched to ' + (r.provider ? r.provider.name : r.to) + ' — conversation resumed', 'ok');
-      await Chat.activateSession(r.newId);
-    });
-    const del = el('button', 'btn small danger', 'Delete');
-    del.addEventListener('click', async () => {
-      if (state.providers.instances.length <= 1) return toast('Keep at least one provider', 'err');
-      const r = await ccx.invoke('providers:delete', { uid: p.uid });
-      if (r.ok) { await refreshProviders(); toast('Provider removed', 'ok'); }
-      else toast(r.error, 'err');
-    });
-    row.appendChild(star); row.appendChild(edit); row.appendChild(foBtn); row.appendChild(el('span', 'spacer')); row.appendChild(del);
-    card.appendChild(row);
-    grid.appendChild(card);
-  });
+  if (grid) grid.innerHTML = '';
 }
 
   function fmtBytes(n) {
@@ -1191,7 +1124,7 @@ function renderProviders() {
 async function refreshProviders() {
   const r = await ccx.invoke('providers:all');
   if (r.ok) {
-    state.providers = { presets: r.presets, instances: r.instances, defaultUid: r.defaultUid };
+    state.providers = { presets: r.presets, catalog: r.catalog || state.providers.catalog || [], modelsdev: r.modelsdev || state.providers.modelsdev, instances: r.instances, defaultUid: r.defaultUid };
     if (r.leanPresets) state.leanPresets = r.leanPresets;
     if (r.leanAllTools) state.leanAllTools = r.leanAllTools;
     if (state.view === 'providers') renderProviders();
@@ -1618,7 +1551,7 @@ function wireChrome() {
   $('#btn-new-session').addEventListener('click', openNewSessionModal);
   $('#btn-convo-drop').addEventListener('click', () => toggleConversations());
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
-  $('#btn-add-provider').addEventListener('click', () => openProviderEditor(null));
+  $('#btn-add-provider').addEventListener('click', () => (window.ProvidersUI ? ProvidersUI.openConnect() : openProviderEditor(null)));
   $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);
   // (The per-dropdown wiring — search/sort/filter/refresh/close — lives in
   // ensureConvoDrop, which builds that markup. Nothing to wire here.)
@@ -1788,7 +1721,7 @@ function fmtTokShort(n) {
     return;
   }
   state.info = { appVersion: info.appVersion, electron: info.electron, claude: info.claude, home: info.home };
-  state.providers = { presets: provAll.presets, instances: provAll.instances, defaultUid: provAll.defaultUid };
+  state.providers = { presets: provAll.presets, catalog: provAll.catalog || [], modelsdev: provAll.modelsdev || null, instances: provAll.instances, defaultUid: provAll.defaultUid };
   state.leanPresets = (provAll.leanPresets || (settingsRes.leanPresets || []));
   state.leanAllTools = (provAll.leanAllTools || settingsRes.leanAllTools || []);
   state.settings = settingsRes.settings;

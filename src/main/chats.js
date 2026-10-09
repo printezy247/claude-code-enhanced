@@ -303,7 +303,11 @@ class ChatManager extends EventEmitter {
           }
           if (msg.session_id) chat.sessionId = msg.session_id;
           if (msg.type === 'system' && msg.subtype === 'init') {
-            chat.model = msg.model || chat.model;
+            // The init frame echoes the engine's effective model. It must not
+            // clobber an explicit user selection: a slow engine start delivers
+            // init AFTER chat:set-model ran, which reset the dropdown to the
+            // engine default on every switch.
+            if (!chat.model) chat.model = msg.model || chat.model;
             this._rememberSession(dir, chat.sessionId);
           }
           if (msg.type === 'result') {

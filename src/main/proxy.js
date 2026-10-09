@@ -5,6 +5,8 @@
 'use strict';
 const http = require('http');
 const crypto = require('crypto');
+const adapters = require('./adapters');
+const { openaiBase } = adapters;
 
 // Port 0 = ask the OS for a free port. A fixed 8199 collides with any other
 // listener and, before #8, exposed provider keys to that process.
@@ -33,7 +35,7 @@ function startProxy(resolveProvider, opts = {}) {
     const prov = resolveProvider(uid);
     if (!prov || !prov.baseUrl) { res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unknown proxy provider' })); return; }
     if (isGet && restPath === '/v1/models') {
-      fetch(openaiBase(prov.baseUrl) + '/models', { headers: upHeaders(prov) })
+      adapters.listModels(prov)
         .then(async (r) => { res.writeHead(r.status, { 'content-type': 'application/json' }); res.end(await r.text()); })
         .catch((e) => { res.writeHead(502, { 'content-type': 'application/json' }); res.end(JSON.stringify({ error: String(e.message || e) })); });
       return;
@@ -107,7 +109,7 @@ async function handleTranslated(restPath, raw, prov, res) {
   const onClientGone = () => abortUpstream();
   res.on('close', onClientGone);
 
-  const upstream = await callOpenAI(body, prov, wantStream, upstreamAbort.signal).catch((err) => {
+  const upstream = await adapters.callUpstream(prov, body, wantStream, upstreamAbort.signal).catch((err) => {
     if (upstreamGone || /abort/i.test(String(err && err.message))) {
       // Client is gone; there is nobody to answer.
       try { res.destroy(); } catch { /* already destroyed */ }
@@ -285,102 +287,6 @@ function isTokenValid(req, token) {
   return false;
 }
 
-function upHeaders(prov) {
-  const h = { 'content-type': 'application/json' };
-  if (prov.apiKey) h.Authorization = 'Bearer ' + prov.apiKey;
-  return h;
-}
-
-async function callOpenAI(body, prov, wantStream, signal) {
-  // --- translate Anthropic Messages -> OpenAI chat.completions ---
-  const out = { model: body.model, stream: !!wantStream, max_tokens: body.max_tokens || 4096 };
-  if (body.temperature != null) out.temperature = body.temperature;
-  if (body.top_p != null) out.top_p = body.top_p;
-  const msgs = [];
-  let sys = body.system;
-  if (Array.isArray(sys)) sys = sys.map(b => b.text || '').join('\n');
-  if (sys) msgs.push({ role: 'system', content: String(sys) });
-
-  for (const m of body.messages || []) {
-    const c = m.content;
-    if (typeof c === 'string') { msgs.push({ role: m.role, content: c }); continue; }
-    if (!Array.isArray(c)) continue;
-
-    if (m.role === 'assistant') {
-      let text = '';
-      const toolCalls = [];
-      for (const b of c) {
-        if (b.type === 'text') text += b.text;
-        else if (b.type === 'tool_use') toolCalls.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } });
-        else if (b.type === 'thinking') { /* not translated */ }
-      }
-      const msg = { role: 'assistant', content: text || null };
-      if (toolCalls.length) msg.tool_calls = toolCalls;
-      msgs.push(msg);
-      continue;
-    }
-
-    // user message: split text parts and tool_results (tool role must follow the assistant tool_calls)
-    const textParts = [];
-    for (const b of c) {
-      if (b.type === 'text') textParts.push(b.text);
-      else if (b.type === 'image' && b.source && b.source.type === 'base64') {
-        textParts.push({ type: 'image_url', image_url: { url: 'data:' + (b.source.media_type || 'image/png') + ';base64,' + b.source.data } });
-      } else if (b.type === 'tool_result') {
-        if (textParts.length) { msgs.push({ role: 'user', content: textParts.splice(0) }); }
-        let content = b.content;
-        if (Array.isArray(content)) content = content.map(x => x.text || '').join('\n');
-        msgs.push({ role: 'tool', tool_call_id: b.tool_use_id, content: String(content || '') });
-      }
-    }
-    if (textParts.length) {
-      // OpenAI user content = plain string, or an array of *objects*.
-      // Bare string arrays are rejected (Mistral 422: "should be a valid string").
-      const hasObj = textParts.some(t => typeof t !== 'string');
-      const content = hasObj
-        ? textParts.map(t => (typeof t === 'string' ? { type: 'text', text: t } : t))
-        : textParts.join('\n');
-      msgs.push({ role: 'user', content });
-    }
-  }
-  out.messages = msgs;
-
-  if (Array.isArray(body.tools) && body.tools.length) {
-    out.tools = body.tools.map(t => ({
-      type: 'function',
-      function: { name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } },
-    }));
-    // Honour a forced tool choice, not just 'auto'. A plan-mode turn pins
-    // ExitPlanMode; dropping that made the engine sit and retry.
-    const tc = body.tool_choice;
-    if (tc === 'any' || (tc && tc.type === 'any')) out.tool_choice = 'required';
-    else if (tc && tc.type === 'tool' && tc.name) {
-      out.tool_choice = { type: 'function', function: { name: tc.name } };
-    } else if (tc === 'none') out.tool_choice = 'none';
-    else out.tool_choice = 'auto';
-    // Ask for usage in the stream so message_delta carries real token counts. #9
-    if (wantStream) out.stream_options = { include_usage: true };
-    // Anthropic's stop_sequences have no OpenAI equivalent beyond the single
-    // `stop`; keep the first so plan-mode replies still terminate.
-    if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) out.stop = body.stop_sequences[0];
-  }
-
-  let url = openaiBase(prov.baseUrl) + '/chat/completions';
-  // Google's OpenAI-compatible endpoint rejects Bearer-only auth on chat
-  // completions — it wants the key in the query string.
-  if (prov.baseUrl.includes('generativelanguage.googleapis.com')) {
-    url += (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(prov.apiKey || '');
-  }
-  return fetch(url, {
-    method: 'POST',
-    headers: upHeaders(prov),
-    body: JSON.stringify(out),
-    // Covers the whole stream, not just the first byte — 5min cut long agent
-    // turns on slow local/cloud models mid-response.
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(900_000)]) : AbortSignal.timeout(900_000),
-  });
-}
-
 function aggregateToAnthropic(j, body) {
   const choice = (j.choices || [])[0] || {};
   const m = choice.message || {};
@@ -450,20 +356,8 @@ function aggregateToAnthropic(j, body) {
   };
 }
 
-/**
- * OpenAI-compatible root for a provider base URL.
- *
- * Providers configured with a full OpenAI root (…/v1, …/openai/v1) are used
- * as-is. A bare Ollama URL (http://localhost:11434) exposes its OpenAI API
- * under /v1, so without this the proxy called /chat/completions and
- * /models at the server root — both 404, and every local model looked dead.
- */
-function openaiBase(baseUrl) {
-  const base = String(baseUrl || '').replace(/\/+$/, '');
-  // Full OpenAI roots stay as-is: …/v1, …/openai/v1, and Google's …/v1beta/openai.
-  if (/(^|\/)v1$/.test(base) || /\/openai(\/v1)?$/.test(base)) return base;
-  return base + '/v1';
-}
+// OpenAI-compatible root building lives in ./adapters now (openaiBase), shared
+// with the Gemini / Responses adapters and re-exported below for the tests.
 
 /**
  * Prompt-token estimate for the streamed path.

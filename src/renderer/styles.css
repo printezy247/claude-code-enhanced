@@ -861,3 +861,59 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   border: 1px solid var(--border); border-radius: 7px; padding: 6px 8px;
   font-family: var(--mono); font-size: 12px; resize: vertical;
 }
+
+/* ===== provider settings (OpenCode-style) ===== */
+.provider-card .pstatus { font-size: 12px; margin-right: 6px; }
+.provider-card .pstatus.ok { color: #7dc98f; }
+.provider-card .pstatus.err { color: #d2626a; }
+.provider-card .pstatus.unknown { color: #61627a; }
+.provider-card.disabled { opacity: .55; }
+.provider-card .auth-none { color: #e0af68; }
+.cap-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.chip.cap-openai-compat { background: #1d2b3a; color: #7dcfff; }
+.chip.cap-native-anthropic { background: #3a2a1d; color: #e0af68; }
+.chip.cap-oauth { background: #2a2140; color: #bb9af7; }
+.chip.cap-subscription { background: #213a2a; color: #9ddba7; }
+.chip.cap-local { background: #202030; color: #c8c8d4; }
+.chip.cap-tools { background: #23303a; color: #7dcfff; }
+.chip.cap-live { background: #1f3a2a; color: #9ddba7; }
+.chip.kind-disabled { background: #3a2020; color: #e8878d; }
+.chip.kind-anthropic { background: #3a2a1d; color: #e0af68; }
+.chip.kind-openai, .chip.kind-openai-responses, .chip.kind-gemini { background: #1d2b3a; color: #7dcfff; }
+.chip.kind-oauth { background: #2a2140; color: #bb9af7; }
+.chip.kind-api { background: #21303a; color: #7dcfff; }
+
+.provider-search { width: 100%; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; margin: 8px 0; }
+.filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
+.chip.filter { cursor: pointer; border: 1px solid var(--border); background: transparent; }
+.chip.filter.active { background: var(--accent, #d97757); color: #101017; }
+.connect-list { max-height: 46vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
+.connect-row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--text); }
+.connect-row:hover { border-color: var(--accent, #d97757); }
+.connect-main { flex: 1; min-width: 0; }
+.connect-name { font-weight: 600; }
+.connect-blurb { font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.connect-right { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+
+.provider-detail .detail-head { display: flex; align-items: center; gap: 8px; }
+.tab-row { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 10px 0; }
+.tab { background: transparent; border: none; color: var(--text); opacity: .7; padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; }
+.tab.active { opacity: 1; border-bottom-color: var(--accent, #d97757); font-weight: 600; }
+.detail-body { max-height: 52vh; overflow: auto; }
+.pane { display: flex; flex-direction: column; gap: 10px; }
+.auth-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+.auth-status { display: flex; align-items: center; gap: 8px; }
+.test-out.ok { color: #7dc98f; }
+.test-out.err { color: #d2626a; }
+.oauth-link { color: #7dcfff; word-break: break-all; font-size: 12px; }
+.oauth-code { font-family: var(--mono); font-size: 18px; letter-spacing: 2px; }
+
+.model-list { max-height: 40vh; overflow: auto; display: flex; flex-direction: column; }
+.model-row { display: flex; align-items: center; gap: 8px; padding: 5px 4px; border-bottom: 1px solid var(--border); cursor: pointer; }
+.model-name { font-family: var(--mono); font-size: 12px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.model-meta { display: flex; gap: 4px; align-items: center; }
+.model-summary { margin-top: 6px; }
+.diag-kv { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.diag-row { display: flex; gap: 8px; }
+.diag-row .dk { min-width: 120px; opacity: .6; }
+.diag-row .dv { font-family: var(--mono); word-break: break-all; }

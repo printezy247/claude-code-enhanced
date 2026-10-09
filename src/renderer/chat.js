@@ -530,7 +530,7 @@ const Chat = (() => {
       menu.appendChild(item('▦', 'Toggle split view', () => window.toggleSplit && window.toggleSplit()));
       if (chat.provider && chat.provider.baseUrl) {
         menu.appendChild(item('⚙', 'Model manager (load / unload)',
-          () => window.openOllamaManager && window.openOllamaManager(chat.provider)));
+          () => (window.ProvidersUI ? ProvidersUI.openLocalManager(chat.provider.baseUrl) : (window.openOllamaManager && window.openOllamaManager(chat.provider)))));
       }
       const rect = chat.moreBtn.getBoundingClientRect();
       menu.style.top = (rect.bottom + window.scrollY + 6) + 'px';
@@ -650,6 +650,21 @@ const Chat = (() => {
     const r = await ccx.invoke('provider:listModels', { uid: chat.provider.uid });
     if (!r.ok || !r.models || !r.models.length) return;
     let list = r.models.map(m => typeof m === 'string' ? { id: m, ctx: null } : m);
+    // Enrich with models.dev metadata so cloud models without a context_length
+    // (OpenAI, Anthropic-protocol relays) get a ctx for the floor filter and a
+    // cost/tool-calling hint. #43
+    const mdId = chat.provider.modelsDevId || chat.provider.presetId;
+    if (mdId && list.some(m => m.ctx == null)) {
+      try {
+        const cm = await ccx.invoke('catalog:models', { providerId: mdId });
+        const byId = new Map((cm.models || []).map(m => [m.id, m]));
+        list = list.map((m) => {
+          const meta = byId.get(m.id);
+          if (!meta) return m;
+          return { ...m, ctx: m.ctx != null ? m.ctx : ((meta.limit && meta.limit.context) || null), cost: meta.cost, tool_call: meta.tool_call };
+        });
+      } catch { /* metadata is optional */ }
+    }
     const curated = (r.curated && r.curated.length) ? new Set(r.curated) : null;
     if (curated) list = list.filter(m => curated.has(m.id));   // user-curated selection wins
     // hide models that cannot host the claude prompt (context below the floor)

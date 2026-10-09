@@ -35,7 +35,9 @@ const DEFAULT_SETTINGS = {
 class Store {
   constructor() {
     this.file = null;
-    this.data = { providers: [], settings: { ...DEFAULT_SETTINGS } };
+    // Config schema marker: bumped when the provider record shape changes so a
+    // future release can migrate old files. 2 = secrets split into auth.json.
+    this.data = { configVersion: 2, providers: [], settings: { ...DEFAULT_SETTINGS } };
   }
 
   init() {
@@ -48,6 +50,7 @@ class Store {
       this.data = { ...this.data, ...parsed };
     } catch { /* first run or corrupt file -> defaults */ }
     this.data.providers ??= [];
+    this.data.configVersion ??= 2;
     this.data.settings = { ...DEFAULT_SETTINGS, ...(this.data.settings || {}) };
     this.save();
   }

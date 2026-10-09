@@ -21,10 +21,20 @@ terminal when you want it:
 - **FCC-style terminal tabs** — real PTYs running the genuine `claude` TUI for `/login`,
   `/mcp` OAuth flows, and raw control. *(Inspired by
   [free-claude-code](https://github.com/Alishahryar1/free-claude-code).)*
-- **OpenCode-style provider manager** — switch model providers per session via
-  `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_API_KEY` / `ANTHROPIC_MODEL`
-  environment injection. Presets for Anthropic (subscription OAuth or API key), Z.AI GLM,
-  DeepSeek, Moonshot Kimi, OpenRouter, and any custom Anthropic-compatible endpoint.
+- **OpenCode-style provider manager** — a searchable **Connect** catalog of **230+ providers**
+  backed by the full [models.dev](https://models.dev) dataset (8,400+ models with context,
+  cost and tool-calling metadata; refreshable live). Auth is a first-class concept: paste an
+  **API key only**, or use **OAuth / device-code** sign-in (Anthropic Pro/Max, OpenAI ChatGPT,
+  GitHub Copilot, GitLab, DigitalOcean). Secrets live in `auth.json` (encrypted with the OS
+  keyring when available), never in the config. Base URLs come from templates with structured
+  placeholders (account id, gateway id, resource name). A built-in **Test connection** classifies
+  failures (bad key, tier, quota, retired model, DNS/TLS) instead of showing a raw error.
+- **Direct HTTP adapters** — the claude engine always speaks Anthropic; CCE translates OpenAI
+  chat-completions, the OpenAI **Responses** API and Google **Gemini** `generateContent` into
+  Anthropic SSE, so any of those providers work key-only. Local tool-call recovery is preserved
+  across every protocol.
+- **Unified local-model manager** — Ollama, LM Studio, llama.cpp and vLLM are auto-discovered;
+  load/unload models, choose context size and keep-alive, in one panel.
   *(Inspired by [OpenCode](https://github.com/sst/opencode) and FCC's multi-provider catalog.)*
 - **Claude-Desktop-style OAuth connectors** — one-click add of remote MCP servers; OAuth is
   completed inside any session with the `/mcp` command. Presets:
@@ -65,15 +75,32 @@ npm run dist       # build dist/claude-code-enhanced-<version>-amd64.deb
 
 ## Using providers
 
-1. **Providers** panel → **Add provider** (or edit the default *Anthropic · Claude subscription*).
-2. Pick a preset, paste the API token, optionally set `ANTHROPIC_MODEL`.
-3. Star a provider to make it the default for new sessions.
-4. Anthropic subscription users don't need a key: tick **Send /login after launch** (or type
-   `/login` in any session) and complete the OAuth flow in the browser.
+1. **Providers** panel → **+ Add provider** opens the **Connect** picker. Search 230+ providers
+   (every models.dev provider plus curated ones); filter by *Subscriptions / Cloud / Gateways /
+   Local*.
+2. Pick one. If its URL needs values (Cloudflare account id, Azure resource, a AI Gateway id)
+   you are asked for them, then the provider is created and its detail panel opens.
+3. In the panel's tabs:
+   - **Auth** — paste an API key, or **Sign in** (OAuth / device code). *Test connection* checks
+     the credential and lists how many models the provider serves.
+   - **Models** — tick what appears in the chat dropdown, set the default model. Metadata
+     (context window, cost, tool-calling) comes from models.dev.
+   - **Options** — base URL, protocol (Anthropic / OpenAI chat / OpenAI Responses / Gemini),
+     auth header, default + small model, extra headers.
+   - **Advanced** — lean tool set (for small local models) and extra environment variables.
+   - **Diagnostics** — last test result and the exact env a session will get.
+4. Star a provider to make it the default; **disable** one to keep it out of pickers.
+5. Anthropic subscription users can also just tick **Send /login after launch** in a session.
 
-Secrets are stored in `~/.config/claude-code-enhanced/config.json` with `0600` permissions. The
-directory name comes from `app.setName('claude-code-enhanced')`, not from the product name, so
-it is all lower-case.
+Secrets are stored in `~/.config/claude-code-enhanced/auth.json` (`0600`, encrypted with the OS
+keyring when available) and are **never** written to `config.json`, so the config can be shared.
+`~/.config/claude-code-enhanced/config.json` (`0600`) keeps provider records and settings.
+
+Provider quirks worth knowing:
+- **Amazon Bedrock** uses a region-templated URL (`bedrock-runtime.${REGION}.amazonaws.com/openai/v1`).
+  It has no `GET /models` endpoint, so CCE tests it with a one-token completion probe and lists models
+  from the models.dev catalog. Paste a long-term Bedrock API key (starts `ABSK…`); SigV4/IAM-credential
+  users should put AWS creds in the environment instead.
 
 ## Using connectors
 

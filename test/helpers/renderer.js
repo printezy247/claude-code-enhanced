@@ -78,7 +78,7 @@ function loadRenderer(opts = {}) {
   // reads switchView/toast from app.js), so they must run in ONE eval scope.
   // Each source's top-level `const` is then hoisted into that shared scope, and
   // the tail re-publishes the names tests need onto window.
-  const src = ['chat.js', 'app.js'].map((f) => (
+  const src = ['chat.js', 'providers.js', 'app.js'].map((f) => (
     fs.readFileSync(path.join(ROOT, 'src', 'renderer', f), 'utf8')
       + '\n//# sourceURL=' + f
   )).join('\n;\n');

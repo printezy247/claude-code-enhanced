@@ -20,6 +20,13 @@ if (process.env.CCE_NO_SANDBOX) app.commandLine.appendSwitch('no-sandbox');
 
 const { Store } = require('./store');
 const providers = require('./providers');
+const catalog = require('./catalog');
+const modelsdev = require('./modelsdev');
+const { AuthStore } = require('./authstore');
+const oauth = require('./oauth');
+const localruntimes = require('./localruntimes');
+const adapters = require('./adapters');
+const bedrock = require('./bedrock');
 const connectors = require('./connectors');
 const tools = require('./tools');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = require('./localmodels');
@@ -33,12 +40,58 @@ let proxyPort = null;
 const ChatManager = require('./chats');
 
 const store = new Store();
+const auth = new AuthStore();
 const sessions = new SessionManager();
 // The manager needs the proxy token so proxied chats authenticate.
 const chats = new ChatManager({ proxyToken });
+providers.useAuth(auth);
 let win = null;
 let tray = null;
 let claudeInfo = { found: false, path: '', version: '' };
+
+// Resolved secrets per provider uid, so the proxy (which resolves synchronously
+// per request) never has to touch disk or hit the network mid-turn.
+const secretCache = new Map(); // uid -> { apiKey, authToken }
+function refreshSecretCache() {
+  secretCache.clear();
+  for (const p of store.providers) {
+    const r = auth.resolve(p.uid);
+    secretCache.set(p.uid, { apiKey: r.apiKey || '', authToken: r.authToken || '' });
+  }
+}
+function secretFor(uid) { return secretCache.get(uid) || {}; }
+
+// OAuth flows in flight, keyed by a short session id handed to the renderer.
+const oauthSessions = new Map();
+let oauthSeq = 0;
+
+/**
+ * Refresh an OAuth provider's token if it is expired (or about to). Copilot
+ * short-lived tokens are re-minted from the long-lived GitHub token.
+ */
+async function ensureFreshAuth(inst) {
+  if (!inst) return;
+  const rec = auth.get(inst.uid);
+  if (!rec || rec.type !== 'oauth') return;
+  const soon = rec.expires && rec.expires - Date.now() < 120_000;
+  if (!soon) return;
+  const entry = providers.entryFor(inst) || {};
+  const cfg = entry.oauth || {};
+  try {
+    let tokens;
+    if (cfg.exchange === 'copilot' || (rec.meta && rec.meta.copilot)) {
+      tokens = await oauth.refreshCopilot(rec.refresh);
+    } else if (rec.refresh && cfg.tokenUrl) {
+      tokens = await oauth.refreshTokens(cfg, rec.refresh);
+    } else {
+      return;
+    }
+    auth.setOAuth(inst.uid, { access: tokens.access, refresh: tokens.refresh || rec.refresh, expires: tokens.expires, meta: { ...rec.meta, ...(tokens.meta || {}) } });
+    refreshSecretCache();
+  } catch (err) {
+    console.error('[auth] refresh failed for ' + inst.name + ':', String((err && err.message) || err));
+  }
+}
 
 /** Build the tray icon + menu (close-to-tray). #46 */
 function createTray() {
@@ -142,6 +195,62 @@ function forcedCtxFor(settings, model) {
   return Number(hit) > 0 ? Number(hit) : 0;
 }
 
+/** Human-readable reason for an HTTP failure, so the UI shows a fix, not a 401. */
+function classifyHttpError(status, bodyText) {
+  const brief = String(bodyText || '').replace(/\s+/g, ' ').slice(0, 180);
+  const map = {
+    400: 'Request rejected (400) — usually a bad model id.',
+    401: 'API key rejected (401) — invalid key, or the provider refused this client.',
+    402: 'Payment required / no credits (402).',
+    403: 'Key lacks access — wrong tier, region or permissions (403).',
+    404: 'Endpoint or model not found (404) — check the base URL and model id.',
+    413: 'Request too large for this model\u2019s context window (413).',
+    422: 'The provider rejected the request shape (422).',
+    429: 'Rate limit or quota exceeded (429) — wait or check billing.',
+    500: 'Provider server error (500).',
+    502: 'Bad gateway from the provider (502).',
+    503: 'Provider unavailable (503).',
+    529: 'Provider overloaded (529).',
+  };
+  return (map[status] || ('HTTP ' + status + '.')) + (brief ? '  ' + brief : '');
+}
+
+/** A minimal Anthropic /v1/messages probe — for native-protocol providers. */
+async function testAnthropic(base, key, keyHeader, model) {
+  const url = String(base || '').replace(/\/+$/, '').replace(/\/v1$/, '') + '/v1/messages';
+  const headers = {
+    'content-type': 'application/json',
+    'anthropic-version': '2023-06-01',
+    accept: 'application/json',
+    // Some gateways (AgentRouter) allowlist the Claude Code client signature.
+    'user-agent': 'claude-cli/2.1.289 (external, cli)',
+    'x-app': 'cli',
+  };
+  if (key) { if (keyHeader === 'bearer') headers.Authorization = 'Bearer ' + key; else headers['x-api-key'] = key; }
+  try {
+    const res = await fetch(url, {
+      method: 'POST', headers,
+      body: JSON.stringify({ model: model || 'claude-3-5-sonnet-latest', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    const text = await res.text().catch(() => '');
+    if (res.ok) return { ok: true, status: res.status, detail: 'Anthropic endpoint accepted the key' };
+    return { ok: false, status: res.status, error: classifyHttpError(res.status, text) };
+  } catch (err) {
+    return { ok: false, error: classifyNetError(err) };
+  }
+}
+
+/** Human-readable network failure (DNS / TLS / timeout / refused). */
+function classifyNetError(err) {
+  const m = String((err && err.message) || err);
+  if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(m)) return 'Hostname did not resolve — check the base URL (DNS).';
+  if (/certificate|SSL|TLS|unrecognized name/i.test(m)) return 'TLS handshake failed — the host has no valid certificate for that name.';
+  if (/ECONNREFUSED/i.test(m)) return 'Connection refused — is the server running on that port?';
+  if (/timeout|aborted/i.test(m)) return 'Timed out — the provider did not answer.';
+  return m;
+}
+
 const MIME_BY_EXT = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp',
@@ -154,7 +263,7 @@ const MIME_BY_EXT = {
 // which recovers those calls. Cloud Anthropic-compatible providers stay direct.
 function usesProxy(provider) {
   if (!provider || !proxyPort) return false;
-  if (provider.protocol === 'openai') return true;
+  if (provider.protocol && provider.protocol !== 'anthropic') return true;
   return !!provider.baseUrl && provider.alwaysTranslate !== false && isLocalBase(provider.baseUrl);
 }
 function isLocalBase(baseUrl) {
@@ -328,6 +437,58 @@ function createWindow() {
             .catch(e => console.log('CCE_SMOKE: proxy-create failed ' + e));
         }, 6000);
       }
+      if (process.env.CCE_SMOKE_TESTALL) {
+        // Test every configured provider with its real credential and list models.
+        setTimeout(async () => {
+          const probe = await win.webContents.executeJavaScript(
+            '(async () => {'
+            + ' const all = await ccx.invoke("providers:all");'
+            + ' const rows = [];'
+            + ' for (const inst of (all.instances || [])) {'
+            + '   const t = await ccx.invoke("providers:test", { uid: inst.uid });'
+            + '   let models = [];'
+            + '   try { const lm = await ccx.invoke("provider:listModels", { uid: inst.uid }); models = (lm.models || []).map(m => m.id).slice(0, 6); } catch (e) { models = ["<" + e.message + ">"]; }'
+            + '   rows.push({ name: inst.name, base: inst.baseUrl, model: inst.model, ok: !!t.ok, status: t.status || null, error: t.error || null, count: t.modelCount || 0, sample: models, hint: inst.authHint || null, authType: inst.authType || null });'
+            + ' }'
+            + ' return JSON.stringify(rows); })()'
+          );
+          console.log('CCE_SMOKE: testall ' + probe);
+        }, 3000);
+      }
+      if (process.env.CCE_SMOKE_PROVIDERS) {
+        // Regression probe for the provider settings surface: catalog, auth
+        // status, local scan, and the Connect/detail modals rendering.
+        setTimeout(async () => {
+          const probe = await win.webContents.executeJavaScript(
+            '(async () => {'
+            + ' const cat = await ccx.invoke("catalog:all");'
+            + ' const md = await ccx.invoke("modelsdev:stats");'
+            + ' const auth = await ccx.invoke("auth:status");'
+            + ' const scan = await ccx.invoke("localruntimes:scan");'
+            + ' const all = await ccx.invoke("providers:all");'
+            + ' const first = (all.instances || [])[0];'
+            + ' let test = null, tabs = 0, rows = 0;'
+            + ' if (first) {'
+            + '   test = await ccx.invoke("providers:test", { uid: first.uid });'
+            + '   ProvidersUI.openDetail(first.uid);'
+            + '   await new Promise(r => setTimeout(r, 600));'
+            + '   tabs = document.querySelectorAll(".provider-detail .tab").length;'
+            + '   document.querySelectorAll(".modal-overlay").forEach(o => o.remove());'
+            + ' }'
+            + ' ProvidersUI.openConnect();'
+            + ' await new Promise(r => setTimeout(r, 400));'
+            + ' rows = document.querySelectorAll(".connect-list .connect-row").length;'
+            + ' document.querySelectorAll(".modal-overlay").forEach(o => o.remove());'
+            + ' const diags = [];'
+            + ' for (const inst of (all.instances || [])) { diags.push(await ccx.invoke("providers:diagnostics", { uid: inst.uid })); }'
+            + ' return JSON.stringify({ catalog: (cat.catalog || []).length, mdProviders: md.providers,'
+            + '   mdModels: md.models, mdSource: md.source, encryption: auth.encryption,'
+            + '   runtimes: (scan.runtimes || []).length, testOk: test && test.ok, tabs, connectRows: rows,'
+            + '   diags: diags.map(d => ({ n: d.uid.slice(0, 6), proto: d.protocol, proxy: d.usesProxy, secret: d.hasSecret, tok: d.carriesToken })) }); })()'
+          );
+          console.log('CCE_SMOKE: providers ' + probe);
+        }, 3000);
+      }
       if (process.env.CCE_SMOKE_DIALOG) {
         // Regression probe for the Add-provider dialog: switches presets and
         // reports whether template fields populate and key-only layout holds.
@@ -400,6 +561,8 @@ function registerIpc() {
   // ----- providers -----
   handle('providers:all', async () => ({
     presets: providers.PRESETS,
+    catalog: providers.catalogEntries(),
+    modelsdev: modelsdev.stat(),
     leanPresets: Object.entries(LEAN_PRESETS).map(([id, p]) => ({ id, label: p.label, tools: p.tools })),
     leanAllTools: LEAN_ALL_TOOLS.slice(),
     instances: store.providers.map(providers.publicInstance),
@@ -419,6 +582,7 @@ function registerIpc() {
     const nextUid = order[(idx + 1) % order.length];
     const next = store.providers.find(p => p.uid === nextUid);
     if (!next) return { ok: false, error: 'failover provider ' + nextUid + ' no longer exists' };
+    await ensureFreshAuth(next);
     // The live engine cannot be re-pointed; recreate the chat on the next
     // provider and carry the model + mode over.
     const resume = chat.sessionId || null;
@@ -464,27 +628,37 @@ function registerIpc() {
         instance.leanTools = null;
       }
     }
+    // Secrets never touch config.json any more: they go to the auth store.
+    const incomingKey = typeof instance.apiKey === 'string' ? instance.apiKey.trim() : '';
+    const incomingToken = typeof instance.authToken === 'string' ? instance.authToken.trim() : '';
+    const clearSecret = !!instance.clearSecret;
+    delete instance.apiKey;
+    delete instance.authToken;
+    delete instance.keepApiKey;
+    delete instance.keepAuthToken;
+    delete instance.clearSecret;
+
     const list = store.providers;
     const existing = list.find(p => p.uid === instance.uid);
     if (existing) {
-      // Renderer leaves secret fields blank on edit to mean "unchanged".
-      const keepToken = !instance.authToken && instance.keepAuthToken;
-      const keepKey = !instance.apiKey && instance.keepApiKey;
-      const merged = { ...existing, ...instance };
-      if (keepToken) merged.authToken = existing.authToken;
-      if (keepKey) merged.apiKey = existing.apiKey;
-      Object.assign(existing, merged);
+      Object.assign(existing, instance);
     } else {
       instance.uid = instance.uid || providers.newUid();
       list.push(instance);
     }
-    if (!store.settings.defaultProviderUid) store.settings.defaultProviderUid = instance.uid;
+    const uid = existing ? existing.uid : instance.uid;
+    if (clearSecret) auth.delete(uid);
+    else if (incomingKey || incomingToken) auth.setApiKey(uid, incomingKey || incomingToken, { origin: 'manual' });
+    refreshSecretCache();
+    if (!store.settings.defaultProviderUid) store.settings.defaultProviderUid = uid;
     store.save();
-    return { uid: instance.uid };
+    return { uid };
   });
 
   handle('providers:delete', async ({ uid }) => {
     store.providers = store.providers.filter(p => p.uid !== uid);
+    auth.delete(uid);
+    refreshSecretCache();
     if (store.settings.defaultProviderUid === uid) {
       store.settings.defaultProviderUid = store.providers[0]?.uid || null;
     }
@@ -525,27 +699,46 @@ function registerIpc() {
   // /v1/models endpoint (Ollama, LM Studio, llama.cpp, LiteLLM, OpenRouter…)
   // so every server-side model appears in the selector without manual config.
   handle('provider:listModels', async ({ uid, baseUrl: directBase, apiKey: directKey, protocol: directProtocol }) => {
-    let p = store.providers.find(x => x.uid === uid);
-    let base = directBase || (p && p.baseUrl);
-    let key = directKey || (p && (p.apiKey || p.authToken));
+    const p = store.providers.find(x => x.uid === uid);
+    const base = directBase || (p && p.baseUrl);
+    const s = uid ? secretFor(uid) : {};
+    const key = directKey || s.apiKey || s.authToken || '';
+    const protocol = directProtocol || (p && p.protocol) || 'openai';
     if (!base) return { models: [] };
-    if ((p && p.protocol === 'openai') || directProtocol === 'openai') {
+    if (protocol !== 'anthropic') {
       try {
-        const res = await fetch(base.replace(/\/+$/, '') + '/models', {
-          headers: { Authorization: 'Bearer ' + key },
-          signal: AbortSignal.timeout(15000),
-        });
+        const prov = { baseUrl: base, apiKey: key, protocol, keyHeader: (p && p.keyHeader) || 'bearer', headers: (p && p.headers) || {} };
+        const res = await adapters.listModels(prov);
         const j = await res.json();
-        const models = (j.data || []).map(m => ({ id: m.id, ctx: m.context_length || null }))
-          .filter(m => m.id).sort((a, b) => a.id.localeCompare(b.id));
+        const raw = j.data || j.models || [];
+        const models = raw.map(m => ({ id: m.id || m.name, ctx: m.context_length || m.inputTokenLimit || null }))
+          .filter(m => m.id).map(m => ({ ...m, id: String(m.id).replace(/^models\//, '') }))
+          .sort((a, b) => a.id.localeCompare(b.id));
+        if (models.length) return { models, curated: p ? (p.models || []) : [] };
+        // bedrock-runtime implements no GET /models (always empty/404): fall
+        // back to the models.dev catalog so the picker still has real ids.
+        if (bedrock.isBedrockUrl(base)) {
+          const cat = modelsdev.modelsFor('amazon-bedrock').map(m => ({
+            id: m.id, name: m.name, ctx: (m.limit && m.limit.context) || null,
+            cost: m.cost, tool_call: m.tool_call, catalog: true,
+          })).sort((a, b) => a.id.localeCompare(b.id));
+          if (cat.length) return { models: cat, curated: p ? (p.models || []) : [], source: 'models.dev (no live listing on Bedrock)' };
+        }
         return { models, curated: p ? (p.models || []) : [] };
       } catch (err) {
+        if (bedrock.isBedrockUrl(base)) {
+          const cat = modelsdev.modelsFor('amazon-bedrock').map(m => ({
+            id: m.id, name: m.name, ctx: (m.limit && m.limit.context) || null,
+            cost: m.cost, tool_call: m.tool_call, catalog: true,
+          })).sort((a, b) => a.id.localeCompare(b.id));
+          if (cat.length) return { models: cat, curated: p ? (p.models || []) : [], source: 'models.dev (no live listing on Bedrock)' };
+        }
         return { models: [], error: String((err && err.message) || err) };
       }
     }
     const headers = {};
     if (key) headers.Authorization = 'Bearer ' + key;
-    if (p && p.apiKey) headers['x-api-key'] = p.apiKey;
+    if (s.apiKey) headers['x-api-key'] = s.apiKey;
     const pick = (json) => {
       let models = (json.data || []).map(m => ({ id: m.id, ctx: m.context_length || null }));
       if (!models.length && Array.isArray(json.models)) {
@@ -588,6 +781,172 @@ function registerIpc() {
         return { models: [], error: String((err2 && err2.message) || err2) };
       }
     }
+  });
+
+  // ----- provider catalog / models.dev / auth / local runtimes -----
+  handle('catalog:all', async () => ({ catalog: providers.catalogEntries(), modelsdev: modelsdev.stat() }));
+
+  handle('modelsdev:refresh', async () => modelsdev.refresh());
+  handle('modelsdev:stats', async () => modelsdev.stat());
+  handle('catalog:models', async ({ providerId, q, limit }) => {
+    if (q) return { models: modelsdev.searchModels(q, limit || 40) };
+    if (!providerId) return { models: [] };
+    const p = modelsdev.get(providerId);
+    return {
+      provider: p ? { id: p.id, name: p.name, api: p.api, npm: p.npm, doc: p.doc, env: p.env } : null,
+      models: modelsdev.modelsFor(providerId),
+    };
+  });
+  handle('catalog:model', async ({ providerId, modelId }) => ({ model: modelsdev.model(providerId, modelId) }));
+
+  // Secret-free auth status for every provider (drives the "key set" chips).
+  handle('auth:status', async ({ uids }) => ({
+    uids: auth.listAll(uids || store.providers.map(p => p.uid)),
+    encryption: auth.encryptionAvailable,
+  }));
+  handle('auth:setKey', async ({ uid, key }) => {
+    if (!uid) throw new Error('uid required');
+    auth.setApiKey(uid, key, { origin: 'manual' });
+    refreshSecretCache();
+    return { summary: auth.summary(uid) };
+  });
+  handle('auth:clear', async ({ uid }) => { auth.delete(uid); refreshSecretCache(); return {}; });
+
+  // Connectivity probe: list models + classify the failure so the UI can say
+  // "invalid key" instead of showing a raw 401 JSON blob.
+  handle('providers:test', async ({ uid, baseUrl, apiKey, protocol, keyHeader }) => {
+    const p = uid ? store.providers.find(x => x.uid === uid) : null;
+    const s = uid ? secretFor(uid) : {};
+    const base = baseUrl || (p && p.baseUrl) || '';
+    const key = apiKey || s.apiKey || s.authToken || '';
+    const proto = protocol || (p && p.protocol) || 'openai';
+    if (!base) {
+      return proto === 'anthropic'
+        ? { ok: true, note: 'official Anthropic API', detail: key ? 'API key set' : 'no key — run /login in a terminal, or add one' }
+        : { ok: false, error: 'No base URL set for this provider.' };
+    }
+    if (proto === 'anthropic') {
+      const t = await testAnthropic(base, key, keyHeader || (p && p.keyHeader) || 'bearer', (p && p.model) || '');
+      return { ...t, endpoint: 'anthropic /v1/messages' };
+    }
+    if (bedrock.isBedrockUrl(base)) {
+      // bedrock-runtime has no GET /models — probe a minimal completion.
+      const t = await bedrock.probe(base, key, (p && p.model) || '');
+      return { ...t, endpoint: 'bedrock /openai/v1/chat/completions' };
+    }
+    try {
+      const prov = { baseUrl: base, apiKey: key, protocol: proto, keyHeader: keyHeader || (p && p.keyHeader) || 'bearer', headers: (p && p.headers) || {} };
+      const res = await adapters.listModels(prov);
+      const text = await res.text().catch(() => '');
+      if (!res.ok) return { ok: false, status: res.status, error: classifyHttpError(res.status, text) };
+      let count = 0;
+      try { const j = JSON.parse(text); count = (j.data || j.models || []).length; } catch { /* non-JSON but 200 */ }
+      return { ok: true, status: res.status, modelCount: count, detail: key ? 'key accepted' : 'no key (local runtime?)' };
+    } catch (err) {
+      return { ok: false, error: classifyNetError(err) };
+    }
+  });
+
+  // Non-secret diagnostics: does this provider have a credential, and what
+  // environment will a session actually get? (Never returns the secret itself.)
+  handle('providers:diagnostics', async ({ uid }) => {
+    const p = store.providers.find(x => x.uid === uid);
+    if (!p) throw new Error('unknown provider');
+    const env = providers.envFor(p, { ...store.settings, disableTelemetry: false });
+    const s = secretFor(uid);
+    return {
+      uid,
+      protocol: p.protocol || 'anthropic',
+      baseUrl: p.baseUrl || '',
+      usesProxy: usesProxy(p),
+      hasSecret: !!(s.apiKey || s.authToken),
+      authType: auth.typeOf(uid),
+      envKeys: Object.keys(env),
+      carriesToken: !!(env.ANTHROPIC_AUTH_TOKEN || env.ANTHROPIC_API_KEY),
+      model: p.model || '',
+    };
+  });
+
+  // Begin an OAuth sign-in. Returns the URL (and a device code where needed).
+  handle('providers:connect', async ({ presetId, clientId, redirectUri }) => {
+    const entry = catalog.byId(presetId);
+    if (!entry) throw new Error('unknown provider preset');
+    if (!entry.oauth) throw new Error('this provider does not use OAuth — add an API key instead');
+    const cfg = { ...entry.oauth };
+    if (clientId) cfg.clientId = clientId;
+    if (!cfg.clientId && cfg.clientIdEnv) cfg.clientId = process.env[cfg.clientIdEnv] || '';
+    if (!cfg.clientId) {
+      return {
+        needsClientId: true,
+        hint: cfg.clientIdEnv
+          ? 'Provide an OAuth application id (or set ' + cfg.clientIdEnv + ' in the environment).'
+          : 'Provide an OAuth application id for this provider.',
+      };
+    }
+    const flow = oauth.begin(presetId, cfg, { redirectUri });
+    const sessionId = 'o' + (++oauthSeq);
+    oauthSessions.set(sessionId, { flow, presetId, entry, cfg, createdAt: Date.now() });
+    if (flow.method === 'device') {
+      const ready = await flow.ready;
+      return { ok: true, sessionId, method: 'device', url: ready.url, userCode: ready.userCode,
+        instructions: 'Open ' + ready.url + ' and enter the code ' + ready.userCode + ', then keep this dialog open.' };
+    }
+    return { ok: true, sessionId, method: flow.method, url: flow.url, instructions: flow.instructions };
+  });
+
+  // Finish an OAuth sign-in: paste-code calls in with `code`; PKCE/device wait.
+  handle('providers:oauth-complete', async ({ sessionId, code, uid, name, placeholders }) => {
+    const sess = oauthSessions.get(sessionId);
+    if (!sess) throw new Error('this sign-in expired — start it again');
+    let tokens;
+    if (sess.flow.method === 'code') tokens = await sess.flow.exchange(code);
+    else tokens = await sess.flow.wait();
+    if (sess.cfg.exchange === 'copilot') {
+      const cop = await oauth.refreshCopilot(tokens.access);
+      tokens = { ...tokens, access: cop.access, refresh: cop.refresh, expires: cop.expires, meta: { ...(tokens.meta || {}), copilot: true } };
+    }
+    let inst = uid ? store.providers.find(x => x.uid === uid) : store.providers.find(x => x.presetId === sess.presetId);
+    if (!inst) {
+      inst = providers.makeInstance(sess.entry, { name, placeholders });
+      store.providers.push(inst);
+    }
+    inst.authKind = 'oauth';
+    if (!inst.baseUrl) {
+      const tpl = sess.entry.baseUrlTemplate || sess.entry.baseUrl || '';
+      inst.baseUrl = tpl ? catalog.resolveTemplate(tpl, placeholders || inst.placeholders) : '';
+    }
+    auth.setOAuth(inst.uid, tokens);
+    if (sess.cfg.writesCredentials === 'claude-cli' && tokens.access) oauth.writeClaudeCredentials(tokens);
+    refreshSecretCache();
+    if (!store.settings.defaultProviderUid) store.settings.defaultProviderUid = inst.uid;
+    store.save();
+    oauthSessions.delete(sessionId);
+    return { ok: true, uid: inst.uid, summary: auth.summary(inst.uid), provider: providers.publicInstance(inst) };
+  });
+  handle('providers:oauth-cancel', async ({ sessionId }) => {
+    const sess = oauthSessions.get(sessionId);
+    if (sess) { try { sess.flow.cancel && sess.flow.cancel(); } catch { /* noop */ } oauthSessions.delete(sessionId); }
+    return {};
+  });
+
+  // Local runtimes (Ollama / LM Studio / llama.cpp / vLLM)
+  handle('localruntimes:scan', async () => {
+    const extra = store.providers
+      .filter(p => p.baseUrl && /localhost|127\.0\.0\.1|0\.0\.0\.0/.test(p.baseUrl))
+      .map(p => ({ id: p.uid, name: p.name, baseUrl: p.baseUrl }));
+    return { runtimes: await localruntimes.scan(extra) };
+  });
+  handle('localruntimes:models', async ({ uid, baseUrl }) => {
+    const p = uid ? store.providers.find(x => x.uid === uid) : null;
+    const base = baseUrl || (p && p.baseUrl);
+    if (!base) throw new Error('no base URL');
+    return await localruntimes.list(base);
+  });
+  handle('localruntimes:manage', async ({ uid, baseUrl, model, action, numCtx, keepAlive }) => {
+    const p = uid ? store.providers.find(x => x.uid === uid) : null;
+    const base = baseUrl || (p && p.baseUrl);
+    if (!base || !model) throw new Error('base URL and model are required');
+    return await localruntimes.manage(base, { model, action, numCtx, keepAlive });
   });
 
   // ----- connectors -----
@@ -700,15 +1059,21 @@ function registerIpc() {
   handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt }) => {
     const provider = store.providers.find(p => p.uid === providerUid)
       || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
+    if (provider) await ensureFreshAuth(provider);
     const useProxy = usesProxy(provider);
     // Local Ollama providers: pre-warm the model at a context size that fits the
     // claude engine's base prompt (Ollama's default 4-16K ctx 400s instantly).
     let effModel = sanitizeModel(model || (provider && provider.model) || '');
-    if (provider && provider.baseUrl && !effModel) {
+    if (provider && provider.baseUrl && isLocalBase(provider.baseUrl) && !effModel) {
       const picked = await pickLocalDefault(provider.baseUrl);
       if (picked) { effModel = picked; model = picked; }
     }
-    if (provider && provider.baseUrl && effModel && !useProxy) {
+    // Warm local models even when the chat is routed through the translator
+    // proxy: Ollama's OpenAI endpoint has no num_ctx parameter, so the proxy's
+    // chat calls inherit whatever context the model loaded with — without this
+    // warm they load at the Modelfile default (4-16K) and the engine's base
+    // prompt can't fit. warmOllamaModel self-skips non-Ollama servers.
+    if (provider && provider.baseUrl && effModel && (isLocalBase(provider.baseUrl) || !useProxy)) {
       const warm = await warmOllamaModel(provider.baseUrl, effModel, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, effModel) });
       if (!warm.ok) return { ok: false, error: warm.error };
       if (warm.corrected) model = warm.corrected;   // typo/alias fixed against the server's real tags
@@ -740,10 +1105,13 @@ function registerIpc() {
     // without it, Ollama serves the model at its default (tiny) context.
     const chat = chats.chats.get(id);
     const prov = chat && chat.providerInstance;
+    if (prov) await ensureFreshAuth(prov);
     const eff = sanitizeModel(model || (prov && prov.model) || '');
     model = sanitizeModel(model);
-    const isNativeOllama = !!(prov && prov.baseUrl) && !usesProxy(prov);
-    if (isNativeOllama && eff) {
+    // Warm on any local base or direct (non-proxied) provider — proxied local
+    // chats need it just as much, since the proxy cannot carry num_ctx.
+    const needsWarm = !!(prov && prov.baseUrl) && (isLocalBase(prov.baseUrl) || !usesProxy(prov));
+    if (needsWarm && eff) {
       const warm = await warmOllamaModel(prov.baseUrl, eff, Number(store.settings.localNumCtx || 131072), { forceCtx: forcedCtxFor(store.settings, eff) });
       if (!warm.ok) return { blocked: true, modelCtx: warm.native, error: warm.error };
       if (warm.corrected) model = warm.corrected;   // dropdown/custom entry fixed to a real tag
@@ -1216,14 +1584,33 @@ if (!gotLock) {
     if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: app ready');
     // Bind an ephemeral port: a fixed one collides with any other listener and
     // leaks provider API keys to whoever grabs it.
+    store.init();
+    // Secrets live in auth.json; pull any that predate the split out of config.
+    auth.init(app.getPath('userData'));
+    modelsdev.init(app.getPath('userData'));
+    const migrated = auth.migrateFromConfig(store.providers, () => store.save());
+    if (migrated) console.log('[auth] migrated', migrated, 'secret(s) out of config.json');
+    providers.useAuth(auth);
+    providers.ensureDefaults(store);
+    if (providers.migrateUrls(store)) console.log('[providers] repaired a stale preset base URL');
+    if (providers.migrateModels(store)) console.log('[providers] applied requested model pins');
+    refreshSecretCache();
+    if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: store ready');
+
     const proxy = await startProxy((uid) => {
       const inst = store.providers.find(x => x.uid === uid);
-      return inst ? { baseUrl: inst.baseUrl, apiKey: inst.apiKey || inst.authToken || '' } : null;
+      if (!inst || !inst.baseUrl) return null;
+      const s = secretFor(uid);
+      return {
+        baseUrl: inst.baseUrl,
+        apiKey: s.apiKey || s.authToken || '',
+        protocol: inst.protocol || 'openai',
+        keyHeader: inst.keyHeader || 'bearer',
+        headers: inst.headers || {},
+      };
     }, { token: proxyToken, port: Number(process.env.CCE_PROXY_PORT || 0) });
     proxyPort = proxy.port;
-    store.init();
     if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: store ready');
-    providers.ensureDefaults(store);
     // Register IPC before the CLI probe: detectClaude() shells out to
     // `claude --version` (up to 15s), and the renderer calls handlers as soon
     // as it loads. Handlers that need claudeInfo already read the mutable
