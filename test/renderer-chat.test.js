@@ -248,3 +248,42 @@ describe('resume refusal (#5)', () => {
     expect(created.payload.resumeAt).toBeUndefined();
   });
 });
+
+describe('user message is drawn once', () => {
+  const send = (chat, text) => {
+    chat.composer.value = text;
+    chat.composer.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+  };
+  const replay = (text, uuid) => h.window.Chat.handleEvent({
+    id: 'c1', kind: 'message',
+    msg: { type: 'user', uuid, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text }] } },
+  });
+
+  it('merges the engine replay into the bubble the composer already showed', () => {
+    const chat = h.window.Chat.chats.get('c1');
+    send(chat, 'hello');
+    expect(chat.msgs.querySelectorAll('.user-msg')).toHaveLength(1);
+    replay('hello', 'uuid-1');
+    const bubbles = chat.msgs.querySelectorAll('.user-msg');
+    expect(bubbles).toHaveLength(1);
+    expect(bubbles[0].dataset.uuid).toBe('uuid-1');   // now carries the rewind anchor
+  });
+
+  it('keeps the replayed message in place when something was drawn after it', () => {
+    const chat = h.window.Chat.chats.get('c1');
+    send(chat, 'hello');
+    const note = h.window.document.createElement('div');
+    note.className = 'sys-note';
+    chat.msgs.appendChild(note);
+    replay('hello', 'uuid-2');
+    const kids = [...chat.msgs.children].filter(n => n.classList.contains('user-msg') || n.classList.contains('sys-note'));
+    expect(kids[0].classList.contains('user-msg')).toBe(true);
+    expect(kids[1]).toBe(note);
+  });
+
+  it('still shows a replayed message that was never typed here (resumed history)', () => {
+    const chat = h.window.Chat.chats.get('c1');
+    replay('from an earlier session', 'uuid-3');
+    expect(chat.msgs.querySelectorAll('.user-msg')).toHaveLength(1);
+  });
+});

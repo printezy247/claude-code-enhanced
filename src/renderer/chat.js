@@ -1672,6 +1672,7 @@ const Chat = (() => {
     chat.msgs.querySelector('.chat-empty')?.remove();
     const wrap = el('div', 'msg user-msg');
     wrap.dataset.uuid = uuid || '';
+    wrap.dataset.text = String(text || '').trim();
     const bubble = el('div', 'user-bubble', text);
     addCopyBtn(bubble, () => text);
     // Hover actions: re-ask from here, and rewind the files to this point. #30
@@ -1697,6 +1698,7 @@ const Chat = (() => {
     wrap.appendChild(acts);
     chat.msgs.appendChild(wrap);
     scrollDown(chat);
+    return wrap;
   }
 
   /** Branch the conversation from a message with an edited prompt. #30 */
@@ -1834,7 +1836,15 @@ const Chat = (() => {
             const t = typeof c2 === 'string'
               ? c2
               : (Array.isArray(c2) ? c2.filter(b => b.type === 'text').map(b => b.text).join(' ') : '');
-            if (String(t || '').trim()) appendUser(chat, t, msg.uuid);
+            if (String(t || '').trim()) {
+              // The composer already showed this message when it was sent; the
+              // engine's replay only adds the uuid. Swap it in place instead of
+              // drawing the message twice.
+              const sent = [...chat.msgs.querySelectorAll('.msg.user-msg')]
+                .find(n => !n.dataset.uuid && n.dataset.text === String(t).trim());
+              const fresh = appendUser(chat, t, msg.uuid);
+              if (sent) sent.replaceWith(fresh);
+            }
           }
         }
         for (const block of (msg.message?.content || [])) {
