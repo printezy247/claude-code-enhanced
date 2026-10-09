@@ -357,11 +357,11 @@ describe('provider migrations', () => {
   const providers = require('../src/main/providers.js');
   const fakeStore = (list) => ({ providers: list, settings: {}, save() { this.saved = true; } });
 
-  it('pins the 9 NaraRouter models once, then leaves them alone', () => {
+  it('pins the 10 NaraRouter models once, then leaves them alone', () => {
     const store = fakeStore([{ uid: 'n1', presetId: 'nararouter', name: 'NaraRouter', baseUrl: 'https://router.bynara.id/v1', model: '', models: [], whitelist: [] }]);
     expect(providers.migrateModels(store)).toBe(true);
     const p = store.providers[0];
-    expect(p.models).toHaveLength(9);
+    expect(p.models).toHaveLength(10);
     expect(p.whitelist).toContain('jev');
     expect(p.whitelist).toContain('agnes-2.5-flash');
     expect(p.model).toBe('nemotron-3.5-lightning-free');
@@ -369,7 +369,7 @@ describe('provider migrations', () => {
     // Second run: user removed one — not re-clobbered.
     p.models.pop();
     expect(providers.migrateModels(store)).toBe(false);
-    expect(p.models).toHaveLength(8);
+    expect(p.models).toHaveLength(9);
   });
 
   it('pins AgentRouter to deepseek-v4-flash only', () => {
@@ -403,14 +403,26 @@ describe('provider migrations', () => {
   it('seeds every new NaraRouter instance with the free model list', () => {
     const a = providers.makeInstance(catalog.byId('nararouter'), {});
     const b = providers.makeInstance(catalog.byId('nararouter'), {});
-    expect(a.models).toHaveLength(9);
+    expect(a.models).toHaveLength(10);
     expect(b.models).toEqual(a.models);
     a.models.pop();
-    expect(b.models).toHaveLength(9);   // not a shared array
+    expect(b.models).toHaveLength(10);   // not a shared array
+  });
+
+  it('repairs the exo-stealh typo and adds the missing free model once', () => {
+    const store = fakeStore([{ uid: 'n1', presetId: 'nararouter', model: 'jev', models: ['jev', 'exo-stealh', 'mine'], whitelist: ['exo-stealh'] }]);
+    store.settings.appliedFixes = { naraModels: true };
+    expect(providers.migrateModels(store)).toBe(true);
+    const p = store.providers[0];
+    expect(p.models).toContain('exo-stealth');
+    expect(p.models).not.toContain('exo-stealh');
+    expect(p.models).toContain('mine');
+    expect(p.models).toContain('ling-3.0-flash-fin-free');
+    expect(providers.migrateModels(store)).toBe(false);
   });
 
   it('catalog carries the requested defaults', () => {
-    expect(catalog.byId('nararouter').recommendedModels).toHaveLength(9);
+    expect(catalog.byId('nararouter').recommendedModels).toHaveLength(10);
     expect(catalog.byId('nararouter').defaultModel).toBe('nemotron-3.5-lightning-free');
     expect(catalog.byId('agentrouter').defaultModel).toBe('deepseek-v4-flash');
     expect(catalog.byId('agentrouter-anthropic').defaultModel).toBe('claude-opus-5');

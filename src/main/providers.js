@@ -192,6 +192,18 @@ function migrateModels(store) {
       }
       flags.naraModels = true;
     }
+    // NaraRouter: the first pin shipped a typo ('exo-stealh') and missed one
+    // free model. Re-sync once, keeping any user-added ids.
+    if (p.presetId === 'nararouter' && !flags.naraModelsV2) {
+      const list = ((catalog.byId('nararouter') || {}).recommendedModels || []);
+      const fix = (arr) => {
+        const out = (arr || []).map(id => id === 'exo-stealh' ? 'exo-stealth' : id);
+        if (out.length) for (const id of list) if (!out.includes(id)) out.push(id);
+        return out;
+      };
+      p.models = fix(p.models); p.whitelist = fix(p.whitelist);
+      changed = true;
+    }
     // AgentRouter: single model only.
     if (p.presetId === 'agentrouter' && !flags.agentModel) {
       p.model = 'deepseek-v4-flash';
@@ -202,6 +214,7 @@ function migrateModels(store) {
       flags.agentModel = true;
     }
   }
+  flags.naraModelsV2 = true;
   if (changed) store.save();
   return changed;
 }
