@@ -297,7 +297,7 @@ const ProvidersUI = (() => {
   /* ============================ detail panel ============================ */
 
   function openDetail(uid, opts = {}) {
-    const p = instances().find(x => x.uid === uid);
+    let p = instances().find(x => x.uid === uid);
     if (!p) return toast('Provider not found', 'err');
     const entry = byPreset(p.presetId) || {};
     const overlay = el('div', 'modal-overlay');
@@ -345,9 +345,14 @@ const ProvidersUI = (() => {
     overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) overlay.remove(); });
     document.querySelector('#modal-root').appendChild(overlay);
     if (opts.autoAuth && entry.oauth) tabs.querySelector('[data-tab="auth"]').click();
-    return { reload: () => show(active), close: () => overlay.remove() };
+    return { reload, close: () => overlay.remove() };
 
-    function reload() { show(active); }
+    // Re-read the saved instance first: panes close over `p`, and redrawing
+    // from the copy captured at open time showed (and re-saved) stale values.
+    function reload() {
+      p = instances().find(x => x.uid === uid) || p;
+      show(active);
+    }
   }
 
   /** Save a patch onto the provider and refresh the card list. */
