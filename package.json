@@ -1,7 +1,7 @@
 {
   "name": "claude-code-enhanced",
   "productName": "Claude Code Enhanced",
-  "version": "0.9.3",
+  "version": "0.9.4",
   "description": "Chat UI, terminal sessions and MCP connectors for Claude Code.",
   "main": "src/main/main.js",
   "license": "MIT",
