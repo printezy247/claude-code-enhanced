@@ -235,6 +235,11 @@ async function testAnthropic(base, key, keyHeader, model) {
     });
     const text = await res.text().catch(() => '');
     if (res.ok) return { ok: true, status: res.status, detail: 'Anthropic endpoint accepted the key' };
+    // A 400 about the model means the key and endpoint passed; only the id is off.
+    if (res.status === 400 && /model/i.test(text)) {
+      const sent = model || 'claude-3-5-sonnet-latest';
+      return { ok: false, status: 400, error: 'Key and endpoint accepted, but the model id "' + sent + '" is not valid here. Set a valid Default model in Options (or the Models tab).' };
+    }
     return { ok: false, status: res.status, error: classifyHttpError(res.status, text) };
   } catch (err) {
     return { ok: false, error: classifyNetError(err) };
@@ -857,7 +862,8 @@ function registerIpc() {
       }
     }
     if (proto === 'anthropic') {
-      const t = await testAnthropic(base, key, keyHeader || (p && p.keyHeader) || 'bearer', (p && p.model) || '');
+      const ent = p ? providers.entryFor(p) : null;
+      const t = await testAnthropic(base, key, keyHeader || (p && p.keyHeader) || 'bearer', (p && p.model) || (ent && ent.defaultModel) || '');
       return { ...t, endpoint: 'anthropic /v1/messages' };
     }
     if (bedrock.isBedrockUrl(base)) {
