@@ -220,6 +220,13 @@ function migrateModels(store) {
       flags.agentModel = true;
     }
   }
+  // 128K was the old default; it needs ~14 GB for a 4B model and swaps a 16 GB
+  // machine to a crawl. One-time move to the 72K default (users can re-pick).
+  if (!flags.localCtx72k) {
+    if (Number(store.settings.localNumCtx) === 131072) { store.settings.localNumCtx = 73728; changed = true; }
+    flags.localCtx72k = true;
+    changed = true;
+  }
   flags.naraModelsV2 = true;
   if (changed) store.save();
   return changed;

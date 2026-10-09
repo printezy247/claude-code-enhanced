@@ -511,3 +511,21 @@ describe('keyless local providers', () => {
     expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
   });
 });
+
+describe('local context default', () => {
+  const providers = require('../src/main/providers.js');
+  const fakeStore = (settings) => ({ providers: [], settings, save() { this.saved = true; } });
+  it('moves the old 128K default to 72K once, and never again', () => {
+    const store = fakeStore({ localNumCtx: 131072 });
+    expect(providers.migrateModels(store)).toBe(true);
+    expect(store.settings.localNumCtx).toBe(73728);
+    store.settings.localNumCtx = 131072;          // user picks 128K on purpose afterwards
+    providers.migrateModels(store);
+    expect(store.settings.localNumCtx).toBe(131072);
+  });
+  it('leaves a size the user chose alone', () => {
+    const store = fakeStore({ localNumCtx: 262144 });
+    providers.migrateModels(store);
+    expect(store.settings.localNumCtx).toBe(262144);
+  });
+});
