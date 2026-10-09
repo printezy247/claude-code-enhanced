@@ -1,6 +1,6 @@
 // Claude Code Enhanced — main process.
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -1590,6 +1590,11 @@ function registerIpc() {
       } catch (err) { files.push({ name, error: String(err.message || err) }); }
     }
     return { files };
+  });
+
+  handle('clipboard:write', async ({ text }) => {
+    clipboard.writeText(String(text == null ? '' : text));
+    return {};
   });
 
   handle('shell:openExternal', async ({ url }) => {
