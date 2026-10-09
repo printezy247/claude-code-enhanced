@@ -273,6 +273,9 @@ const MIME_BY_EXT = {
 function usesProxy(provider) {
   if (!provider || !proxyPort) return false;
   if (provider.protocol && provider.protocol !== 'anthropic') return true;
+  // Gateways whose Anthropic replies lack `usage` need the repairing pass-through.
+  const ent = providers.entryFor(provider);
+  if (ent && ent.normalizeUsage) return true;
   return !!provider.baseUrl && provider.alwaysTranslate !== false && isLocalBase(provider.baseUrl);
 }
 function isLocalBase(baseUrl) {

@@ -480,3 +480,74 @@ describe('word-per-line regression: one text block for many chunks', () => {
     expect(text).toContain('"stop_reason":"max_tokens"');
   });
 });
+
+describe('anthropic pass-through repairs missing usage', () => {
+  const TOKEN2 = 'tok-passthrough-0123456789';
+  async function setup(upstreamHandler, extra = {}) {
+    const upstream = http.createServer(upstreamHandler);
+    await listen(upstream);
+    const upPort = upstream.address().port;
+    const proxy = await startProxy(
+      () => ({ baseUrl: 'http://127.0.0.1:' + upPort, apiKey: 'sk-real', protocol: 'anthropic', keyHeader: 'x-api-key', headers: {}, ...extra }),
+      { token: TOKEN2, port: 0 },
+    );
+    const call = (body, headers = {}) => fetch('http://127.0.0.1:' + proxy.port + '/px/t1/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: 'Bearer ' + TOKEN2, ...headers },
+      body: JSON.stringify(body), signal: AbortSignal.timeout(10000),
+    });
+    return { call, async close() { await close(proxy.server); await close(upstream); } };
+  }
+  const body = { model: 'deepseek-v4-flash', max_tokens: 1, messages: [{ role: 'user', content: 'hi' }] };
+
+  it('adds usage to a non-streamed reply that has none', async () => {
+    const h = await setup((_q, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ id: 'm', type: 'message', role: 'assistant', content: [{ type: 'text', text: 'hi' }], stop_reason: 'end_turn' })); });
+    const j = await (await h.call(body)).json();
+    expect(typeof j.usage.input_tokens).toBe('number');
+    expect(typeof j.usage.output_tokens).toBe('number');
+    expect(j.content[0].text).toBe('hi');
+    await h.close();
+  });
+
+  it('keeps real usage numbers untouched', async () => {
+    const h = await setup((_q, res) => { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ type: 'message', content: [], usage: { input_tokens: 7, output_tokens: 3 } })); });
+    const j = await (await h.call(body)).json();
+    expect(j.usage).toEqual({ input_tokens: 7, output_tokens: 3 });
+    await h.close();
+  });
+
+  it('repairs streamed message_start and message_delta without usage', async () => {
+    const h = await setup((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('event: message_start\ndata: {"type":"message_start","message":{"id":"m","role":"assistant","content":[]}}\n\n');
+      res.write('event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"yo"}}\n\n');
+      res.end('event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"}}\n\nevent: message_stop\ndata: {"type":"message_stop"}\n\n');
+    });
+    const text = await (await h.call({ ...body, stream: true })).text();
+    const frames = parseSse(text);
+    expect(typeof frames.find(f => f.event === 'message_start').data.message.usage.input_tokens).toBe('number');
+    expect(typeof frames.find(f => f.event === 'message_delta').data.usage.output_tokens).toBe('number');
+    expect(text).toContain('"text":"yo"');
+    await h.close();
+  });
+
+  it('forwards the engine headers (client identity) and swaps in the provider key', async () => {
+    let seen;
+    const h = await setup((q, res) => { seen = q.headers; res.writeHead(200, { 'content-type': 'application/json' }); res.end('{"type":"message","content":[]}'); });
+    await h.call(body, { 'user-agent': 'claude-cli/2.1.289 (external, cli)', 'x-app': 'cli', 'anthropic-beta': 'x-test' });
+    expect(seen['user-agent']).toContain('claude-cli');
+    expect(seen['x-app']).toBe('cli');
+    expect(seen['anthropic-beta']).toBe('x-test');
+    expect(seen['x-api-key']).toBe('sk-real');
+    expect(seen.authorization).toBeUndefined();   // the proxy token never leaves the machine
+    await h.close();
+  });
+
+  it('passes an upstream error through with its status', async () => {
+    const h = await setup((_q, res) => { res.writeHead(401, { 'content-type': 'application/json' }); res.end('{"error":{"message":"nope"}}'); });
+    const r = await h.call(body);
+    expect(r.status).toBe(401);
+    expect(await r.text()).toContain('nope');
+    await h.close();
+  });
+});

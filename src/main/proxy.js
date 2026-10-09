@@ -45,7 +45,7 @@ function startProxy(resolveProvider, opts = {}) {
     req.on('data', (c) => chunks.push(c));
     req.on('end', () => {
       const raw = Buffer.concat(chunks).toString('utf8');
-      handleTranslated(restPath, raw, prov, res).catch((err) => {
+      handleTranslated(restPath, raw, prov, res, req.headers).catch((err) => {
         if (process.env.CCE_SMOKE) console.log('[proxy] TRANSLATE ERR ' + String((err && err.stack) || err).slice(0, 300));
         if (!res.headersSent) {
           res.writeHead(502, { 'content-type': 'application/json' });
@@ -71,7 +71,7 @@ function startProxy(resolveProvider, opts = {}) {
   });
 }
 
-async function handleTranslated(restPath, raw, prov, res) {
+async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   const dbg = (m) => { if (process.env.CCE_SMOKE) console.log('[proxy] ' + m); };
   dbg('translate ' + restPath + ' bytes=' + raw.length);
 
@@ -92,6 +92,11 @@ async function handleTranslated(restPath, raw, prov, res) {
   }
   if (restPath !== '/v1/messages') {
     res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unsupported path ' + restPath }));
+    return;
+  }
+
+  if ((prov.protocol || 'openai') === 'anthropic') {
+    await passthroughAnthropic(body, prov, res, inHeaders);
     return;
   }
 
@@ -284,6 +289,83 @@ async function handleTranslated(restPath, raw, prov, res) {
 }
 
 // Constant-time compare so the token cannot be probed byte by byte.
+// Headers that must not be copied from the engine's request to the upstream.
+const DROP_HEADERS = new Set(['host', 'connection', 'content-length', 'authorization', 'x-api-key',
+  'x-cce-proxy-token', 'accept-encoding', 'transfer-encoding', 'keep-alive', 'upgrade']);
+
+/** Fill in the token counts the claude engine reads (`usage.input_tokens`). */
+function ensureUsage(u, fallbackIn) {
+  const out = { ...(u || {}) };
+  if (typeof out.input_tokens !== 'number') out.input_tokens = fallbackIn;
+  if (typeof out.output_tokens !== 'number') out.output_tokens = 0;
+  return out;
+}
+
+/**
+ * Native-Anthropic upstream that omits `usage` (some gateways do for non-Claude
+ * models): the engine crashes validating the model with "usage.input_tokens of
+ * undefined". Forward the request untouched, with the engine's own headers so
+ * the gateway still sees the real client, and only repair the usage fields.
+ */
+async function passthroughAnthropic(body, prov, res, inHeaders) {
+  const url = String(prov.baseUrl || '').replace(/\/+$/, '').replace(/\/v1$/, '') + '/v1/messages';
+  const headers = {};
+  for (const [k, v] of Object.entries(inHeaders || {})) if (!DROP_HEADERS.has(k.toLowerCase())) headers[k] = v;
+  headers['content-type'] = 'application/json';
+  if (prov.apiKey) {
+    if (prov.keyHeader === 'bearer') headers.Authorization = 'Bearer ' + prov.apiKey;
+    else headers['x-api-key'] = prov.apiKey;
+  }
+  if (prov.headers && typeof prov.headers === 'object') Object.assign(headers, prov.headers);
+  const est = inTokens(body);
+  const ac = new AbortController();
+  res.on('close', () => { try { ac.abort(); } catch { /* done */ } });
+  let up;
+  try {
+    up = await adapters.fetchUpstream(url, { method: 'POST', headers, body: JSON.stringify(body), signal: ac.signal });
+  } catch (err) {
+    if (ac.signal.aborted) { try { res.destroy(); } catch { /* gone */ } return; }
+    throw err;
+  }
+  const ctype = up.headers.get('content-type') || 'application/json';
+  if (!up.ok || !/event-stream/i.test(ctype)) {
+    const text = await up.text();
+    if (up.ok) {
+      try {
+        const j = JSON.parse(text);
+        if (j && j.type !== 'error') j.usage = ensureUsage(j.usage, est);
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify(j));
+        return;
+      } catch { /* not JSON: hand it over as-is */ }
+    }
+    res.writeHead(up.status, { 'content-type': ctype });
+    res.end(text);
+    return;
+  }
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  const dec = new TextDecoder();
+  let buf = '';
+  const fix = (line) => {
+    if (!line.startsWith('data:')) return line;
+    let j;
+    try { j = JSON.parse(line.slice(5).trim()); } catch { return line; }
+    if (j.type === 'message_start' && j.message) j.message.usage = ensureUsage(j.message.usage, est);
+    else if (j.type === 'message_delta') j.usage = { ...(j.usage || {}), output_tokens: typeof (j.usage && j.usage.output_tokens) === 'number' ? j.usage.output_tokens : 0 };
+    else return line;
+    return 'data: ' + JSON.stringify(j);
+  };
+  try {
+    for await (const chunk of up.body) {
+      buf += dec.decode(chunk, { stream: true });
+      let i;
+      while ((i = buf.indexOf('\n')) >= 0) { res.write(fix(buf.slice(0, i).replace(/\r$/, '')) + '\n'); buf = buf.slice(i + 1); }
+    }
+    if (buf) res.write(fix(buf) + '\n');
+  } catch { /* client gone or upstream cut: just end */ }
+  res.end();
+}
+
 function isTokenValid(req, token) {
   const auth = String(req.headers.authorization || '');
   const bearer = auth.startsWith('Bearer ') ? auth.slice(7) : '';
