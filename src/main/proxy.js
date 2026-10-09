@@ -95,6 +95,17 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     return;
   }
 
+  // The engine validates a model before a chat starts with a 1-token "Hi" probe
+  // and gives up after ~15s ("Couldn't confirm model ..."). Slow free tiers and
+  // cold local models miss that deadline. Answer the probe here; the first real
+  // message still reaches the provider and reports any genuine error.
+  if (isModelProbe(body)) {
+    console.log('[proxy] model probe for "' + body.model + '" answered locally');
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ id: 'msg_probe', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'Hi' }], stop_reason: 'max_tokens', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }));
+    return;
+  }
+
   if ((prov.protocol || 'openai') === 'anthropic') {
     await passthroughAnthropic(body, prov, res, inHeaders);
     return;
@@ -290,6 +301,16 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
 }
 
 // Constant-time compare so the token cannot be probed byte by byte.
+/** The engine's model-validation request: max_tokens 1, one user message "Hi", no tools, no stream. */
+function isModelProbe(body) {
+  if (!body || body.max_tokens !== 1 || body.stream || (body.tools && body.tools.length)) return false;
+  const msgs = body.messages;
+  if (!Array.isArray(msgs) || msgs.length !== 1 || msgs[0].role !== 'user') return false;
+  const c = msgs[0].content;
+  const text = typeof c === 'string' ? c : (Array.isArray(c) && c.length === 1 && c[0] && c[0].type === 'text' ? c[0].text : null);
+  return text === 'Hi';
+}
+
 // Headers that must not be copied from the engine's request to the upstream.
 const DROP_HEADERS = new Set(['host', 'connection', 'content-length', 'authorization', 'x-api-key',
   'x-cce-proxy-token', 'accept-encoding', 'transfer-encoding', 'keep-alive', 'upgrade']);

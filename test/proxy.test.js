@@ -551,3 +551,25 @@ describe('anthropic pass-through repairs missing usage', () => {
     await h.close();
   });
 });
+
+describe('model validation probe is answered locally', () => {
+  const probe = { model: 'slow-model', max_tokens: 1, messages: [{ role: 'user', content: [{ type: 'text', text: 'Hi', cache_control: { type: 'ephemeral' } }] }] };
+  it('does not touch the upstream (OpenAI-protocol provider)', async () => {
+    let hits = 0;
+    const h = await withProxy((_q, res) => { hits++; res.writeHead(200); res.end('{}'); });
+    const r = await h.call('/v1/messages', probe);
+    const j = await r.json();
+    expect(r.status).toBe(200);
+    expect(j.content[0].text).toBe('Hi');
+    expect(typeof j.usage.input_tokens).toBe('number');
+    expect(hits).toBe(0);
+    await h.close();
+  });
+  it('still forwards a real 1-token request that is not the probe', async () => {
+    let hits = 0;
+    const h = await withProxy((_q, res) => { hits++; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ choices: [{ message: { content: 'x' } }] })); });
+    await (await h.call('/v1/messages', { ...probe, messages: [{ role: 'user', content: 'something else' }] })).text();
+    expect(hits).toBe(1);
+    await h.close();
+  });
+});

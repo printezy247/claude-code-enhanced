@@ -275,7 +275,7 @@ function usesProxy(provider) {
   if (provider.protocol && provider.protocol !== 'anthropic') return true;
   // Gateways whose Anthropic replies lack `usage` need the repairing pass-through.
   const ent = providers.entryFor(provider);
-  if (ent && ent.normalizeUsage) return true;
+  if (ent && (ent.normalizeUsage || ent.local)) return true;
   return !!provider.baseUrl && provider.alwaysTranslate !== false && isLocalBase(provider.baseUrl);
 }
 function isLocalBase(baseUrl) {
