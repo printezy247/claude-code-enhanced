@@ -56,6 +56,48 @@ function editDistance(a, b) {
     dp[i][j] = Math.min(dp[i - 1][j] + 1, dp[i][j - 1] + 1, dp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
   return dp[a.length][b.length];
 }
+// Ollama reloads a model at its default context (4096 on small GPUs) as soon as
+// a request arrives without num_ctx, and the claude engine never sends one —
+// so a /api/generate warm-up at 128K is undone by the first chat turn and the
+// engine's prompt is silently truncated. A derived model with num_ctx baked into
+// its Modelfile keeps the context for every request. Verified against Ollama
+// 0.35.1: /v1/messages and /v1/chat/completions both keep the baked value.
+const VARIANT_RE = /[-:]cce\d+k$/;
+const isCtxVariant = (name) => VARIANT_RE.test(String(name || ''));
+const baseModelName = (name) => String(name || '').replace(VARIANT_RE, '');
+function variantName(model, ctx) {
+  const b = baseModelName(model);
+  const k = Math.round(ctx / 1024);
+  return b.includes(':') ? b + '-cce' + k + 'k' : b + ':cce' + k + 'k';
+}
+/** Create (or refresh) the derived model; returns its name, or null on failure. */
+async function ensureCtxVariant(base, model, ctx) {
+  const name = variantName(model, ctx);
+  try {
+    const r = await fetch(base + '/api/create', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ model: name, from: model, parameters: { num_ctx: ctx }, stream: false }),
+      signal: AbortSignal.timeout(60_000),
+    });
+    return r.ok ? name : null;
+  } catch { return null; }
+}
+async function loadedCtx(base, name) {
+  try {
+    const ps = await fetch(base + '/api/ps', { signal: AbortSignal.timeout(5000) }).then(r => r.json());
+    const m = (ps.models || []).find(x => (x.name || x.model) === name || (x.name || x.model) === name + ':latest');
+    return m ? Number(m.context_length) || 0 : 0;
+  } catch { return 0; }
+}
+/** Load the derived model (no options: the Modelfile value applies) and drop the plain copy. */
+async function switchToVariant(base, model, variant) {
+  const post = (b) => fetch(base + '/api/generate', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(b), signal: AbortSignal.timeout(300_000),
+  });
+  try { await post({ model, keep_alive: 0, stream: false }); } catch { /* not loaded */ }
+  try { const r = await post({ model: variant, prompt: '', keep_alive: '30m', stream: false }); return r.ok; } catch { return false; }
+}
+
 async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
   base = base.replace(/\/+$/, '');
   const resolved0 = model; // original request, for the corrected-model report
@@ -95,7 +137,7 @@ async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
   // Kimi, OpenRouter, LM Studio…) 404s below and would wrongly block chat
   // creation with "Ollama could not load <model>".
   if (!isOllama) return { ok: true, skipped: true, model };
-  model = resolved;
+  model = baseModelName(resolved);   // a picked variant means its base
   const native = await ollamaModelCtx(base, model);
   // A per-model override lets the user knowingly try a smaller context (the
   // engine will likely reject turns past it — the override screen says so).
@@ -109,6 +151,8 @@ async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
   if (forced > 0) ctx = forced;   // the user asked for exactly this size
   if (warmCtxCache.has(cacheKey)) {
     ctx = Math.min(ctx, warmCtxCache.get(cacheKey));
+    const v = variantName(model, ctx);
+    if (await loadedCtx(base, v) >= ctx) return { ok: true, ctx, native, model: v, corrected: v };
   } else {
     // First load this session: pick a starting size from free RAM minus the
     // weights, so we don't burn ~12s per failed oversized attempt.
@@ -143,6 +187,10 @@ async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
       });
       if (res.ok) {
         warmCtxCache.set(cacheKey, ctx);
+        const variant = await ensureCtxVariant(base, model, ctx);
+        if (variant && await switchToVariant(base, model, variant)) {
+          return { ok: true, ctx, native, model: variant, corrected: variant };
+        }
         return { ok: true, ctx, native, model, corrected: model !== resolved0 ? model : undefined };
       }
       const j = await res.json().catch(() => ({}));
@@ -181,4 +229,4 @@ async function pickLocalDefault(base) {
   } catch { return null; }
 }
 
-module.exports = { CCE_CTX_FLOOR, ollamaModelCtx, sanitizeModel, warmOllamaModel, pickLocalDefault };
+module.exports = { isCtxVariant, baseModelName, variantName, CCE_CTX_FLOOR, ollamaModelCtx, sanitizeModel, warmOllamaModel, pickLocalDefault };

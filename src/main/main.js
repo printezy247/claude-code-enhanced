@@ -29,7 +29,8 @@ const adapters = require('./adapters');
 const bedrock = require('./bedrock');
 const connectors = require('./connectors');
 const tools = require('./tools');
-const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = require('./localmodels');
+const localmodels = require('./localmodels');
+const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
 const { startProxy } = require('./proxy');
 // Per-launch secret the translator proxy requires on every request. The proxy
@@ -798,6 +799,8 @@ function registerIpc() {
   // so a failed or empty live listing never hides what the user configured.
   handle('provider:listModels', async (args) => {
     const r = (await listModelsLive(args)) || {};
+    // Context-pinned copies the app creates for Ollama are an implementation detail.
+    if (Array.isArray(r.models)) r.models = r.models.filter(m => !localmodels.isCtxVariant(m.id));
     const p = store.providers.find(x => x.uid === args.uid);
     const entry = p ? providers.entryFor(p) : null;
     const declared = p ? [...(p.models || []), ...(entry && entry.recommendedModels || [])] : [];
