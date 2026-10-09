@@ -198,6 +198,10 @@ function forcedCtxFor(settings, model) {
 /** Human-readable reason for an HTTP failure, so the UI shows a fix, not a 401. */
 function classifyHttpError(status, bodyText) {
   const brief = String(bodyText || '').replace(/\s+/g, ' ').slice(0, 180);
+  // The key is fine; the gateway only serves approved clients on this route.
+  if (/unauthorized client/i.test(String(bodyText || ''))) {
+    return 'The provider refuses this client on this route (your key is not the problem). For AgentRouter, use the "AgentRouter (Claude route)" provider, which talks to it through the real claude CLI. ' + brief;
+  }
   const map = {
     400: 'Request rejected (400) — usually a bad model id.',
     401: 'API key rejected (401) — invalid key, or the provider refused this client.',
