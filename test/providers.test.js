@@ -433,3 +433,41 @@ describe('stream truncation signals', () => {
     expect(txt).toContain('SAFETY');
   });
 });
+
+describe('fetchUpstream rate-limit retry', () => {
+  const { fetchUpstream } = require('../src/main/adapters.js');
+  const http = require('node:http');
+  const serve = async (statuses) => {
+    let n = 0;
+    const srv = http.createServer((_q, res) => {
+      const st = statuses[Math.min(n++, statuses.length - 1)];
+      res.writeHead(st, { 'retry-after': '0' }); res.end('x');
+    });
+    await new Promise(r => srv.listen(0, '127.0.0.1', r));
+    return { url: 'http://127.0.0.1:' + srv.address().port, hits: () => n, close: () => new Promise(r => srv.close(r)) };
+  };
+
+  it('retries a 429 and returns the later success', async () => {
+    const s = await serve([429, 429, 200]);
+    const res = await fetchUpstream(s.url, {});
+    expect(res.status).toBe(200);
+    expect(s.hits()).toBe(3);
+    await s.close();
+  });
+
+  it('does not retry 503 (wrong model id on gateways)', async () => {
+    const s = await serve([503, 200]);
+    const res = await fetchUpstream(s.url, {});
+    expect(res.status).toBe(503);
+    expect(s.hits()).toBe(1);
+    await s.close();
+  });
+
+  it('gives up after two waits and returns the 429', async () => {
+    const s = await serve([429]);
+    const res = await fetchUpstream(s.url, {});
+    expect(res.status).toBe(429);
+    expect(s.hits()).toBe(3);
+    await s.close();
+  });
+});

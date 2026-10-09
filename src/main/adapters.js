@@ -22,6 +22,7 @@ function openaiBase(baseUrl) {
  * next one succeeds, so a single retry turns an api_retry storm into a
  * slightly slower first byte. Never retries aborts (user interrupt / timeout).
  */
+const RETRY_STATUS = new Set([429, 502, 504]);
 async function fetchUpstream(url, opts, signal, tries = 2) {
   // Callers pass the abort signal either positionally or inside opts —
   // honour both, or interrupts never reach the upstream (leaked turns).
@@ -30,9 +31,22 @@ async function fetchUpstream(url, opts, signal, tries = 2) {
     ? AbortSignal.any([signal, AbortSignal.timeout(900_000)])
     : AbortSignal.timeout(900_000);
   let last;
+  let rateTries = 0;
   for (let i = 0; i < tries; i++) {
     try {
-      return await fetch(url, { ...opts, signal: withTimeout });
+      const res = await fetch(url, { ...opts, signal: withTimeout });
+      // Rate limits and gateway hiccups are transient: wait (Retry-After wins,
+      // capped) and try again. 503 is excluded — gateways answer it for a
+      // wrong model id, which no amount of waiting fixes.
+      if (RETRY_STATUS.has(res.status) && rateTries < 2 && !withTimeout.aborted) {
+        const ra = Number(res.headers.get('retry-after'));
+        const wait = Number.isFinite(ra) && res.headers.get('retry-after') !== null ? Math.min(ra, 15) * 1000 : 1000 * (2 * rateTries + 1);
+        rateTries++; i--;
+        try { await res.body?.cancel(); } catch { /* body already consumed */ }
+        await new Promise(r => setTimeout(r, wait));
+        continue;
+      }
+      return res;
     } catch (err) {
       last = err;
       const aborted = withTimeout.aborted || /abort/i.test(String((err && err.name) || '') + String((err && err.message) || ''));
