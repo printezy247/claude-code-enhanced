@@ -392,3 +392,20 @@ describe('provider migrations', () => {
     expect(catalog.byId('agentrouter-anthropic').defaultModel).toBe('deepseek-v4-flash');
   });
 });
+
+describe('stream truncation signals', () => {
+  const { responsesChunks, geminiChunks } = require('../src/main/adapters.js');
+  const body = (text) => ({ body: (async function* () { yield Buffer.from(text); })() });
+  const collect = async (gen) => { const out = []; for await (const c of gen) out.push(c); return out; };
+
+  it('maps response.incomplete to finish_reason length, even without a trailing newline', async () => {
+    const out = await collect(responsesChunks(body('data: {"type":"response.output_text.delta","delta":"hi"}\n\ndata: {"type":"response.incomplete","response":{}}'), 'm'));
+    expect(out.some(c => c.choices && c.choices[0] && c.choices[0].finish_reason === 'length')).toBe(true);
+  });
+
+  it('surfaces a non-STOP Gemini finish reason as visible text', async () => {
+    const out = await collect(geminiChunks(body('data: {"candidates":[{"finishReason":"SAFETY","content":{"parts":[]}}]}'), 'm'));
+    const txt = out.map(c => c.choices && c.choices[0] && c.choices[0].delta && c.choices[0].delta.content).filter(Boolean).join('');
+    expect(txt).toContain('SAFETY');
+  });
+});

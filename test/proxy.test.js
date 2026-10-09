@@ -434,3 +434,49 @@ describe('pathological input guards (#16, #17)', () => {
     expect(parseToolJson('{"name":"Bash","arguments":42}')).toBeNull();
   });
 });
+
+describe('word-per-line regression: one text block for many chunks', () => {
+  let h;
+  afterAll(() => h && h.close());
+  const body = { model: 'm', max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'hi' }] };
+  const textOf = (sse) => sse.filter(f => f.event === 'content_block_delta' && f.data.delta.type === 'text_delta').map(f => f.data.delta.text).join('');
+
+  it('streams 50 one-word chunks into a single text block', async () => {
+    const words = Array.from({ length: 50 }, (_, i) => 'w' + i + ' ');
+    h = await withProxy((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      for (const w of words) res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: w } }] }) + '\n\n');
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+      res.end('data: [DONE]\n\n');
+    });
+    const sse = parseSse(await (await h.call('/v1/messages', body)).text());
+    expect(sse.filter(f => f.event === 'content_block_start')).toHaveLength(1);
+    expect(textOf(sse)).toBe(words.join(''));
+  });
+
+  it('keeps text held back near an unclosed brace and flushes it at the end', async () => {
+    await h.close();
+    h = await withProxy((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'config is {"a":' } }] }) + '\n\n');
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: { reasoning: 'hmm' } }] }) + '\n\n');
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: ' 1' } }] }) + '\n\n');
+      res.end('data: ' + JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] }) + '\n\n');
+    });
+    const sse = parseSse(await (await h.call('/v1/messages', body)).text());
+    expect(textOf(sse)).toBe('config is {"a": 1');
+  });
+
+  it('processes a final data line that has no trailing newline', async () => {
+    await h.close();
+    h = await withProxy((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'one ' } }] }) + '\n\n');
+      res.end('data: ' + JSON.stringify({ choices: [{ delta: { content: 'two' }, finish_reason: 'length' }] }));
+    });
+    const text = await (await h.call('/v1/messages', body)).text();
+    const sse = parseSse(text);
+    expect(textOf(sse)).toBe('one two');
+    expect(text).toContain('"stop_reason":"max_tokens"');
+  });
+});

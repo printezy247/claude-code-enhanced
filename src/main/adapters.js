@@ -215,13 +215,19 @@ function buildResponsesInput(body) {
   return req;
 }
 
+/** Yield the body chunks, then a newline so a final unterminated SSE line is parsed. */
+async function* withFlush(body) {
+  for await (const c of body) yield c;
+  yield Buffer.from('\n');
+}
+
 /** Translate a /responses SSE stream into OpenAI chat.completions chunks. */
 async function* responsesChunks(upstream, model) {
   const dec = new TextDecoder();
   let buf = '';
   const toolIdx = new Map();
   let n = 0;
-  for await (const chunk of upstream.body) {
+  for await (const chunk of withFlush(upstream.body)) {
     buf += dec.decode(chunk, { stream: true });
     let i;
     while ((i = buf.indexOf('\n')) >= 0) {
@@ -240,10 +246,11 @@ async function* responsesChunks(upstream, model) {
       } else if (type === 'response.function_call_arguments.delta') {
         const idx = toolIdx.get(ev.item_id) != null ? toolIdx.get(ev.item_id) : 0;
         yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, function: { arguments: ev.delta || '' } }] } }] };
-      } else if (type === 'response.completed') {
+      } else if (type === 'response.completed' || type === 'response.incomplete') {
         const u = (ev.response && ev.response.usage) || {};
         const hasTools = n > 0;
-        yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: hasTools ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: u.input_tokens || 0, completion_tokens: u.output_tokens || 0 } };
+        const cut = type === 'response.incomplete';
+        yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: cut ? 'length' : hasTools ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: u.input_tokens || 0, completion_tokens: u.output_tokens || 0 } };
       }
     }
   }
@@ -337,7 +344,7 @@ async function* geminiChunks(upstream, model) {
   const dec = new TextDecoder();
   let buf = '';
   let n = 0;
-  for await (const chunk of upstream.body) {
+  for await (const chunk of withFlush(upstream.body)) {
     buf += dec.decode(chunk, { stream: true });
     let i;
     while ((i = buf.indexOf('\n')) >= 0) {
@@ -360,6 +367,9 @@ async function* geminiChunks(upstream, model) {
         }
       }
       if (cand.finishReason) {
+        if (cand.finishReason !== 'STOP' && cand.finishReason !== 'MAX_TOKENS') {
+          yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: '\n\n[response stopped by provider: ' + cand.finishReason + ']' } }] };
+        }
         const fr = cand.finishReason === 'MAX_TOKENS' ? 'length' : (n > 0 ? 'tool_calls' : 'stop');
         yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: fr }] };
       }
@@ -431,5 +441,5 @@ async function listModels(prov) {
 module.exports = {
   callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream,
   buildOpenAIBody, buildResponsesInput, buildGeminiBody,
-  responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE,
+  responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE, responsesChunks, geminiChunks,
 };

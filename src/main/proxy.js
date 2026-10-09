@@ -163,7 +163,7 @@ async function handleTranslated(restPath, raw, prov, res) {
   const textTools = [];        // calls recovered from the text channel
   let textCarry = '';          // partial text held back between chunks
 
-  const openBlock = (b) => { blockIdx++; blockOpen = true; blockType = b; sse('content_block_start', { type: 'content_block_start', index: blockIdx, content_block: b }); };
+  const openBlock = (b) => { blockIdx++; blockOpen = true; blockType = b.type; sse('content_block_start', { type: 'content_block_start', index: blockIdx, content_block: b }); };
   const closeBlock = () => { if (blockOpen) { blockOpen = false; sse('content_block_stop', { type: 'content_block_stop', index: blockIdx }); } };
   const queueTextTool = (t) => {
     textTools.push({ id: 'call_txt_' + (blockIdx + textTools.length + 1) + '_' + Date.now(), name: t.name, args: JSON.stringify(t.args || {}) });
@@ -185,24 +185,20 @@ async function handleTranslated(restPath, raw, prov, res) {
   };
 
   try {
-    for await (const chunk of upstream.body) {
-      buf += decoder.decode(chunk, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (!line.startsWith('data:')) continue;
+    const handleLine = (raw) => {
+        const line = raw.trim();
+        if (!line.startsWith('data:')) return;
         const payload = line.slice(5).trim();
-        if (payload === '[DONE]') continue;
+        if (payload === '[DONE]') return;
         let j;
-        try { j = JSON.parse(payload); } catch { continue; }
+        try { j = JSON.parse(payload); } catch { return; }
         const choice = (j.choices || [])[0];
-        if (!choice) continue;
+        if (!choice) return;
         const d = choice.delta || {};
         if (d.content) {
           // Text may hide a whole tool call (local models do this); split it out
           // so the engine sees a real tool_use block. #1
-          const split = extractTextToolCalls(d.content, reasonBuf ? '' : textCarry);
+          const split = extractTextToolCalls(d.content, textCarry);
           textCarry = split.carry;
           if (split.text) {
             if (!blockOpen || blockType !== 'text') { closeBlock(); openBlock({ type: 'text', text: '' }); }
@@ -248,8 +244,18 @@ async function handleTranslated(restPath, raw, prov, res) {
           if (p) promptTokens = p;
           if (j.usage.completion_tokens) outTokens = j.usage.completion_tokens;
         }
+    };
+    for await (const chunk of upstream.body) {
+      buf += decoder.decode(chunk, { stream: true });
+      let idx;
+      while ((idx = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, idx);
+        buf = buf.slice(idx + 1);
+        handleLine(line);
       }
     }
+    // Last SSE line may arrive without a trailing newline.
+    if (buf.trim()) handleLine(buf);
   } catch (err) {
     // Client hung up (turn interrupted) or the socket died: stop paying for
     // tokens nobody will read. #10
@@ -261,10 +267,14 @@ async function handleTranslated(restPath, raw, prov, res) {
   }
   // A trailing partial tool call (stream cut mid-JSON) would otherwise vanish.
   if (textCarry.trim()) {
-    try {
-      const parsed = parseToolJson(textCarry);
-      if (parsed) queueTextTool(parsed);
-    } catch { /* not a call after all */ }
+    let parsed = null;
+    try { parsed = parseToolJson(textCarry); } catch { /* not a call after all */ }
+    if (parsed) queueTextTool(parsed);
+    else {
+      // Held-back text that was never a tool call is still the model's answer.
+      if (!blockOpen || blockType !== 'text') { closeBlock(); openBlock({ type: 'text', text: '' }); }
+      sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'text_delta', text: textCarry } });
+    }
   }
   flushTools();   // tool calls buffered for sequential emission (no finish_reason seen)
   closeBlock();
