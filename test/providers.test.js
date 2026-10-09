@@ -385,11 +385,35 @@ describe('provider migrations', () => {
     expect(store.providers[0].baseUrl).toBe('https://router.bynara.id/v1');
   });
 
+  it('keeps a deepseek model on the AgentRouter OpenAI route across restarts', () => {
+    const store = fakeStore([{ uid: 'a1', presetId: 'agentrouter', protocol: 'openai', baseUrl: 'https://agentrouter.org/v1', model: 'deepseek-v4-flash', smallFastModel: 'deepseek-v4-flash' }]);
+    providers.migrateUrls(store); providers.migrateUrls(store);
+    const p = store.providers[0];
+    expect(p.protocol).toBe('openai');
+    expect(p.baseUrl).toBe('https://agentrouter.org/v1');
+    expect(p.model).toBe('deepseek-v4-flash');
+  });
+
+  it('still moves a Claude-model OpenAI-route AgentRouter instance to the Anthropic route', () => {
+    const store = fakeStore([{ uid: 'a1', presetId: 'agentrouter', protocol: 'openai', model: 'claude-opus-5' }]);
+    expect(providers.migrateUrls(store)).toBe(true);
+    expect(store.providers[0].protocol).toBe('anthropic');
+  });
+
+  it('seeds every new NaraRouter instance with the free model list', () => {
+    const a = providers.makeInstance(catalog.byId('nararouter'), {});
+    const b = providers.makeInstance(catalog.byId('nararouter'), {});
+    expect(a.models).toHaveLength(9);
+    expect(b.models).toEqual(a.models);
+    a.models.pop();
+    expect(b.models).toHaveLength(9);   // not a shared array
+  });
+
   it('catalog carries the requested defaults', () => {
     expect(catalog.byId('nararouter').recommendedModels).toHaveLength(9);
     expect(catalog.byId('nararouter').defaultModel).toBe('nemotron-3.5-lightning-free');
     expect(catalog.byId('agentrouter').defaultModel).toBe('deepseek-v4-flash');
-    expect(catalog.byId('agentrouter-anthropic').defaultModel).toBe('deepseek-v4-flash');
+    expect(catalog.byId('agentrouter-anthropic').defaultModel).toBe('claude-opus-5');
   });
 });
 

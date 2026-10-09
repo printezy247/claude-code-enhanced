@@ -698,7 +698,7 @@ function registerIpc() {
   // OpenCode-style dynamic model discovery: query the provider's own
   // /v1/models endpoint (Ollama, LM Studio, llama.cpp, LiteLLM, OpenRouter…)
   // so every server-side model appears in the selector without manual config.
-  handle('provider:listModels', async ({ uid, baseUrl: directBase, apiKey: directKey, protocol: directProtocol }) => {
+  const listModelsLive = async ({ uid, baseUrl: directBase, apiKey: directKey, protocol: directProtocol }) => {
     const p = store.providers.find(x => x.uid === uid);
     const base = directBase || (p && p.baseUrl);
     const s = uid ? secretFor(uid) : {};
@@ -781,6 +781,17 @@ function registerIpc() {
         return { models: [], error: String((err2 && err2.message) || err2) };
       }
     }
+  };
+  // Declared models (saved list + preset recommendations) are always offered,
+  // so a failed or empty live listing never hides what the user configured.
+  handle('provider:listModels', async (args) => {
+    const r = (await listModelsLive(args)) || {};
+    const p = store.providers.find(x => x.uid === args.uid);
+    const entry = p ? providers.entryFor(p) : null;
+    const declared = p ? [...(p.models || []), ...(entry && entry.recommendedModels || [])] : [];
+    const have = new Set((r.models || []).map(m => m.id));
+    const extra = [...new Set(declared)].filter(id => id && !have.has(id)).map(id => ({ id, ctx: null, declared: true }));
+    return { ...r, models: [...(r.models || []), ...extra], curated: r.curated || (p ? (p.models || []) : []) };
   });
 
   // ----- provider catalog / models.dev / auth / local runtimes -----

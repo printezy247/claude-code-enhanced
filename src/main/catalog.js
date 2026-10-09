@@ -141,7 +141,7 @@ const CURATED = [
   { id: 'agentrouter-anthropic', display: 'AgentRouter (Claude route)', name: 'AgentRouter · Anthropic route',
     docsUrl: 'https://agentrouter.org/docs/opencode.html',
     protocol: 'anthropic', authKind: 'api-key', baseUrl: 'https://agentrouter.org', keyHeader: 'x-api-key',
-    defaultModel: 'deepseek-v4-flash', defaultSmall: 'deepseek-v4-flash',
+    defaultModel: 'claude-opus-5', defaultSmall: 'claude-opus-5',
     capabilities: ['native-anthropic', 'gateway'],
     blurb: 'Base URL without /v1, x-api-key auth — matches AgentRouter’s supported Claude Code client, so it passes the client check the OpenAI route fails.' },
   { id: 'github-copilot', display: 'GitHub Copilot', name: 'GitHub Copilot', md: 'github-copilot', docsUrl: 'https://github.com/settings/copilot',

@@ -58,7 +58,7 @@ function makeInstance(entry, values = {}) {
     placeholders: entry.baseUrlTemplate ? placeholders : undefined,
     model: values.model || entry.defaultModel || '',
     smallFastModel: values.smallFastModel || entry.defaultSmall || '',
-    models: [], blacklist: [], whitelist: [],
+    models: values.models ? values.models.slice() : (entry.recommendedModels || []).slice(), blacklist: [], whitelist: [],
     envExtras: {}, headers: {},
     leanTools: null,
     disabled: false,
@@ -158,7 +158,9 @@ function migrateUrls(store) {
     // AgentRouter's OpenAI gateway rejects non-allowlisted clients; the
     // Anthropic route (which the claude engine speaks natively) is the one
     // that works, so convert the broken OpenAI-route instances.
-    if (p.presetId === 'agentrouter' && (p.protocol || 'openai') === 'openai') {
+    // A non-Claude model (e.g. deepseek-v4-flash) was chosen on purpose and
+    // lives on the OpenAI route, so leave those instances alone.
+    if (p.presetId === 'agentrouter' && (p.protocol || 'openai') === 'openai' && (!p.model || /^claude/i.test(p.model))) {
       p.protocol = 'anthropic';
       p.baseUrl = 'https://agentrouter.org';
       p.keyHeader = 'x-api-key';
@@ -191,7 +193,7 @@ function migrateModels(store) {
       flags.naraModels = true;
     }
     // AgentRouter: single model only.
-    if ((p.presetId === 'agentrouter' || p.presetId === 'agentrouter-anthropic') && !flags.agentModel) {
+    if (p.presetId === 'agentrouter' && !flags.agentModel) {
       p.model = 'deepseek-v4-flash';
       if (!p.smallFastModel || p.smallFastModel === 'gpt-5.6-sol' || p.smallFastModel === 'claude-opus-5') {
         p.smallFastModel = 'deepseek-v4-flash';

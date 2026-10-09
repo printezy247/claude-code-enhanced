@@ -538,11 +538,30 @@ const ProvidersUI = (() => {
     toolbar.appendChild(loadBtn);
     wrap.appendChild(toolbar);
 
+    // opencode-style declared models: add any id by hand, even when the
+    // provider has no /models endpoint or models.dev doesn't know it.
+    const addRow = el('div', 'row');
+    const addInp = el('input'); addInp.type = 'text'; addInp.placeholder = 'add model id (e.g. deepseek-v4-flash)';
+    const addBtn = el('button', 'btn small', '+ add');
+    addRow.appendChild(addInp); addRow.appendChild(addBtn);
+    wrap.appendChild(addRow);
+
     const list = el('div', 'model-list');
     wrap.appendChild(list);
 
     let catalogModels = [];
     let liveModels = [];
+    // Saved + recommended ids always show, whatever the live listing returns.
+    const savedIds = new Set([...(p.models || []), ...(p.whitelist || []), ...(entry.recommendedModels || []), ...(p.model ? [p.model] : [])]);
+    const addModel = () => {
+      const id = addInp.value.trim();
+      if (!id) return;
+      savedIds.add(id); chosen.add(id); black.delete(id);
+      addInp.value = '';
+      draw();
+    };
+    addBtn.addEventListener('click', addModel);
+    addInp.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addModel(); } });
     const rows = new Map();
 
     function draw() {
@@ -550,6 +569,7 @@ const ProvidersUI = (() => {
       rows.clear();
       const q = (search.value || '').trim().toLowerCase();
       const byId = new Map();
+      for (const id of savedIds) byId.set(id, { id, source: 'saved' });
       for (const m of catalogModels) byId.set(m.id, { ...m, source: 'catalog' });
       for (const m of liveModels) byId.set(m.id, { ...(byId.get(m.id) || {}), ...m, source: 'live', live: true });
       const all = [...byId.values()].filter(m => !q || String(m.id).toLowerCase().includes(q) || String(m.name || '').toLowerCase().includes(q));
