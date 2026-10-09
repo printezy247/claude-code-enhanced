@@ -372,3 +372,14 @@ describe('scrolling while a reply streams', () => {
     expect(g.top()).toBe(2000);
   });
 });
+
+describe('message list layout', () => {
+  it('never lets tool cards shrink to a line inside the scrolling flex column', () => {
+    const fs = require('node:fs');
+    const css = fs.readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+    // .chat-msgs is display:flex + overflow-y:auto; its children must not shrink,
+    // or overflow:hidden children (.tool-card, .diff) collapse to 2px borders.
+    expect(css).toMatch(/\.chat-msgs\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/);
+    expect(css).toMatch(/\.chat-msgs\s*>\s*\*\s*\{[^}]*flex-shrink:\s*0/);
+  });
+});
