@@ -84,9 +84,6 @@ function cwdOf(full) {
   return null;
 }
 
-// Built-ins a small local model gets by default (no MCP, no subagents).
-const LOCAL_LEAN_TOOLS = ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'TodoWrite'];
-
 class ChatManager extends EventEmitter {
   constructor({ proxyToken = null, sdk = null } = {}) {
     super();
@@ -170,15 +167,6 @@ class ChatManager extends EventEmitter {
         options.tools = lean;
         options.disallowedTools = (settings.disallowedTools || []).map(String);
       }
-    }
-    // A small local model cannot work through the schemas of every MCP server
-    // plus the full built-in tool set: it burns its turn reasoning about them
-    // instead of answering. Local providers therefore start with a lean
-    // built-in tool set and no MCP servers; `settings.localMcp` opts back in.
-    const ent = providerInstance ? providers.entryFor(providerInstance) : null;
-    if (ent && ent.local && !(settings && settings.localMcp)) {
-      options.strictMcpConfig = true;
-      if (!options.tools) options.tools = LOCAL_LEAN_TOOLS.slice();
     }
     // Sandboxed command execution (claude code sandbox: Bubblewrap on Linux).
     if (settings && settings.sandbox && settings.sandbox.enabled) {
