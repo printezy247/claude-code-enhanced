@@ -496,3 +496,18 @@ describe('models.dev refresh', () => {
     } finally { globalThis.fetch = real; }
   });
 });
+
+describe('keyless local providers', () => {
+  const providers = require('../src/main/providers.js');
+  it('gives the engine a placeholder token so it does not fall back to Claude.ai OAuth', () => {
+    const inst = providers.makeInstance(catalog.byId('ollama'), {});
+    const env = providers.envFor(inst, {});
+    expect(env.ANTHROPIC_BASE_URL).toBe('http://localhost:11434');
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeTruthy();
+    expect(env.ANTHROPIC_API_KEY).toBe('');
+  });
+  it('leaves keyed cloud providers alone when they have no key yet', () => {
+    const env = providers.envFor(providers.makeInstance(catalog.byId('openrouter'), {}), {});
+    expect(env.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+  });
+});

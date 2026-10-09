@@ -129,6 +129,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     let msg = text.slice(0, 500), code = upstream.status;
     try { const j = JSON.parse(text); msg = (j.error && (j.error.message || j.error.code)) || j.message || msg; } catch { /* keep raw */ }
     dbg('upstream HTTP ' + upstream.status + ' -> ' + String(msg).slice(0, 200));
+    console.error('[proxy] upstream HTTP ' + upstream.status + ' for model ' + body.model + ': ' + String(msg).replace(/\s+/g, ' ').slice(0, 300));
     res.writeHead(upstream.status === 401 ? 401 : 502, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ type: 'error', error: { type: upstream.status === 401 ? 'authentication_error' : 'api_error', message: msg } }));
     return;

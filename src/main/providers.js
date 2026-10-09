@@ -88,6 +88,12 @@ function envFor(instance, settings) {
     if (key) {
       if (header === 'x-api-key' || (!secret.authToken && secret.apiKey)) env.ANTHROPIC_API_KEY = key;
       else env.ANTHROPIC_AUTH_TOKEN = key;
+    } else if (instance.baseUrl && (entry.keyOptional || entry.local)) {
+      // Keyless local server (Ollama ignores the value). Without any token the
+      // engine falls back to its saved Claude.ai login and reports an expired
+      // OAuth session instead of talking to the local server.
+      env.ANTHROPIC_AUTH_TOKEN = 'local-no-key';
+      env.ANTHROPIC_API_KEY = '';
     }
   }
   if (instance.model) env.ANTHROPIC_MODEL = instance.model;

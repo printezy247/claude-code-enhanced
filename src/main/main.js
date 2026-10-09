@@ -885,7 +885,18 @@ function registerIpc() {
       if (!res.ok) return { ok: false, status: res.status, error: classifyHttpError(res.status, text) };
       let count = 0;
       try { const j = JSON.parse(text); count = (j.data || j.models || []).length; } catch { /* non-JSON but 200 */ }
-      return { ok: true, status: res.status, modelCount: count, detail: key ? 'key accepted' : 'no key (local runtime?)' };
+      // Listing models proves the key, not the model: ask the saved model for a
+      // few tokens so a bad id or an unsupported request shows its real error.
+      const tModel = (p && p.model) || '';
+      if (tModel) {
+        const cr = await adapters.callUpstream(prov, { model: tModel, max_tokens: 16, messages: [{ role: 'user', content: 'hi' }] }, false, AbortSignal.timeout(40_000))
+          .catch((e) => ({ ok: false, status: 0, text: async () => classifyNetError(e) }));
+        if (!cr.ok) {
+          const ct = await cr.text().catch(() => '');
+          return { ok: false, status: cr.status, modelCount: count, error: 'Key works, but model "' + tModel + '" did not answer: ' + (cr.status ? classifyHttpError(cr.status, ct) : ct) };
+        }
+      }
+      return { ok: true, status: res.status, modelCount: count, detail: (key ? 'key accepted' : 'no key (local runtime?)') + (tModel ? ' · ' + tModel + ' replied' : '') };
     } catch (err) {
       return { ok: false, error: classifyNetError(err) };
     }
