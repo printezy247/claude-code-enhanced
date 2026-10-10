@@ -78,7 +78,7 @@ npm run dist       # build dist/claude-code-enhanced-<version>-amd64.deb
 1. **Providers** panel → **+ Add provider** opens the **Connect** picker. Search 230+ providers
    (every models.dev provider plus curated ones); filter by *Subscriptions / Cloud / Gateways /
    Local*.
-2. Pick one. If its URL needs values (Cloudflare account id, Azure resource, a AI Gateway id)
+2. Pick one. If its URL needs values (Cloudflare account id, Azure resource, an AI Gateway id)
    you are asked for them, then the provider is created and its detail panel opens.
 3. In the panel's tabs:
    - **Auth** — paste an API key, or **Sign in** (OAuth / device code). *Test connection* checks
@@ -130,9 +130,11 @@ servers and settings from `~/.claude` all apply exactly as in the terminal.
 
 ### IPC surface (main ↔ renderer)
 
+The main channels (not exhaustive — see `src/preload/preload.js` for the full bridge):
 `session:create/write/resize/kill` · `pty:data` / `pty:exit` events ·
-`providers:all/save/delete/default` · `connectors:presets/list/add/remove` ·
-`settings:get/set` · `dialog:pickDir`
+`providers:all/save/delete/default/test` · `provider:listModels` ·
+`connectors:presets/list/add/remove` · `settings:get/set` · `clipboard:write` ·
+`dialog:pickDir`
 
 ### Conversations
 
@@ -167,7 +169,7 @@ tabs and every stored session — no separate Sessions or History tabs:
 - [Donchitos/Claude-Code-Game-Studios](https://github.com/Donchitos/Claude-Code-Game-Studios) —
   workflow/prompt collections
 - Connector endpoints: [Supabase remote MCP](https://supabase.com/blog/announcing-supabase-remote-mcp-server),
-  [lovablelabs/mcp](https://github.com/lovablelabs/mcp), [GitHub MCP docs](https://docs.github.com/en/actions/how-tos/write-workflows/choose-what-workflows-do/use-pre-written-building-blocks/scanning-for-secrets-with-the-github-mcp-server)
+  [lovablelabs/mcp](https://github.com/lovablelabs/mcp), [GitHub MCP server](https://github.com/github/github-mcp-server)
 
 ## Roadmap ideas
 
@@ -177,8 +179,9 @@ tabs and every stored session — no separate Sessions or History tabs:
 
 ## Small local models
 
-The claude engine's own base prompt (skills + plugins) is already around 68K tokens, so a 3-4B
-model usually cannot host a chat at all. Three things in this app attack that:
+The claude engine's own base prompt (skills + plugins) is already around 66K tokens, so a chat
+needs a context of about 70K or more, and a 3-4B model on a small GPU is slow at that size
+(the first turn can take many minutes). Three things in this app attack that:
 
 - **Lean tools** — cut the tool list for one provider (Providers → Edit: three presets or a
   custom per-tool checklist) or globally (Settings → Small local models). Fewer tool schemas
@@ -186,10 +189,14 @@ model usually cannot host a chat at all. Three things in this app attack that:
 - **Tool-call repair** — local models often emit a tool call as prose
   (`<tool_call>{…}</tool_call>` or bare JSON). Local providers are routed through the
   built-in translator proxy, which parses that back into a real tool call.
-- **Context sizing** — the Ollama manager loads a model at a context size that fits in free
-  RAM, halving the range until the server accepts it. **Force context** (Settings → Local
-  models, one `model=number` per line) skips the 70K floor for a named model — only for models
-  you know; the engine usually rejects turns past a model's real context.
+- **Context sizing** — Ollama loads a model at its own default context (4096 on a 4 GB GPU),
+  which silently truncates the engine's prompt and produces nonsense replies. The Ollama
+  manager therefore creates a derived copy of the model with the context baked in (default
+  72K, see Settings → Local models) and loads that, stepping the size down if it does not fit
+  in free RAM. Larger sizes use much more memory (128K needs ~14 GB for a 4B model). **Force
+  context** (Settings → Local models, one `model=number` per line) skips the 70K floor for a
+  named model — only for models you know; the engine usually rejects turns past a model's real
+  context.
 
 Check a model's track record in the model picker: the percentage is measured from your own
 tool calls on this machine.
@@ -203,7 +210,8 @@ tool calls on this machine.
 - **renderer** — `test/helpers/renderer.js` boots `index.html` in jsdom, installs a recording
   `ccx` bridge, and evaluates `chat.js` + `app.js` in one shared scope.
 
-No network access and no API keys are required.
+No network access and no API keys are required. The same suite runs on every pull request and
+every push to `main` via GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Troubleshooting
 
