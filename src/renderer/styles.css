@@ -530,7 +530,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 
 /* centered conversation column (claude-desktop layout) */
 .chat-msgs { display: flex; flex-direction: column; align-items: center; }
-.chat-msgs > * { width: 100%; max-width: 830px; }
+.chat-msgs > * { width: 100%; max-width: 830px; flex-shrink: 0; }   /* overflow:hidden children (tool cards, diffs) otherwise shrink to their borders once the chat outgrows the window */
 .chat-msgs .user-msg { justify-content: flex-end; }
 .chat-perm-slot { display: flex; flex-direction: column; align-items: center; }
 .chat-perm-slot .perm-card { width: 100%; max-width: 830px; }

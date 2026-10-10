@@ -1400,10 +1400,10 @@ function renderSettings() {
   const lctxRow = el('div', 'inline');
   lctxRow.appendChild(el('span', 'hint', 'num_ctx for new chats'));
   const localCtxSel = el('select'); localCtxSel.style.width = '220px';
-  [['16384', '16K'], ['32768', '32K'], ['65536', '64K'], ['131072', '128K (recommended)'], ['262144', '256K']].forEach(([v, n]) => {
+  [['16384', '16K'], ['32768', '32K'], ['73728', '72K (recommended: fits the engine prompt)'], ['131072', '128K (needs ~14 GB RAM for a 4B model)'], ['262144', '256K']].forEach(([v, n]) => {
     const o = el('option', '', n); o.value = v; localCtxSel.appendChild(o);
   });
-  localCtxSel.value = String(s.localNumCtx || 131072);
+  localCtxSel.value = String(s.localNumCtx || 73728);
   lctxRow.appendChild(localCtxSel);
   c8.appendChild(lctxRow);
   // Per-model context override: skips the 70K floor for that model. Warn, don't
@@ -1489,7 +1489,7 @@ function renderSettings() {
       thinkingBudget: parseInt(tbInput.value, 10) || 0,
       effort: efInput.value.trim(),
       context1m: m1c.checked,
-      localNumCtx: Number(localCtxSel.value) || 131072,
+      localNumCtx: Number(localCtxSel.value) || 73728,
       forceCtx: parseForceCtx(forceInput.value),
       theme: themeSel.value,
       closeToTray: trayCheck.checked,

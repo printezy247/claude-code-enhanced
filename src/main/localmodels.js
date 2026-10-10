@@ -3,6 +3,10 @@
 // can test them against fake servers.
 'use strict';
 
+// Default context for local models: the engine's prompt is ~66K tokens, and every
+// extra token of context costs RAM (128K needs ~14 GB for a 4B model and thrashes
+// swap on a 16 GB machine).
+const CCE_DEFAULT_CTX = 73728;
 const CCE_CTX_FLOOR = 70000; // claude engine base prompt on this machine ≈ 68.5K
 async function ollamaModelCtx(base, model) {
   try {
@@ -147,7 +151,7 @@ async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
     return { ok: false, native, error: model + ' serves only ' + native.toLocaleString() + ' tokens of context — the claude engine base prompt needs ≥' + CCE_CTX_FLOOR.toLocaleString() + '. Load a larger-context model instead.' };
   }
   const cacheKey = base + '|' + model;
-  let ctx = Math.max(floor, Math.min(desiredCtx || 131072, native || Infinity));
+  let ctx = Math.max(floor, Math.min(desiredCtx || CCE_DEFAULT_CTX, native || Infinity));
   if (forced > 0) ctx = forced;   // the user asked for exactly this size
   if (warmCtxCache.has(cacheKey)) {
     ctx = Math.min(ctx, warmCtxCache.get(cacheKey));
@@ -229,4 +233,4 @@ async function pickLocalDefault(base) {
   } catch { return null; }
 }
 
-module.exports = { isCtxVariant, baseModelName, variantName, CCE_CTX_FLOOR, ollamaModelCtx, sanitizeModel, warmOllamaModel, pickLocalDefault };
+module.exports = { CCE_DEFAULT_CTX, isCtxVariant, baseModelName, variantName, CCE_CTX_FLOOR, ollamaModelCtx, sanitizeModel, warmOllamaModel, pickLocalDefault };

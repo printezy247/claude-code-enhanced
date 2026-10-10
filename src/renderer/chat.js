@@ -140,6 +140,7 @@ const Chat = (() => {
     $('#terminals').appendChild(pane);
 
     const chat = {
+      follow: true,   // keep the view pinned to new output until the user scrolls up
       id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: res.permissionMode || 'default',
       pane, msgs: pane.querySelector('.chat-msgs'), composer: pane.querySelector('.chat-input'),
       sendBtn: pane.querySelector('.chat-send'), stopBtn: pane.querySelector('.chat-stop'),
@@ -166,6 +167,7 @@ const Chat = (() => {
       pendingResults: new Map(),
     };
     chats.set(id, chat);
+    chat.msgs.addEventListener('scroll', () => { chat.follow = nearBottom(chat); }, { passive: true });
     if (window.__CCE_SMOKE) console.log('[chat-created]', id, 'map size', chats.size);
 
     // tab
@@ -246,6 +248,7 @@ const Chat = (() => {
         hideSlash(chat);
         return;
       }
+      chat.follow = true;   // sending jumps back to the live end
       appendUser(chat, text || '(image)');
       if (chat.busy) {
         chat.pendingMsgs.push(text);
@@ -1201,7 +1204,7 @@ const Chat = (() => {
         panel.remove();
         chat.msgs.appendChild(el('div', 'sys-note',
           '⏪ files rewound to: ' + c.text.slice(0, 90) + (rw.skipped ? ' (' + rw.skipped + ' path(s) skipped)' : '')));
-        scrollDown(chat);
+        scrollDownSoft(chat);
         toast('Files rewound', 'ok');
       });
       row.appendChild(b);
@@ -1462,16 +1465,24 @@ const Chat = (() => {
     hideSlash(chat);
   }
 
+  /** navigator.clipboard is refused in some Electron states (focus, permissions); fall back to the main process. */
+  async function copyText(text) {
+    const t = String(text == null ? '' : text);
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) { await navigator.clipboard.writeText(t); return true; }
+    } catch { /* fall through */ }
+    try { const r = await ccx.invoke('clipboard:write', { text: t }); return !!(r && r.ok); } catch { return false; }
+  }
+
   function addCopyBtn(host, getText, cls) {
     const b = el('button', 'copy-btn ' + (cls || ''), '⧉');
     b.title = 'Copy';
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
-      try {
-        await navigator.clipboard.writeText(getText());
-        b.textContent = '✓';
-        setTimeout(() => { b.textContent = '⧉'; }, 1200);
-      } catch { /* clipboard denied */ }
+      const ok = await copyText(getText());
+      b.textContent = ok ? '✓' : '✗';
+      b.title = ok ? 'Copied' : 'Copy failed';
+      setTimeout(() => { b.textContent = '⧉'; b.title = 'Copy'; }, 1200);
     });
     host.appendChild(b);
   }
@@ -1697,7 +1708,7 @@ const Chat = (() => {
     wrap.appendChild(bubble);
     wrap.appendChild(acts);
     chat.msgs.appendChild(wrap);
-    scrollDown(chat);
+    scrollDownSoft(chat);
     return wrap;
   }
 
@@ -1718,10 +1729,12 @@ const Chat = (() => {
   }
 
   function nearBottom(chat) {
-    return chat.msgs.scrollHeight - chat.msgs.scrollTop - chat.msgs.clientHeight < 120;
+    return chat.msgs.scrollHeight - chat.msgs.scrollTop - chat.msgs.clientHeight < 40;
   }
   function scrollDown(chat) { chat.msgs.scrollTop = chat.msgs.scrollHeight; }
-  function scrollDownSoft(chat) { if (nearBottom(chat)) scrollDown(chat); }
+  // New output only pulls the view down while the user is at the bottom; once
+  // they scroll up to read, it stays put until they come back (or send).
+  function scrollDownSoft(chat) { if (chat.follow !== false) scrollDown(chat); }
 
   function handleEvent(evt) {
     if (window.__CCE_SMOKE) console.log('[chat-event]', evt && evt.id, evt && evt.kind, evt && evt.msg && evt.msg.type);

@@ -287,3 +287,99 @@ describe('user message is drawn once', () => {
     expect(chat.msgs.querySelectorAll('.user-msg')).toHaveLength(1);
   });
 });
+
+describe('copy buttons', () => {
+  const click = (node) => node.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  const assistant = (text) => h.window.Chat.handleEvent({ id: 'c1', kind: 'message', msg: { type: 'assistant', message: { content: [{ type: 'text', text }] } } });
+
+  it('falls back to the main-process clipboard when navigator.clipboard is unavailable', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    assistant('copy me please');
+    const btn = chat.msgs.querySelector('.assistant-msg .msg-copy');
+    expect(btn).toBeTruthy();
+    click(btn);
+    await flush(4);
+    const call = h.calls.filter(c => c.channel === 'clipboard:write').pop();
+    expect(call.payload.text).toBe('copy me please');
+    expect(btn.textContent).toBe('✓');
+  });
+
+  it('uses the main process too when navigator.clipboard rejects', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    Object.defineProperty(h.window.navigator, 'clipboard', { configurable: true, value: { writeText: () => Promise.reject(new Error('NotAllowedError')) } });
+    assistant('second reply');
+    const btn = [...chat.msgs.querySelectorAll('.assistant-msg .msg-copy')].pop();
+    click(btn);
+    await flush(4);
+    expect(h.calls.filter(c => c.channel === 'clipboard:write').pop().payload.text).toBe('second reply');
+    expect(btn.textContent).toBe('✓');
+  });
+
+  it('shows ✗ instead of failing silently when nothing can copy', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    h.window.ccx.invoke = async () => ({ ok: false });
+    assistant('nope');
+    const btn = [...chat.msgs.querySelectorAll('.assistant-msg .msg-copy')].pop();
+    click(btn);
+    await flush(4);
+    expect(btn.textContent).toBe('✗');
+  });
+});
+
+describe('scrolling while a reply streams', () => {
+  const geometry = (chat, { scrollHeight, clientHeight, scrollTop }) => {
+    let top = scrollTop;
+    Object.defineProperty(chat.msgs, 'scrollHeight', { configurable: true, get: () => scrollHeight });
+    Object.defineProperty(chat.msgs, 'clientHeight', { configurable: true, get: () => clientHeight });
+    Object.defineProperty(chat.msgs, 'scrollTop', { configurable: true, get: () => top, set: (v) => { top = v; } });
+    return { top: () => top, scrollHeight };
+  };
+  const delta = (text, first) => h.window.Chat.handleEvent({ id: 'c1', kind: 'message', msg: { type: 'stream_event', event: first
+    ? { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }
+    : { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } } } });
+
+  it('does not pull the view down once the user has scrolled up', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    const g = geometry(chat, { scrollHeight: 2000, clientHeight: 400, scrollTop: 300 });   // far from the bottom
+    chat.msgs.dispatchEvent(new h.window.Event('scroll'));
+    expect(chat.follow).toBe(false);
+    delta('', true); delta('more text');
+    await flush(3);
+    expect(g.top()).toBe(300);
+  });
+
+  it('follows new output again after the user returns to the bottom', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    const g = geometry(chat, { scrollHeight: 2000, clientHeight: 400, scrollTop: 300 });
+    chat.msgs.dispatchEvent(new h.window.Event('scroll'));
+    expect(chat.follow).toBe(false);
+    chat.msgs.scrollTop = 1600;                                   // back at the bottom
+    chat.msgs.dispatchEvent(new h.window.Event('scroll'));
+    expect(chat.follow).toBe(true);
+    delta('', true); delta('x');
+    await flush(3);
+    expect(g.top()).toBe(2000);
+  });
+
+  it('sending a message jumps back to the live end', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    const g = geometry(chat, { scrollHeight: 2000, clientHeight: 400, scrollTop: 300 });
+    chat.msgs.dispatchEvent(new h.window.Event('scroll'));
+    expect(chat.follow).toBe(false);
+    chat.composer.value = 'next question';
+    chat.composer.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+    expect(chat.follow).toBe(true);
+    expect(g.top()).toBe(2000);
+  });
+});
+
+describe('message list layout', () => {
+  it('never lets tool cards shrink to a line inside the scrolling flex column', () => {
+    const fs = require('node:fs');
+    const css = fs.readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+    // .chat-msgs is display:flex + overflow-y:auto; its children must not shrink,
+    // or overflow:hidden children (.tool-card, .diff) collapse to 2px borders.
+    expect(css).toMatch(/\.chat-msgs\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column/);
+    expect(css).toMatch(/\.chat-msgs\s*>\s*\*\s*\{[^}]*flex-shrink:\s*0/);
+  });
+});

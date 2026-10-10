@@ -28,7 +28,7 @@ const DEFAULT_SETTINGS = {
     allowLocalBinding: true,
     allowedDomains: [],
   },
-  localNumCtx: 131072,       // context to load local Ollama models with (claude base prompt needs ≥70K)
+  localNumCtx: 73728,        // context to load local Ollama models with (claude base prompt ≈66K tokens; more costs RAM)
   forceCtx: {},             // per-model override: { "qwen3-4b": 32000 } skips the floor (#11)
 };
 
