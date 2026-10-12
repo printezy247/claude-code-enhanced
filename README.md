@@ -123,6 +123,11 @@ Provider quirks worth knowing:
 1. **Connectors** panel → pick a scope (`user` = all projects, `project` = `.mcp.json`).
 2. Click **Add connector** — it runs `claude mcp add --transport http <name> <url> --scope …`.
 3. In any terminal session, run `/mcp` and choose **Authenticate** for the OAuth popup.
+4. Each card shows a live status chip (**connected**, **sign-in needed**, **failed** with the reason on hover,
+   or **not added**) from `claude mcp list`; the button turns into **Remove** once a connector is added.
+   **Your connectors** below lists every server with its status. Press **↻ Refresh** to re-check.
+5. Another GitHub account: use **GitHub — another account** (a name such as `github-work` plus that account's
+   token). Each account is its own server; tokens are redacted from error messages.
 
 ## Architecture
 
