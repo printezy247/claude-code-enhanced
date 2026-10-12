@@ -70,6 +70,15 @@ describe('connector status chips', () => {
     expect(h.calls.find(c => c.channel === 'connectors:remove').payload).toEqual({ name: 'github' });
   });
 
+  it('shows a yellow "connected, slow" chip for a server whose tool list timed out', async () => {
+    const slow = { name: 'github', target: 'https://api.githubcopilot.com/mcp/ (HTTP)', state: 'degraded', detail: 'Connected · tools fetch failed — Request timed out', kind: 'own' };
+    const h = await open({ 'connectors:status': { ok: true, servers: [slow], output: '' } });
+    const c = card(h, 'GitHub');
+    expect(chip(c)).toBe('● connected, slow');
+    expect(c.querySelector('h4 .chip:last-child').className).toContain('mcp-warn');
+    expect(c.querySelector('.conn-hint').textContent).toMatch(/tool list timed out/);
+  });
+
   it('survives a failed health check', async () => {
     const h = await open({ 'connectors:status': { ok: false, error: 'claude missing' } });
     expect(h.window.document.querySelector('#mcp-list').textContent).toMatch(/claude missing/);

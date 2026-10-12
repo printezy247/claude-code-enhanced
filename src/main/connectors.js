@@ -195,6 +195,9 @@ function parseMcpList(output) {
     let state = 'unknown';
     if (/not configured/i.test(status)) state = 'off';
     else if (/needs? auth|authenticat/i.test(status)) state = 'auth';
+    // "Connected · tools fetch failed — Request timed out": the server answered, only the
+    // tool list was slow (typical when the sweep checks many servers at once).
+    else if (/\bconnected\b/i.test(status) && /fail|time[d ]?out/i.test(status)) state = 'degraded';
     else if (/✘|fail|error|refus|denied/i.test(status)) state = 'failed';
     else if (/✔|connected/i.test(status)) state = 'connected';
     const kind = /^plugin:|^claude\.ai /.test(name) ? 'managed' : 'own';
@@ -203,12 +206,37 @@ function parseMcpList(output) {
   return servers;
 }
 
+// `claude mcp get <name>` checks one server on its own:
+//   Status: ✔ Connected          |  Status: ✘ Failed to connect   Issue: <why>
+//   Status: ! Needs authentication
+function parseMcpGet(output) {
+  const st = /^\s*Status:\s*(.+)$/m.exec(String(output || ''));
+  if (!st) return null;
+  const text = st[1].trim();
+  const issue = /^\s*Issue:\s*(.+)$/m.exec(output);
+  const detail = (issue ? issue[1] : text).replace(/^[✔✘!⚠\s]+/, '').trim();
+  if (/needs? auth|authenticat/i.test(text)) return { state: 'auth', detail };
+  if (/✘|fail|error|refus|denied/i.test(text)) return { state: 'failed', detail };
+  if (/✔|connected/i.test(text)) return { state: 'connected', detail: 'Connected' };
+  return null;
+}
+
+// The all-servers sweep checks everything at once, so a slow server can time out there
+// while being fine on its own. Re-check each non-clean server of yours individually and
+// believe that answer; a server that is still only "degraded" stays yellow, not red.
 async function status(claudePath) {
   const res = await list(claudePath);
   const servers = parseMcpList(res.output);
   // A timed-out/killed `mcp list` can still have printed lines; only error when we got nothing.
   if (!servers.length && !res.ok) return { ok: false, error: res.error || 'claude mcp list failed', servers: [], output: res.output };
+  const shaky = servers.filter(s => s.kind === 'own' && (s.state === 'failed' || s.state === 'degraded'));
+  await Promise.all(shaky.map(async (s) => {
+    const one = parseMcpGet((await run(claudePath, ['mcp', 'get', s.name], { timeout: 60_000 })).output);
+    if (!one) return;
+    if (s.state === 'degraded' && one.state === 'failed') return; // keep the sweep's softer verdict
+    s.state = one.state; s.detail = one.detail;
+  }));
   return { ok: true, servers, output: res.output };
 }
 
-module.exports = { PRESETS, add, addCustom, remove, list, status, parseMcpList, normalizeHeader };
+module.exports = { PRESETS, add, addCustom, remove, list, status, parseMcpList, parseMcpGet, normalizeHeader };

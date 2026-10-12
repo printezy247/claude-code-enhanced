@@ -1152,6 +1152,7 @@ function connectorChip(s) {
   switch (s && s.state) {
     case 'connected': return ['● connected', 'mcp-ok'];
     case 'auth': return ['● sign-in needed', 'mcp-warn'];
+    case 'degraded': return ['● connected, slow', 'mcp-warn'];
     case 'failed': return ['● failed', 'mcp-err'];
     case 'unknown': return ['● added', 'mcp-off'];
     default: return ['not added', 'mcp-off'];
@@ -1173,6 +1174,7 @@ function applyConnectorStatus() {
     ref.hint.textContent = !s ? ''
       : s.state === 'auth' ? 'Not signed in yet: open a terminal session, run /mcp, pick this server and choose Authenticate.'
       : s.state === 'failed' ? (s.detail || 'The server did not answer.')
+      : s.state === 'degraded' ? 'Reachable, but its tool list timed out. Usually fine — try Refresh when fewer things are loading.'
       : '';
   });
 }
@@ -1185,7 +1187,7 @@ function mcpRow(s, removable) {
   row.appendChild(chip);
   row.appendChild(el('b', '', s.name));
   row.appendChild(el('span', 'meta', s.target));
-  if (s.state === 'failed' && s.detail) row.appendChild(el('span', 'meta mcp-why', s.detail));
+  if ((s.state === 'failed' || s.state === 'degraded') && s.detail) row.appendChild(el('span', 'meta mcp-why', s.detail));
   if (s.state === 'auth') row.appendChild(el('span', 'meta mcp-why', 'run /mcp in a session → Authenticate'));
   if (removable) {
     const rm = el('button', 'btn small danger', 'Remove');

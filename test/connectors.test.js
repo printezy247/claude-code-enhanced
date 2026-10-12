@@ -120,6 +120,55 @@ describe('adding connectors', () => {
   });
 });
 
+describe('slow-but-connected servers', () => {
+  const SLOW = 'github: https://api.githubcopilot.com/mcp/ (HTTP) - ✔ Connected · tools fetch failed — Request timed out';
+
+  it('is "degraded", not "failed", when the server answered but its tool list timed out', () => {
+    const [s] = connectors.parseMcpList(SLOW);
+    expect(s.state).toBe('degraded');
+    expect(s.detail).toMatch(/tools fetch failed/);
+  });
+
+  it('still calls a real connection failure "failed"', () => {
+    const [s] = connectors.parseMcpList('brave: npx -y x - ✘ Failed to connect — CONNECTION_CLOSED: Connection closed');
+    expect(s.state).toBe('failed');
+  });
+
+  it('parseMcpGet reads one server\'s own verdict', () => {
+    expect(connectors.parseMcpGet('github:\n  Scope: User\n  Status: ✔ Connected\n  Type: http')).toEqual({ state: 'connected', detail: 'Connected' });
+    expect(connectors.parseMcpGet('brave:\n  Status: ✘ Failed to connect\n  Issue: CONNECTION_CLOSED: Connection closed'))
+      .toEqual({ state: 'failed', detail: 'CONNECTION_CLOSED: Connection closed' });
+    expect(connectors.parseMcpGet('x:\n  Status: ! Needs authentication').state).toBe('auth');
+    expect(connectors.parseMcpGet('nothing useful')).toBeNull();
+  });
+
+  it('status() trusts the one-server check over the crowded sweep', async () => {
+    // `mcp list` says the tool fetch timed out; `mcp get github` says connected.
+    const claude = fakeClaude(`if [ "$2" = list ]; then echo '${SLOW}'; else echo 'github:'; echo '  Status: ✔ Connected'; fi`);
+    const res = await connectors.status(claude);
+    expect(res.servers.find(s => s.name === 'github')).toMatchObject({ state: 'connected', detail: 'Connected' });
+  });
+
+  it('status() keeps a server failed when the one-server check fails too', async () => {
+    const claude = fakeClaude(`if [ "$2" = list ]; then echo 'brave: npx -y x - ✘ Failed to connect — CONNECTION_CLOSED'; else echo 'brave:'; echo '  Status: ✘ Failed to connect'; echo '  Issue: CONNECTION_CLOSED: Connection closed'; fi`);
+    const res = await connectors.status(claude);
+    expect(res.servers[0]).toMatchObject({ state: 'failed', detail: 'CONNECTION_CLOSED: Connection closed' });
+  });
+
+  it('status() leaves a slow server yellow when the re-check cannot say', async () => {
+    const claude = fakeClaude(`if [ "$2" = list ]; then echo '${SLOW}'; else echo 'garbled'; fi`);
+    const res = await connectors.status(claude);
+    expect(res.servers[0].state).toBe('degraded');
+  });
+
+  it('status() does not re-check plugin servers', async () => {
+    const out = path.join(os.tmpdir(), 'cce-gets-' + process.pid);
+    const claude = fakeClaude(`if [ "$2" = list ]; then echo 'plugin:a:b: https://x (HTTP) - ✘ Failed to connect — nope'; else echo "$3" >> '${out}'; fi`);
+    await connectors.status(claude);
+    expect(fs.existsSync(out)).toBe(false);
+  });
+});
+
 describe('status', () => {
   it('returns parsed servers from the CLI output', async () => {
     const claude = fakeClaude(`cat <<'EOF'\n${LIST}\nEOF`);
