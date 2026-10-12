@@ -702,9 +702,10 @@ function openNewSessionModal() {
   modeRow.appendChild(el('span', 'hint', 'Permission mode'));
   const modeSel = el('select');
   modeSel.style.width = '200px';
-  [['default', 'normal — ask for each tool'], ['acceptEdits', 'accept edits — auto-approve files'], ['plan', 'plan — read-only planning'], ['auto', 'auto — classifier decides'], ['bypassPermissions', 'yolo — no prompts']].forEach(([v, n]) => {
-    const o = el('option', '', n); o.value = v; modeSel.appendChild(o);
-  });
+  const provOf = () => state.providers.instances.find(p => p.uid === provSel.value) || null;
+  fillModeSelect(modeSel, provOf());
+  modeSel.value = 'acceptEdits';
+  provSel.addEventListener('change', () => fillModeSelect(modeSel, provOf()));
   modeRow.appendChild(modeSel);
   optRow.appendChild(modeRow);
 
@@ -1135,6 +1136,37 @@ async function refreshProviders() {
   }
 }
 
+/* ================= permission modes ================= */
+
+// The four modes of the Claude Code desktop picker. The tooltip text is the plain-language
+// difference between them. (Manual/"normal" is not offered; it maps to accept edits.)
+const MODE_CHOICES = [
+  ['auto', 'auto', 'A second model (the classifier) reviews each action instead of asking you. Only reliable with Anthropic’s own API — with other providers its reviews fail and actions get denied.'],
+  ['acceptEdits', 'accept edits', 'File edits and simple file commands (mkdir, mv, cp…) run without asking. Shell commands and anything else still ask you.'],
+  ['plan', 'plan', 'Read-only: the agent explores and proposes a plan, and changes nothing until you approve it.'],
+  ['bypassPermissions', 'yolo', 'Nothing is asked or checked. Only for throwaway folders or containers.'],
+];
+/** auto's classifier is only dependable on Anthropic's own API (no custom base URL). */
+const modeAutoOk = (provider) => !provider || !provider.baseUrl;
+/** Any mode value the engine or an old session reports → one of the four on offer. */
+function uiMode(mode, provider) {
+  let m = MODE_CHOICES.some(c => c[0] === mode) ? mode : 'acceptEdits';
+  if (m === 'auto' && !modeAutoOk(provider)) m = 'acceptEdits';
+  return m;
+}
+function fillModeSelect(sel, provider) {
+  const keep = sel.value;
+  sel.innerHTML = '';
+  MODE_CHOICES.forEach(([value, label, tip]) => {
+    const o = el('option', '', value === 'auto' && !modeAutoOk(provider) ? 'auto (Anthropic only)' : label);
+    o.value = value; o.title = tip;
+    if (value === 'auto' && !modeAutoOk(provider)) o.disabled = true;
+    sel.appendChild(o);
+  });
+  sel.title = MODE_CHOICES.map(c => c[1] + ' — ' + c[2]).join('\n\n');
+  if (keep) sel.value = uiMode(keep, provider);
+}
+
 /* ================= connectors view ================= */
 
 function parseMcpNames(output) {
@@ -1452,6 +1484,19 @@ function renderSettings() {
   telLabel.appendChild(el('span', '', 'Disable claude telemetry, error reporting and auto-updates in launched sessions'));
   c3.appendChild(telLabel);
   body.appendChild(c3);
+
+  // chat behaviour
+  const c3b = el('div', 'settings-card');
+  c3b.appendChild(el('h4', '', 'Chat behaviour'));
+  const nudgeCheck = el('input'); nudgeCheck.type = 'checkbox'; nudgeCheck.id = 'opt-autonudge';
+  nudgeCheck.checked = s.autoNudge !== false;
+  nudgeCheck.addEventListener('change', () => saveSettings({ autoNudge: nudgeCheck.checked }));
+  const nudgeLabel = el('label', 'check');
+  nudgeLabel.appendChild(nudgeCheck);
+  nudgeLabel.appendChild(el('span', '', 'Auto-continue when a model stops after saying what it will do next'));
+  c3b.appendChild(nudgeLabel);
+  c3b.appendChild(el('div', 'hint', 'Some models end a turn on “Let me …” without making the tool call, so the chat just goes quiet. When this is on, cce sends one automatic reminder per prompt; the ▶ continue button is always available.'));
+  body.appendChild(c3b);
 
   // sandbox
   const c4 = el('div', 'settings-card');

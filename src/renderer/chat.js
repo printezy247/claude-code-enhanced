@@ -123,13 +123,7 @@ const Chat = (() => {
         </div>
         <div class="chat-footbar">
           <select class="chat-model-foot" title="Model"></select>
-          <select class="chat-mode-foot" title="Permission mode">
-            <option value="default">normal</option>
-            <option value="acceptEdits">accept edits</option>
-            <option value="plan">plan</option>
-            <option value="auto">auto</option>
-            <option value="bypassPermissions">yolo</option>
-          </select>
+          <select class="chat-mode-foot" title="Permission mode"></select>
           <button class="chat-effort" title="Reasoning effort">effort: auto</button>
           <span class="foot-spacer"></span>
           <span class="foot-hint">⏎ send · ⇧⏎ newline · esc stop</span>
@@ -141,7 +135,7 @@ const Chat = (() => {
 
     const chat = {
       follow: true,   // keep the view pinned to new output until the user scrolls up
-      id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: res.permissionMode || 'default',
+      id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider),
       pane, msgs: pane.querySelector('.chat-msgs'), composer: pane.querySelector('.chat-input'),
       sendBtn: pane.querySelector('.chat-send'), stopBtn: pane.querySelector('.chat-stop'),
       statusLine: pane.querySelector('.chat-statusline .sl-left'),
@@ -201,15 +195,23 @@ const Chat = (() => {
     // composer controls (model + mode moved out of the header into the footer,
     // as in the desktop app). #32 #33
     fillModelSelector(chat);
+    fillModeSelect(chat.modeSel, chat.provider);
     chat.modeSel.value = chat.mode;
     chat.modelSel.addEventListener('change', async () => {
       if (chat.modelSel.value === '__custom') { openCustomModel(chat); return; }
       await switchModel(chat, chat.modelSel.value);
     });
     chat.modeSel.addEventListener('change', async () => {
-      const r = await ccx.invoke('chat:set-mode', { id, mode: chat.modeSel.value });
-      if (r.ok) { chat.mode = chat.modeSel.value; toast('Mode → ' + modeLabel(chat.mode), 'ok'); }
-      else { toast(r.error, 'err'); chat.modeSel.value = chat.mode; }
+      const want = chat.modeSel.value;
+      const r = await ccx.invoke('chat:set-mode', { id, mode: want });
+      if (r.ok) {
+        // The main process is the authority: it may fall back (auto → accept edits on a third-party provider).
+        chat.mode = uiMode(r.permissionMode || want, chat.provider);
+        chat.modeSel.value = chat.mode;
+        if (chat.mode !== want) toast('auto needs Anthropic’s own API — using ' + modeLabel(chat.mode) + ' instead', 'err');
+        else toast('Mode → ' + modeLabel(chat.mode), 'ok');
+        setStatusLine(chat);
+      } else { toast(r.error, 'err'); chat.modeSel.value = chat.mode; }
     });
     chat.effortBtn.addEventListener('click', () => cycleEffort(chat));
     chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id }));
@@ -249,6 +251,7 @@ const Chat = (() => {
         return;
       }
       chat.follow = true;   // sending jumps back to the live end
+      if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
       appendUser(chat, text || '(image)');
       if (chat.busy) {
         chat.pendingMsgs.push(text);
@@ -401,7 +404,33 @@ const Chat = (() => {
   }
 
   const basename = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() || p;
-  const modeLabel = (m) => ({ default: 'normal', acceptEdits: 'accept edits', plan: 'plan', auto: 'auto (classifier)', bypassPermissions: 'yolo' }[m] || m);
+  const modeLabel = (m) => ({ default: 'accept edits', acceptEdits: 'accept edits', plan: 'plan', auto: 'auto', bypassPermissions: 'yolo' }[m] || m);
+
+  // Some models (mostly smaller ones behind a translating proxy) end a turn on
+  // "Let me do X:" without ever calling the tool. The engine takes that as a
+  // finished answer, so the chat just goes quiet. Spot it and nudge once.
+  const NUDGE_TEXT = 'You said what you would do next but stopped without doing it. Do that step now: make the tool call, and keep going until the task is finished.';
+  function announcedNextStep(text) {
+    const t = String(text || '').trim();
+    if (!t || t.length > 1500 || /[?？]\s*$/.test(t)) return false;
+    const paragraph = t.split(/\n{2,}/).pop().trim();
+    const sentences = paragraph.split(/(?<=[.!:])\s+/);
+    const last = sentences[sentences.length - 1] || paragraph;
+    if (/\b(done|completed?|finished|that'?s all|hope this helps|let me know)\b/i.test(last)) return false;
+    return /\b(let me|i'll|i will|i'm going to|i am going to|now i(?:'ll| will)?|next,? i(?:'ll| will)?|going to)\b/i.test(last);
+  }
+  function maybeNudge(chat, msg) {
+    const on = !state.settings || state.settings.autoNudge !== false;
+    if (!on || !chat.alive || (chat.nudges || 0) >= 1) return false;
+    if (!announcedNextStep(msg.result)) return false;
+    chat.nudges = (chat.nudges || 0) + 1;
+    chat.msgs.appendChild(el('div', 'sys-note warn', '↻ the model announced a next step but stopped — nudging it to continue (automatic, once)'));
+    scrollDownSoft(chat);
+    chat.composer.value = NUDGE_TEXT;
+    autosize(chat.composer);
+    chat.send();
+    return true;
+  }
   const fmtAge = (ms) => {
     const m = Math.max(1, Math.round((Date.now() - ms) / 60000));
     if (m < 60) return m + 'm ago';
@@ -1343,15 +1372,15 @@ const Chat = (() => {
 
   const WORKFLOWS = {
     research: {
-      mode: 'default', fill: true,
+      mode: 'acceptEdits', fill: true,
       prompt: () => `Deep-research this project.\n\n1. Explore the repository (docs, source, config) to understand what exists.\n2. Pick the 3–5 most important open questions about it and investigate each: read the code, and use web search for current best practices and prior art.\n3. Produce a report: what the project is, how it works, what is missing or risky, and a recommended next step — with file paths and URLs as evidence.\n\nThe question I care about most: `,
     },
     review: {
-      mode: 'default', fill: false,
+      mode: 'acceptEdits', fill: false,
       prompt: () => `Code-review the current work in this repository.\n\n1. Run git status and git diff (including --staged). If the working tree is clean, diff against the default branch (origin/main or origin/master).\n2. For every finding report: severity (blocker / major / minor / nit), file:line, what is wrong, why it matters, and a concrete fix as a diff snippet.\n3. Cover correctness, security, error handling, tests, and naming. Spawn subagents to review different areas in parallel if the diff is large. End with a one-screen summary table sorted by severity.`,
     },
     explain: {
-      mode: 'default', fill: false,
+      mode: 'acceptEdits', fill: false,
       prompt: () => `Explore this repository and explain it to a new engineer:\n\n- Purpose and current state\n- Architecture: main components and how they connect (with file paths)\n- Entry points, build/run/test commands\n- Non-obvious gotchas and conventions\n\nUse short headings and, where it helps, a small diagram in a fenced code block.`,
     },
     plan: {
@@ -1369,7 +1398,9 @@ const Chat = (() => {
       chip.addEventListener('click', async () => {
         const wf = WORKFLOWS[chip.dataset.wf];
         if (!wf || !chat.alive) return;
-        if (wf.mode && wf.mode !== chat.mode) {
+        // Only switch for plan (explicitly read-only) or to leave plan; never quietly
+        // downgrade the user's auto / accept edits / yolo choice.
+        if (wf.mode && wf.mode !== chat.mode && (wf.mode === 'plan' || chat.mode === 'plan')) {
           const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode: wf.mode });
           if (r.ok) { chat.mode = wf.mode; chat.modeSel.value = wf.mode; toast('Mode → ' + modeLabel(chat.mode)); }
           else toast(r.error, 'err');
@@ -1897,6 +1928,8 @@ const Chat = (() => {
           } else {
             appendError(chat, 'Compaction failed (' + msg.subtype + '). The engine auto-compacts near the context limit regardless.');
           }
+        } else if (msg.subtype === 'success' && !msg.is_error && maybeNudge(chat, msg)) {
+          // nudged: the next turn starts by itself
         } else if (msg.subtype !== 'success' || msg.is_error) {
           // A refused branch (edit-and-resubmit picked a message the engine
           // cannot fork at) carries this prefix per the SDK docs. Say what it
@@ -2012,9 +2045,10 @@ const Chat = (() => {
   // session_state_changed: permission mode or model changed by the engine.
   function onSessionState(chat, msg) {
     const s = msg.state || msg;
-    if (s.permission_mode && s.permission_mode !== chat.mode) {
-      chat.mode = s.permission_mode;
-      chat.modeSel.value = s.permission_mode;
+    const engineMode = s.permission_mode ? uiMode(s.permission_mode, chat.provider) : null;
+    if (engineMode && engineMode !== chat.mode) {
+      chat.mode = engineMode;
+      chat.modeSel.value = engineMode;
       setStatusLine(chat);
     }
     if (s.model && s.model !== chat.model) {
@@ -2402,7 +2436,7 @@ const Chat = (() => {
         }
       }
       const pre = el('pre', 'tool-io mono');
-      pre.textContent = JSON.stringify(ctx.input, null, 2).slice(0, 4000);
+      pre.textContent = (JSON.stringify(ctx.input == null ? {} : ctx.input, null, 2) || '{}').slice(0, 4000);
       const det = el('details', 'tool-json');
       det.appendChild(el('summary', '', 'raw input'));
       det.appendChild(pre);
@@ -2702,7 +2736,11 @@ const Chat = (() => {
     const actions = el('div', 'perm-actions');
     const setMode = async (mode) => {
       const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode });
-      if (r.ok) { chat.mode = mode; chat.modeSel.value = mode; toast('Mode → ' + modeLabel(chat.mode), 'ok'); }
+      if (r.ok) {
+        chat.mode = uiMode(r.permissionMode || mode, chat.provider);
+        chat.modeSel.value = chat.mode;
+        toast('Mode → ' + modeLabel(chat.mode), 'ok');
+      }
     };
     const finish = () => {
       card.remove();
@@ -2721,8 +2759,9 @@ const Chat = (() => {
       return b;
     };
     if (toolName === 'ExitPlanMode') {
-      actions.appendChild(mk('✓ approve + auto-accept edits', 'primary', 'allow', 'acceptEdits'));
-      actions.appendChild(mk('✓ approve', '', 'allow', 'default'));
+      actions.appendChild(mk('✓ approve + accept edits', 'primary', 'allow', 'acceptEdits'));
+      // auto is only offered where its classifier can work (Anthropic's own API).
+      if (modeAutoOk(chat.provider)) actions.appendChild(mk('✓ approve + auto', '', 'allow', 'auto'));
       // Keep planning, with a way to say why: the deny message reaches the
       // model, so the desktop app's "keep planning" is really feedback. #40
       const feedback = el('input', 'perm-feedback');
@@ -2783,7 +2822,7 @@ const Chat = (() => {
     }
     const det = el('details', 'tool-json');
     det.appendChild(el('summary', '', 'raw input'));
-    det.appendChild(el('pre', 'tool-io mono', JSON.stringify(input, null, 2).slice(0, 1200)));
+    det.appendChild(el('pre', 'tool-io mono', (JSON.stringify(input == null ? {} : input, null, 2) || '{}').slice(0, 1200)));
     wrap.appendChild(det);
     return wrap;
   }

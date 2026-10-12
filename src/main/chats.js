@@ -115,7 +115,7 @@ class ChatManager extends EventEmitter {
     const opts_fork = !!fork;
     const id = 'c' + this.nextId++;
     const dir = (cwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
-    const effMode = yolo ? 'bypassPermissions' : (permissionMode || 'default');
+    const effMode = normalizeMode(permissionMode, providerInstance, yolo);
 
     // Streaming-input generator: stays open so every composer send feeds the
     // same CLI process (turns share session state, like the desktop app).
@@ -478,9 +478,10 @@ class ChatManager extends EventEmitter {
   async setMode(id, mode) {
     const chat = this.chats.get(id);
     if (!chat) throw new Error('chat not found');
-    await chat.q.setPermissionMode(mode);
-    chat.permissionMode = mode;
-    return { permissionMode: mode };
+    const eff = normalizeMode(mode, chat.providerInstance);
+    await chat.q.setPermissionMode(eff);
+    chat.permissionMode = eff;
+    return { permissionMode: eff, changed: eff !== mode };
   }
 
   /** Engine-reported model list, for the picker. #39 */
@@ -748,4 +749,24 @@ class ChatManager extends EventEmitter {
   }
 }
 
+// CCE offers four permission modes, like the Claude Code desktop app's picker:
+//   auto        a second "classifier" model reviews every action instead of asking you
+//   acceptEdits file edits + simple filesystem commands run; shell commands still ask
+//   plan        read-only planning
+//   bypassPermissions (yolo)  nothing is checked
+// Manual ("default": ask before every edit) is not offered; it maps to acceptEdits.
+// auto only works when the classifier is a real Claude: against a third-party
+// provider (qwen, GLM, a proxy…) its requests run on that provider's model, whose
+// answers often do not parse, and Claude Code then denies the action silently and
+// stops the turn after ten no-verdict responses. So auto falls back to acceptEdits there.
+const MODES = ['auto', 'acceptEdits', 'plan', 'bypassPermissions'];
+function normalizeMode(mode, providerInstance, yolo) {
+  if (yolo) return 'bypassPermissions';
+  let m = MODES.includes(mode) ? mode : 'acceptEdits';
+  if (m === 'auto' && providerInstance && providerInstance.baseUrl) m = 'acceptEdits';
+  return m;
+}
+
 module.exports = ChatManager;
+module.exports.normalizeMode = normalizeMode;
+module.exports.MODES = MODES;

@@ -129,6 +129,23 @@ Provider quirks worth knowing:
 5. Another GitHub account: use **GitHub — another account** (a name such as `github-work` plus that account's
    token). Each account is its own server; tokens are redacted from error messages.
 
+## Permission modes
+
+The footer picker has the four modes of the Claude Code desktop app:
+
+| Mode | Runs without asking | Still asks |
+|---|---|---|
+| **auto** | everything, after a second model (the *classifier*) reviews each action | — (pauses to ask after repeated blocks) |
+| **accept edits** | file reads and edits, simple file commands (`mkdir`, `mv`, `cp`…) | shell commands and anything else |
+| **plan** | reads only — the agent proposes a plan and changes nothing | everything until you approve the plan |
+| **yolo** | everything, unchecked | nothing — use only in throwaway folders or containers |
+
+Claude Code's "manual" mode (ask before every edit) is not offered; it maps to **accept edits**, the closest safe choice.
+
+**auto only works with Anthropic's own API.** Its classifier runs on whatever model answers the chat, so behind a third-party provider (Qwen, GLM, a local model, any translating proxy) the reviews fail to parse and Claude Code silently denies actions, then stops the turn after ten no-verdict replies. cce therefore greys out **auto** for those providers and falls back to **accept edits**.
+
+**Auto-continue.** Some models end a turn on "Let me …" without making the tool call, so the chat goes quiet. cce sends one automatic reminder per prompt (Settings → Chat behaviour); the **▶ continue** button is always there.
+
 ## Architecture
 
 ```
