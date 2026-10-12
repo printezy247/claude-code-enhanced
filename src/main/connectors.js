@@ -118,15 +118,41 @@ function run(claudePath, args, opts = {}) {
   });
 }
 
+// Accept a full "Header: value" line or a bare token (ghp_…, github_pat_…, or any
+// opaque key) and return the "Header: value" form `claude mcp add --header` wants.
+function normalizeHeader(raw) {
+  const h = String(raw || '').trim();
+  if (!h) return '';
+  if (/^[A-Za-z][A-Za-z0-9-]*:\s*\S/.test(h)) return h;
+  return 'Authorization: Bearer ' + h.replace(/^Bearer\s+/i, '');
+}
+
+// `claude mcp add` failures echo the whole command line, which would put a PAT in
+// the toast and in logs. Blank every secret before the result leaves this module.
+function redact(res, secrets) {
+  const bits = (secrets || []).filter(s => s && s.length > 3);
+  const scrub = (t) => bits.reduce((s, secret) => s.split(secret).join('<hidden>'), String(t || ''));
+  const out = { ...res, output: scrub(res.output), error: res.error ? scrub(res.error) : res.error };
+  const m = /MCP server (\S+) already exists/.exec(out.output + ' ' + (out.error || ''));
+  if (m) out.error = `${m[1]} is already added. Remove it first (Remove button) to change its URL or token.`;
+  return out;
+}
+
+function secretsOf(header) {
+  const h = normalizeHeader(header);
+  return h ? [h, h.replace(/^[^:]+:\s*/, ''), h.replace(/^[^:]+:\s*Bearer\s+/i, '')] : [];
+}
+
 async function add(claudePath, { preset, scope = 'user', header = '' }) {
+  const hdr = preset.supportsHeader ? normalizeHeader(header) : '';
   const args = ['mcp', 'add', '--scope', scope];
   if (preset.kind === 'http') {
     args.push('--transport', 'http', preset.id, preset.url);
-    if (header && preset.supportsHeader) args.push('--header', header);
+    if (hdr) args.push('--header', hdr);
   } else {
     args.push(preset.id, '--', ...preset.stdioCmd);
   }
-  return run(claudePath, args, { timeout: 30_000 });
+  return redact(await run(claudePath, args, { timeout: 30_000 }), secretsOf(hdr));
 }
 
 // User-defined connectors — e.g. a second GitHub account: same HTTP server URL,
@@ -134,9 +160,10 @@ async function add(claudePath, { preset, scope = 'user', header = '' }) {
 async function addCustom(claudePath, { name, url, header = '', scope = 'user' }) {
   if (!/^[a-zA-Z0-9_-]{1,40}$/.test(name)) throw new Error('Name must be letters, digits, - or _ (max 40)');
   if (!/^https:\/\//.test(url)) throw new Error('URL must start with https://');
+  const hdr = normalizeHeader(header);
   const args = ['mcp', 'add', '--scope', scope, '--transport', 'http', name, url];
-  if (header) args.push('--header', header);
-  return run(claudePath, args, { timeout: 30_000 });
+  if (hdr) args.push('--header', hdr);
+  return redact(await run(claudePath, args, { timeout: 30_000 }), secretsOf(hdr));
 }
 
 async function remove(claudePath, { name }) {
@@ -154,4 +181,34 @@ function list(claudePath) {
   return run(claudePath, ['mcp', 'list'], { timeout: 120_000 });
 }
 
-module.exports = { PRESETS, add, addCustom, remove, list };
+// `claude mcp list` prints one health-checked line per server:
+//   name: https://host/mcp (HTTP) - ✔ Connected
+//   name: npx -y pkg - ✘ Failed to connect — CONNECTION_CLOSED: …
+//   name: https://host/mcp (HTTP) - ! Needs authentication
+// Names may contain colons (plugin:ecc:x) but never ": ", so the first ": " ends the name.
+function parseMcpList(output) {
+  const servers = [];
+  for (const line of String(output || '').split('\n')) {
+    const m = /^(\S.*?):\s+(.*)\s-\s+(\S.*)$/.exec(line.trim());
+    if (!m) continue;
+    const [, name, target, status] = m;
+    let state = 'unknown';
+    if (/not configured/i.test(status)) state = 'off';
+    else if (/needs? auth|authenticat/i.test(status)) state = 'auth';
+    else if (/✘|fail|error|refus|denied/i.test(status)) state = 'failed';
+    else if (/✔|connected/i.test(status)) state = 'connected';
+    const kind = /^plugin:|^claude\.ai /.test(name) ? 'managed' : 'own';
+    servers.push({ name, target: target.trim(), state, detail: status.replace(/^[✔✘!⚠\s]+/, '').trim(), kind });
+  }
+  return servers;
+}
+
+async function status(claudePath) {
+  const res = await list(claudePath);
+  const servers = parseMcpList(res.output);
+  // A timed-out/killed `mcp list` can still have printed lines; only error when we got nothing.
+  if (!servers.length && !res.ok) return { ok: false, error: res.error || 'claude mcp list failed', servers: [], output: res.output };
+  return { ok: true, servers, output: res.output };
+}
+
+module.exports = { PRESETS, add, addCustom, remove, list, status, parseMcpList, normalizeHeader };
