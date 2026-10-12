@@ -1015,6 +1015,9 @@ function registerIpc() {
     return res;
   });
 
+  // Health-checked, parsed `claude mcp list` — drives the status chips in the panel.
+  handle('connectors:status', async () => connectors.status(claudePath()));
+
   handle('connectors:add', async ({ presetId, scope, header }) => {
     const preset = connectors.PRESETS.find(p => p.id === presetId);
     if (!preset) throw new Error('unknown preset');
