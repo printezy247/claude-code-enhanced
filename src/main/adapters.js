@@ -89,8 +89,17 @@ function buildOpenAIBody(body, wantStream) {
   if (Array.isArray(sys)) sys = sys.map(b => b.text || '').join('\n');
   if (sys) msgs.push({ role: 'system', content: String(sys) });
 
+  // The engine also sends `system` messages in the middle of the conversation
+  // (its environment block). OpenAI-format providers accept a system message
+  // only at the start, so those are gathered into the opening one.
+  const lateSystem = [];
   for (const m of body.messages || []) {
     const c = m.content;
+    if (m.role === 'system') {
+      const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map(b => (b && b.text) || '').join('\n') : '';
+      if (t.trim()) lateSystem.push(t);
+      continue;
+    }
     if (typeof c === 'string') { msgs.push({ role: m.role, content: c }); continue; }
     if (!Array.isArray(c)) continue;
 
@@ -102,31 +111,38 @@ function buildOpenAIBody(body, wantStream) {
         else if (b.type === 'tool_use') toolCalls.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } });
         else if (b.type === 'thinking') { /* not translated */ }
       }
+      // Reasoning that leaked into an earlier reply must not be replayed as if
+      // the model had said it out loud.
+      text = stripThink(text);
+      // A turn that was only thinking has nothing to send; an assistant message
+      // with neither content nor tool calls is a 400 on most providers.
+      if (!text && !toolCalls.length) continue;
       const msg = { role: 'assistant', content: text || null };
       if (toolCalls.length) msg.tool_calls = toolCalls;
       msgs.push(msg);
       continue;
     }
 
+    // Tool results go out first: OpenAI requires every `tool` message to follow
+    // its assistant tool_calls directly, so text that came before a result in
+    // the same Anthropic message has to wait until all results are in.
     const textParts = [];
     for (const b of c) {
       if (b.type === 'text') textParts.push(b.text);
       else if (b.type === 'image' && b.source && b.source.type === 'base64') {
         textParts.push({ type: 'image_url', image_url: { url: 'data:' + (b.source.media_type || 'image/png') + ';base64,' + b.source.data } });
       } else if (b.type === 'tool_result') {
-        if (textParts.length) {
-          const hasObj = textParts.some(t => typeof t !== 'string');
-          msgs.push({ role: 'user', content: hasObj ? textParts.map(t => (typeof t === 'string' ? { type: 'text', text: t } : t)) : textParts.splice(0).join('\n') });
-        }
-        let content = b.content;
-        if (Array.isArray(content)) content = content.map(x => x.text || '').join('\n');
-        msgs.push({ role: 'tool', tool_call_id: b.tool_use_id, content: String(content || '') });
+        msgs.push({ role: 'tool', tool_call_id: b.tool_use_id, content: toolResultText(b) });
       }
     }
     if (textParts.length) {
       const hasObj = textParts.some(t => typeof t !== 'string');
       msgs.push({ role: 'user', content: hasObj ? textParts.map(t => (typeof t === 'string' ? { type: 'text', text: t } : t)) : textParts.join('\n') });
     }
+  }
+  if (lateSystem.length) {
+    if (msgs[0] && msgs[0].role === 'system') msgs[0].content += '\n\n' + lateSystem.join('\n\n');
+    else msgs.unshift({ role: 'system', content: lateSystem.join('\n\n') });
   }
   out.messages = msgs;
 
@@ -140,11 +156,54 @@ function buildOpenAIBody(body, wantStream) {
     else if (tc && tc.type === 'tool' && tc.name) out.tool_choice = { type: 'function', function: { name: tc.name } };
     else if (tc === 'none') out.tool_choice = 'none';
     else out.tool_choice = 'auto';
-    if (wantStream) out.stream_options = { include_usage: true };
-    if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) out.stop = body.stop_sequences[0];
   }
+  // Both apply with or without tools: summaries and titles are tool-less calls
+  // and still need real token counts and their stop sequences.
+  if (wantStream) out.stream_options = { include_usage: true };
+  if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) out.stop = body.stop_sequences.slice(0, 4);
   return out;
 }
+
+/** Text of an Anthropic tool_result block; never empty (providers reject that). */
+function toolResultText(b) {
+  let content = b.content;
+  if (Array.isArray(content)) {
+    content = content.map(x => (x && x.type === 'image' ? '[image]' : (x && x.text) || '')).filter(Boolean).join('\n');
+  }
+  content = String(content == null ? '' : content);
+  if (!content.trim()) content = b.is_error ? '(the tool failed with no output)' : '(no output)';
+  return content;
+}
+
+const THINK_CLOSE_RE = /<\/think(?:ing)?\s*>/i;
+
+/** True when `idx` sits inside a ``` fence or an inline `code` span. */
+function inCode(text, idx) {
+  const before = text.slice(0, idx);
+  if ((before.match(/```/g) || []).length % 2 === 1) return true;
+  const line = before.slice(before.lastIndexOf('\n') + 1).replace(/```/g, '');
+  return (line.match(/`/g) || []).length % 2 === 1;
+}
+
+/**
+ * Split reasoning that leaked into the text channel from the answer.
+ * Covers `<think>…</think>answer` and the commoner `…</think>answer` (the
+ * chat template pre-fills the opening tag, so the model only writes the closer).
+ * @returns {{thinking: string, text: string}}
+ */
+function splitThink(text) {
+  const s = String(text || '');
+  const m = THINK_CLOSE_RE.exec(s);
+  if (m && !inCode(s, m.index)) {
+    const head = s.slice(0, m.index).replace(/^\s*<think(?:ing)?\s*>/i, '');
+    return { thinking: head.trim(), text: s.slice(m.index + m[0].length).replace(/^\s+/, '') };
+  }
+  const open = /^\s*<think(?:ing)?\s*>/i.exec(s);
+  if (open && !m) return { thinking: s.slice(open[0].length).trim(), text: '' };
+  return { thinking: '', text: s };
+}
+
+const stripThink = (text) => splitThink(text).text;
 
 function callOpenAI(body, prov, wantStream, signal) {
   const out = buildOpenAIBody(body, wantStream);
@@ -454,6 +513,6 @@ async function listModels(prov) {
 
 module.exports = {
   callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream,
-  buildOpenAIBody, buildResponsesInput, buildGeminiBody,
+  buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink,
   responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE, responsesChunks, geminiChunks,
 };

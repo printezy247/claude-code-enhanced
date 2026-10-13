@@ -34,6 +34,7 @@ function startProxy(resolveProvider, opts = {}) {
     }
     const prov = resolveProvider(uid);
     if (!prov || !prov.baseUrl) { res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unknown proxy provider' })); return; }
+    prov._uid = uid;
     if (isGet && restPath === '/v1/models') {
       adapters.listModels(prov)
         .then(async (r) => { res.writeHead(r.status, { 'content-type': 'application/json' }); res.end(await r.text()); })
@@ -125,7 +126,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   const onClientGone = () => abortUpstream();
   res.on('close', onClientGone);
 
-  const upstream = await adapters.callUpstream(prov, body, wantStream, upstreamAbort.signal).catch((err) => {
+  const call = (b) => adapters.callUpstream(prov, b, wantStream, upstreamAbort.signal).catch((err) => {
     if (upstreamGone || /abort/i.test(String(err && err.message))) {
       // Client is gone; there is nobody to answer.
       try { res.destroy(); } catch { /* already destroyed */ }
@@ -133,23 +134,52 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     }
     throw err;
   });
+  let upstream = await call(body);
   if (upstream.clientGone) return;
 
   if (!upstream.ok) {
-    const text = await upstream.text();
-    let msg = text.slice(0, 500), code = upstream.status;
-    try { const j = JSON.parse(text); msg = (j.error && (j.error.message || j.error.code)) || j.message || msg; } catch { /* keep raw */ }
-    dbg('upstream HTTP ' + upstream.status + ' -> ' + String(msg).slice(0, 200));
-    console.error('[proxy] upstream HTTP ' + upstream.status + ' for model ' + body.model + ': ' + String(msg).replace(/\s+/g, ' ').slice(0, 300));
-    res.writeHead(upstream.status === 401 ? 401 : 502, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ type: 'error', error: { type: upstream.status === 401 ? 'authentication_error' : 'api_error', message: msg } }));
-    return;
+    let err = await readUpstreamError(upstream);
+    // The engine's background calls (titles, summaries, hooks that spawn their
+    // own `claude`) ask for a Claude model by name. A third-party provider does
+    // not have it, and the chat would retry a permanent error until it gives
+    // up. Ask again with a model this provider is known to serve.
+    const alt = fallbackModel(prov, body.model);
+    if (alt && isModelMissing(err)) {
+      console.log('[proxy] model "' + body.model + '" is not on this provider; retrying with "' + alt + '"');
+      body = { ...body, model: alt };
+      upstream = await call(body);
+      if (upstream.clientGone) return;
+      err = upstream.ok ? null : await readUpstreamError(upstream);
+    }
+    if (err) {
+      dbg('upstream HTTP ' + err.status + ' -> ' + err.message.slice(0, 200));
+      console.error('[proxy] upstream HTTP ' + err.status + ' for model ' + body.model + ': ' + err.message.replace(/\s+/g, ' ').slice(0, 300));
+      const out = mapError(err.status, err.message);
+      res.writeHead(out.status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ type: 'error', error: { type: out.type, message: out.message } }));
+      return;
+    }
   }
+  if (prov._uid && body.model) lastGoodModel.set(prov._uid, body.model);
 
   if (!wantStream) {
     const j = await upstream.json();
+    if (j && j.error && !j.choices) { sendBodyError(res, j.error); return; }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(aggregateToAnthropic(j, body)));
+    return;
+  }
+
+  // Some gateways answer a streaming request with a plain JSON body: an error
+  // with HTTP 200, or the whole reply at once. Reading that as SSE finds no
+  // `data:` lines and produced an empty message.
+  const upType = String((upstream.headers && upstream.headers.get && upstream.headers.get('content-type')) || '');
+  if (/application\/json/i.test(upType)) {
+    let j = null;
+    try { j = await upstream.json(); } catch { /* handled below */ }
+    if (!j || (j.error && !j.choices)) { sendBodyError(res, (j && j.error) || { message: 'the provider sent an unreadable reply' }); return; }
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    writeMessageAsSse(res, aggregateToAnthropic(j, body));
     return;
   }
 
@@ -167,21 +197,92 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   const decoder = new TextDecoder();
   let buf = '';
   let reasonBuf = '';
+  let reasonAll = '';      // everything the model reasoned, for the empty-answer fallback
   // Providers that report usage mid-stream (OpenAI include_usage) overwrite
   // this; otherwise the engine sees zero input tokens, which breaks the context
   // meter and the auto-compact decision. #9
   let promptTokens = inTokens(body);
   let blockOpen = false;   // a content_block is currently open
   let blockIdx = -1;
-  let blockType = null;    // 'text' | 'tool_use'
+  let blockType = null;    // 'text' | 'thinking' | 'tool_use'
   let outTokens = 0;
   let stopReason = 'end_turn';
+  let sawText = false;     // the reply has visible text
+  let sawTool = false;     // the reply has at least one tool call
+  let failed = null;       // error that ended the stream early
   const toolBuf = new Map();   // openai tool_call index -> {id, name, args}
   const textTools = [];        // calls recovered from the text channel
   let textCarry = '';          // partial text held back between chunks
+  const think = { mode: 'unknown', carry: '' };   // inline <think> state
 
   const openBlock = (b) => { blockIdx++; blockOpen = true; blockType = b.type; sse('content_block_start', { type: 'content_block_start', index: blockIdx, content_block: b }); };
   const closeBlock = () => { if (blockOpen) { blockOpen = false; sse('content_block_stop', { type: 'content_block_stop', index: blockIdx }); } };
+  const emitText = (s) => {
+    if (!s) return;
+    if (!blockOpen || blockType !== 'text') {
+      if (!s.trim()) return;   // no block for whitespace alone
+      closeBlock(); openBlock({ type: 'text', text: '' });
+    }
+    if (s.trim()) sawText = true;
+    outTokens++;
+    sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'text_delta', text: s } });
+  };
+  // Reasoning goes out as a real thinking block, so the chat shows the model
+  // working instead of sitting silent, and a reply is never just nothing.
+  const emitThinking = (s) => {
+    if (!s) return;
+    reasonAll += s;
+    if (!blockOpen || blockType !== 'thinking') {
+      if (!s.trim()) return;
+      closeBlock(); openBlock({ type: 'thinking', thinking: '', signature: '' });
+    }
+    sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'thinking_delta', thinking: s } });
+  };
+  /**
+   * Split a content chunk into reasoning and answer. Only a `<think>` that
+   * opens the reply counts: that is how these chat templates emit it, and a
+   * tag mentioned later in prose or code must stay text.
+   */
+  const thinkSplit = (chunk) => {
+    const out = [];
+    let b = think.carry + chunk;
+    think.carry = '';
+    if (think.mode === 'unknown') {
+      const lead = b.replace(/^\s+/, '');
+      if (!lead) { think.carry = b; return out; }
+      const m = /^<think(?:ing)?\s*>/i.exec(lead);
+      if (m) { think.mode = 'in'; b = lead.slice(m[0].length); }
+      else if (lead.length < 10 && '<thinking>'.startsWith(lead.toLowerCase())) { think.carry = b; return out; }
+      else think.mode = 'none';
+    }
+    if (think.mode === 'in') {
+      const m = THINK_CLOSE_RE.exec(b);
+      if (!m) {
+        // Keep back a tail that could be the start of the closing tag.
+        const lt = b.lastIndexOf('<');
+        const hold = lt >= 0 && b.length - lt < 12 && /^<\/?[a-z]*\s*$/i.test(b.slice(lt)) ? b.slice(lt) : '';
+        out.push({ think: true, s: b.slice(0, b.length - hold.length) });
+        think.carry = hold;
+        return out;
+      }
+      out.push({ think: true, s: b.slice(0, m.index) });
+      think.mode = 'none';
+      b = b.slice(m.index + m[0].length).replace(/^\s+/, '');
+    }
+    if (b) out.push({ think: false, s: b });
+    return out;
+  };
+  const takeContent = (chunk) => {
+    for (const seg of thinkSplit(chunk)) {
+      if (seg.think) { emitThinking(seg.s); continue; }
+      // Text may hide a whole tool call (local models do this); split it out
+      // so the engine sees a real tool_use block. #1
+      const split = extractTextToolCalls(seg.s, textCarry);
+      textCarry = split.carry;
+      emitText(split.text);
+      for (const t of split.tools) queueTextTool(t);
+    }
+  };
   const queueTextTool = (t) => {
     textTools.push({ id: 'call_txt_' + (blockIdx + textTools.length + 1) + '_' + Date.now(), name: t.name, args: JSON.stringify(t.args || {}) });
   };
@@ -197,6 +298,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
       openBlock({ type: 'tool_use', id: t.id, name: t.name });
       sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: t.args || '{}' } });
       stopReason = 'tool_use';
+      sawTool = true;
     }
     toolBuf.clear();
   };
@@ -209,25 +311,29 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         if (payload === '[DONE]') return;
         let j;
         try { j = JSON.parse(payload); } catch { return; }
-        const choice = (j.choices || [])[0];
-        if (!choice) return;
-        const d = choice.delta || {};
-        if (d.content) {
-          // Text may hide a whole tool call (local models do this); split it out
-          // so the engine sees a real tool_use block. #1
-          const split = extractTextToolCalls(d.content, textCarry);
-          textCarry = split.carry;
-          if (split.text) {
-            if (!blockOpen || blockType !== 'text') { closeBlock(); openBlock({ type: 'text', text: '' }); }
-            outTokens++;
-            sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'text_delta', text: split.text } });
-          }
-          for (const t of split.tools) queueTextTool(t);
+        // An error sent inside a 200 stream (context overflow, quota, a model
+        // that went away). Skipping it turned the failure into an empty reply.
+        if (j.error && !(j.choices && j.choices.length)) {
+          const e = new Error(errorText(j.error));
+          e.upstream = j.error;
+          throw e;
         }
+        const choice = (j.choices || [])[0];
+        if (!choice) {
+          if (j.usage) {
+            const p = j.usage.prompt_tokens || j.usage.input_tokens;
+            if (p) promptTokens = p;
+            if (j.usage.completion_tokens) outTokens = j.usage.completion_tokens;
+          }
+          return;
+        }
+        const d = choice.delta || {};
         if (d.reasoning || d.reasoning_content) {
           // Tool-tuned models (e.g. Qwen3-toolcall via Ollama) emit tool calls
           // as <tool_call>{json}</tool_call> inside the reasoning channel.
-          reasonBuf += (d.reasoning || '') + (d.reasoning_content || '');
+          const piece = (typeof d.reasoning === 'string' ? d.reasoning : '') + (typeof d.reasoning_content === 'string' ? d.reasoning_content : '');
+          emitThinking(piece);
+          reasonBuf += piece;
           let m2;
           while ((m2 = reasonBuf.match(/<tool_call>([\s\S]*?)<\/tool_call>/))) {
             reasonBuf = reasonBuf.slice(reasonBuf.indexOf(m2[0]) + m2[0].length);
@@ -237,11 +343,16 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
             if (!fname) continue;
             closeBlock();
             stopReason = 'tool_use';
+            sawTool = true;
             openBlock({ type: 'tool_use', id: 'call_' + blockIdx + '_' + Date.now(), name: fname });
             const args = parsed.arguments != null ? (typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments)) : '{}';
             sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: args } });
           }
+          // Only an unfinished call needs to wait for more chunks.
+          const openAt = reasonBuf.lastIndexOf('<tool_call>');
+          reasonBuf = openAt >= 0 ? reasonBuf.slice(openAt) : reasonBuf.slice(-16);
         }
+        if (d.content) takeContent(d.content);
         if (d.tool_calls) {
           for (const tc of d.tool_calls) {
             const k = tc.index != null ? tc.index : toolBuf.size;
@@ -253,8 +364,12 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
           }
         }
         if (choice.finish_reason) {
+          const hadTool = sawTool;
           stopReason = choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn';
           flushTools();
+          // A call recovered from text or reasoning still has to run, whatever
+          // the provider called the finish.
+          if (hadTool && stopReason === 'end_turn') stopReason = 'tool_use';
         }
         if (j.usage) {
           const p = j.usage.prompt_tokens || j.usage.input_tokens;
@@ -276,26 +391,131 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   } catch (err) {
     // Client hung up (turn interrupted) or the socket died: stop paying for
     // tokens nobody will read. #10
+    failed = err || new Error('stream failed');
     abortUpstream();
     closeBlock();
+  }
+  if (failed) {
+    // Say so and stop. Finishing the message as if it had completed hid the
+    // failure behind an empty or half-written reply.
     if (!res.writableEnded) {
-      try { sse('error', { type: 'error', error: { type: 'api_error', message: String((err && err.message) || err) } }); } catch { /* socket gone */ }
+      const out = mapError(Number(failed.upstream && (failed.upstream.status || failed.upstream.code)) || 502, String(failed.message || failed));
+      try { sse('error', { type: 'error', error: { type: out.type, message: out.message } }); } catch { /* socket gone */ }
+      try { res.end(); } catch { /* socket gone */ }
     }
+    return;
+  }
+  // Content still held back while deciding whether it opened with <think>.
+  if (think.carry) {
+    const rest = think.carry;
+    think.carry = '';
+    if (think.mode === 'in') emitThinking(rest);
+    else { think.mode = 'none'; takeContent(rest); }
   }
   // A trailing partial tool call (stream cut mid-JSON) would otherwise vanish.
   if (textCarry.trim()) {
     let parsed = null;
     try { parsed = parseToolJson(textCarry); } catch { /* not a call after all */ }
     if (parsed) queueTextTool(parsed);
-    else {
-      // Held-back text that was never a tool call is still the model's answer.
-      if (!blockOpen || blockType !== 'text') { closeBlock(); openBlock({ type: 'text', text: '' }); }
-      sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'text_delta', text: textCarry } });
-    }
+    // Held-back text that was never a tool call is still the model's answer.
+    else emitText(textCarry);
   }
   flushTools();   // tool calls buffered for sequential emission (no finish_reason seen)
+  // The model reasoned and then said nothing. The engine reads that as an empty
+  // reply (and a summary made this way fails compaction outright), so the
+  // reasoning is the answer.
+  if (!sawText && !sawTool && reasonAll.trim()) emitText(reasonAll.trim());
   closeBlock();
   sse('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { input_tokens: promptTokens, output_tokens: outTokens } });
+  sse('message_stop', { type: 'message_stop' });
+  res.end();
+}
+
+const THINK_CLOSE_RE = /<\/think(?:ing)?\s*>/i;
+
+// Last model each provider answered with, as a stand-in for one it lacks.
+const lastGoodModel = new Map();
+
+function errorText(e) {
+  if (!e) return 'unknown provider error';
+  if (typeof e === 'string') return e;
+  return String(e.message || e.msg || e.code || e.type || JSON.stringify(e)).slice(0, 500);
+}
+
+/** Read a failed upstream response into { status, message }. */
+async function readUpstreamError(upstream) {
+  const text = await upstream.text();
+  let message = text.slice(0, 500);
+  try {
+    const j = JSON.parse(text);
+    message = (j.error && errorText(j.error)) || j.message || j.detail || message;
+  } catch { /* keep raw */ }
+  return { status: upstream.status, message: String(message || ('HTTP ' + upstream.status)) };
+}
+
+function isModelMissing(err) {
+  const m = String((err && err.message) || '');
+  return /model/i.test(m) && /(does not exist|doesn't exist|not exist|not found|unknown model|no such model|invalid model|not available|not supported|unsupported)/i.test(m);
+}
+
+/** A model this provider can serve in place of `missing`, or '' if none is known. */
+function fallbackModel(prov, missing) {
+  const want = String(missing || '');
+  return [prov.smallFastModel, lastGoodModel.get(prov._uid), prov.model].find(x => x && x !== want) || '';
+}
+
+const CONTEXT_RE = /context.{0,20}(length|window|size)|maximum context|prompt is too long|(input|prompt|request).{0,24}too (long|large)|too many (input )?tokens|exceed.{0,40}(context|max.{0,12}tokens)/i;
+
+/**
+ * Upstream failure -> the status and error type the engine acts on.
+ *
+ * Everything used to become 502, which the engine treats as "try again": a
+ * wrong model name was retried ten times, and a full context window never
+ * triggered compaction.
+ */
+function mapError(status, message) {
+  const msg = String(message || '').trim() || ('HTTP ' + status);
+  if (status !== 429 && CONTEXT_RE.test(msg)) {
+    return { status: 400, type: 'invalid_request_error', message: /prompt is too long/i.test(msg) ? msg : 'prompt is too long: ' + msg };
+  }
+  if (isModelMissing({ message: msg })) return { status: 404, type: 'not_found_error', message: msg };
+  switch (status) {
+    case 400: case 422: return { status: 400, type: 'invalid_request_error', message: msg };
+    case 401: return { status: 401, type: 'authentication_error', message: msg };
+    case 402: case 403: return { status: 403, type: 'permission_error', message: msg };
+    case 404: return { status: 404, type: 'not_found_error', message: msg };
+    case 413: return { status: 413, type: 'request_too_large', message: msg };
+    case 429: return { status: 429, type: 'rate_limit_error', message: msg };
+    case 529: return { status: 529, type: 'overloaded_error', message: msg };
+    default: return { status: 502, type: 'api_error', message: msg };
+  }
+}
+
+/** Answer with an error the provider put in a 200 body. */
+function sendBodyError(res, e) {
+  const out = mapError(Number(e && (e.status || e.code)) || 502, errorText(e));
+  res.writeHead(out.status, { 'content-type': 'application/json' });
+  res.end(JSON.stringify({ type: 'error', error: { type: out.type, message: out.message } }));
+}
+
+/** Replay a complete Anthropic message as the SSE the engine asked for. */
+function writeMessageAsSse(res, msg) {
+  const sse = (event, data) => res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
+  sse('message_start', { type: 'message_start', message: { ...msg, content: [], stop_reason: null, usage: { input_tokens: msg.usage.input_tokens, output_tokens: 0 } } });
+  msg.content.forEach((b, index) => {
+    if (b.type === 'tool_use') {
+      sse('content_block_start', { type: 'content_block_start', index, content_block: { type: 'tool_use', id: b.id, name: b.name } });
+      sse('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'input_json_delta', partial_json: JSON.stringify(b.input || {}) } });
+    } else if (b.type === 'thinking') {
+      sse('content_block_start', { type: 'content_block_start', index, content_block: { type: 'thinking', thinking: '', signature: '' } });
+      sse('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'thinking_delta', thinking: b.thinking } });
+    } else {
+      sse('content_block_start', { type: 'content_block_start', index, content_block: { type: 'text', text: '' } });
+      sse('content_block_delta', { type: 'content_block_delta', index, delta: { type: 'text_delta', text: b.text || '' } });
+    }
+    sse('content_block_stop', { type: 'content_block_stop', index });
+  });
+  sse('message_delta', { type: 'message_delta', delta: { stop_reason: msg.stop_reason, stop_sequence: null }, usage: msg.usage });
   sse('message_stop', { type: 'message_stop' });
   res.end();
 }
@@ -407,7 +627,13 @@ function aggregateToAnthropic(j, body) {
   // Thinking models (qwen3.5, gemma-through-Ollama) put reasoning in a
   // separate field, not in content. Surface it as a thinking block so the
   // engine sees the reasoning and the reply is not an empty message.
-  const reasoning = [m.reasoning, m.reasoning_content].filter(Boolean).join('');
+  let reasoning = [m.reasoning, m.reasoning_content].filter(x => typeof x === 'string' && x).join('');
+  // Reasoning written into the content itself (<think>…</think>, or only the
+  // closing tag) belongs with the thinking, not in the answer.
+  if (typeof m.content === 'string' && /think/i.test(m.content)) {
+    const cut = adapters.splitThink(m.content);
+    if (cut.thinking) { reasoning += (reasoning ? '\n' : '') + cut.thinking; m.content = cut.text; }
+  }
   if (m.content && m.content.includes('<tool_call>')) {
     // tool-call-in-reasoning style (Qwen3-toolcall etc.)
     for (const mm of m.content.matchAll(/<tool_call>([\s\S]*?)<\/tool_call>/g)) {
@@ -448,6 +674,8 @@ function aggregateToAnthropic(j, body) {
     try { input = JSON.parse(tc.function.arguments || '{}'); } catch { /* keep {} */ }
     content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: tc.function.name, input });
   }
+  // Thought, then said nothing: the reasoning is all there is, so it is the answer.
+  if (!m.content && !(m.tool_calls || []).length && reasoning.trim()) content.push({ type: 'text', text: reasoning.trim() });
   if (!content.length) content.push({ type: 'text', text: '' });
   // A recovered call means the turn ends in tool_use even when the provider
   // said "stop": the engine only continues the turn on tool_use.
@@ -668,4 +896,6 @@ module.exports = {
   findBareToolStart,
   inTokens,
   openaiBase,
+  mapError,
+  isModelMissing,
 };

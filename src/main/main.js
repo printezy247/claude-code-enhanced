@@ -1673,6 +1673,9 @@ if (!gotLock) {
         protocol: inst.protocol || 'openai',
         keyHeader: inst.keyHeader || 'bearer',
         headers: inst.headers || {},
+        // Stand-ins for a model name this provider does not serve.
+        model: inst.model || '',
+        smallFastModel: inst.smallFastModel || '',
       };
     }, { token: proxyToken, port: Number(process.env.CCE_PROXY_PORT || 0) });
     proxyPort = proxy.port;

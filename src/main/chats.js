@@ -215,6 +215,14 @@ class ChatManager extends EventEmitter {
       // the credential and rejects requests without its token. #8
       options.env.ANTHROPIC_AUTH_TOKEN = this.proxyToken || 'proxy-key';
       options.env.ANTHROPIC_API_KEY = '';
+      // Titles, summaries and other background calls default to a Claude model
+      // by name. A translated provider does not serve it, so point them at the
+      // model this chat already uses.
+      const own = model || (providerInstance && providerInstance.model) || '';
+      if (own && !(providerInstance && providerInstance.smallFastModel)) {
+        options.env.ANTHROPIC_SMALL_FAST_MODEL = own;
+        options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = own;
+      }
     }
 
     // Each request keeps its own entry; several tools can be pending at once
