@@ -21,6 +21,33 @@ const Chat = (() => {
     }
   };
 
+  const THINK_CLOSE_RE = /<\/think(?:ing)?\s*>/i;
+
+  /** True when `idx` sits inside a ``` fence or an inline `code` span. */
+  function inCode(text, idx) {
+    const before = text.slice(0, idx);
+    if ((before.match(/```/g) || []).length % 2 === 1) return true;
+    const line = before.slice(before.lastIndexOf('\n') + 1).replace(/```/g, '');
+    return (line.match(/`/g) || []).length % 2 === 1;
+  }
+
+  /**
+   * Reasoning that a model wrote into its reply instead of the thinking channel:
+   * `<think>…</think>answer`, or just `…</think>answer` when the chat template
+   * supplied the opening tag. Returned apart so it can fold away like any thought.
+   */
+  function splitThink(text) {
+    const s = String(text || '');
+    const m = THINK_CLOSE_RE.exec(s);
+    if (m && !inCode(s, m.index)) {
+      const head = s.slice(0, m.index).replace(/^\s*<think(?:ing)?\s*>/i, '');
+      return { thinking: head.trim(), text: s.slice(m.index + m[0].length).replace(/^\s+/, '') };
+    }
+    const open = /^\s*<think(?:ing)?\s*>/i.exec(s);
+    if (open && !m) return { thinking: s.slice(open[0].length).trim(), text: '' };
+    return { thinking: '', text: s };
+  }
+
   // Real HTML escaping. The old version was String(s), and it fed innerHTML with
 // tool names — MCP tool names come from remote servers and are untrusted. #7
   const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => (
@@ -381,11 +408,14 @@ const Chat = (() => {
     for (const it of items) {
       if (it.t === 'user') appendUser(chat, it.text);
       else if (it.t === 'assistant') {
+        const cut = splitThink(it.text);
+        if (cut.thinking) chat.msgs.appendChild(thoughtNode(cut.thinking));
+        if (!cut.text) continue;
         const w = el('div', 'msg assistant-msg');
         const body = el('div', 'md');
-        body.innerHTML = md(it.text);
+        body.innerHTML = md(cut.text);
         w.appendChild(body);
-        enhanceMarkdown(body, it.text);
+        enhanceMarkdown(body, cut.text);
         chat.msgs.appendChild(w);
       } else if (it.t === 'thinking') {
         const d = buildThinking('Thought — click to view');
@@ -2180,7 +2210,7 @@ const Chat = (() => {
     const key = parentId || 'main';
     const live = chat.lives && chat.lives.get(key);
     if (!live) return;
-    for (const [, b] of live.blocks) b.node && b.node.remove();
+    for (const [, b] of live.blocks) { b.node && b.node.remove(); b.think && b.think.remove(); }
     chat.lives.delete(key);
   }
 
@@ -2195,7 +2225,13 @@ const Chat = (() => {
     if (blk._raf) return;
     blk._raf = requestAnimationFrame(() => {
       blk._raf = null;
-      blk.body.innerHTML = md(blk.text);
+      const cut = splitThink(blk.text);
+      blk.body.innerHTML = md(cut.text);
+      if (cut.thinking) {
+        // The reply opened with reasoning: fold it away above the answer.
+        if (!blk.think) { blk.think = thoughtNode(''); blk.node.before(blk.think); }
+        blk.think.querySelector('.think-body').textContent = cut.thinking;
+      }
     });
   }
 
@@ -2288,6 +2324,14 @@ const Chat = (() => {
     }
   }
 
+  /** A collapsed, finished thought. */
+  function thoughtNode(text) {
+    const d = buildThinking('Thought — click to view reasoning');
+    d.querySelector('.think-body').textContent = text;
+    d.open = false;
+    return d;
+  }
+
   function buildThinking(label) {
     const d = el('details', 'thinking-block');
     d.open = true;
@@ -2333,11 +2377,14 @@ const Chat = (() => {
     const host = nestedTarget(chat, parentId) || chat.msgs;
     if (block.type === 'text') {
       if (!block.text) return;
+      const cut = splitThink(block.text);
+      if (cut.thinking) host.appendChild(thoughtNode(cut.thinking));
+      if (!cut.text) return;
       const w = el('div', 'msg assistant-msg' + (parentId ? ' nested' : ''));
       const body = el('div', 'md');
-      body.innerHTML = md(block.text);
+      body.innerHTML = md(cut.text);
       w.appendChild(body);
-      enhanceMarkdown(body, block.text);
+      enhanceMarkdown(body, cut.text);
       host.appendChild(w);
     } else if (block.type === 'thinking') {
       if (!block.thinking) return;

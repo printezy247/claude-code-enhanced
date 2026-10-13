@@ -274,6 +274,15 @@ describe('session options', () => {
     expect(lastOptions.env.ANTHROPIC_BASE_URL).toBe('http://127.0.0.1:9999/px/uid');
     expect(JSON.stringify(lastOptions.env)).not.toContain('sk-secret-provider-key');
   });
+
+  it('points background calls at the chat model on a translated provider', async () => {
+    await openChat({ anthropicBaseUrl: 'http://127.0.0.1:9999/px/uid', model: 'laguna-s-2.1', providerInstance: { uid: 'uid', model: 'nemotron' } });
+    expect(lastOptions.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('laguna-s-2.1');
+    expect(lastOptions.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBe('laguna-s-2.1');
+    await openChat({ anthropicBaseUrl: 'http://127.0.0.1:9999/px/uid', providerInstance: { uid: 'uid', model: 'nemotron', smallFastModel: 'tiny' } });
+    expect(lastOptions.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('tiny');
+    expect(lastOptions.env.ANTHROPIC_DEFAULT_HAIKU_MODEL).toBeUndefined();
+  });
 });
 
 describe('control surface', () => {
