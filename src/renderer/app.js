@@ -105,6 +105,10 @@ function applyTheme(theme) {
   const t = theme === 'light' ? 'light' : 'dark';
   document.documentElement.setAttribute('data-theme', t);
   state.theme = t;
+  // Code blocks and diffs are painted by Monaco; keep its theme in step with the app's.
+  if (window.monaco && window.monaco.editor && typeof window.monaco.editor.setTheme === 'function') {
+    window.monaco.editor.setTheme(t === 'light' ? 'vs' : 'vs-dark');
+  }
 }
 window.applyTheme = applyTheme;
 
