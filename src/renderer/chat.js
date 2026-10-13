@@ -1522,18 +1522,27 @@ const Chat = (() => {
     addCopyBtn(container, () => rawText, 'msg-copy');
     container.querySelectorAll('pre').forEach(pre => {
       const code = pre.querySelector('code') || pre;
-      addCopyBtn(pre, () => code.textContent, 'pre-copy');
-      colorizeCode(pre, code);
+      // Take the text BEFORE the copy button is added and before highlighting: Monaco's
+      // colorized HTML uses &nbsp; for spaces and <br> for line breaks, so reading
+      // textContent afterwards pasted odd spaces and no newlines.
+      const plain = code.textContent;
+      addCopyBtn(pre, () => plain, 'pre-copy');
+      colorizeCode(pre, code, plain);
     });
   }
 
+  // Monaco paints with whichever theme is current, and its default is the light one:
+  // black text on cce's dark code blocks. Follow the app theme instead.
+  const monacoThemeName = () => (document.documentElement.getAttribute('data-theme') === 'light' ? 'vs' : 'vs-dark');
+
   // Monaco is already vendored for the diff editor, so syntax highlighting
   // costs no extra dependency. Falls back to plain text when unavailable. #35
-  function colorizeCode(pre, code) {
+  function colorizeCode(pre, code, plain) {
     if (!window.monaco || !window.monaco.editor || typeof window.monaco.editor.colorize !== 'function') return;
-    const text = code.textContent || '';
+    const text = plain != null ? plain : (code.textContent || '');
     if (!text.trim() || text.length > 20000) return;
     try {
+      if (typeof window.monaco.editor.setTheme === 'function') window.monaco.editor.setTheme(monacoThemeName());
       const lang = detectLang(code);
       Promise.resolve(window.monaco.editor.colorize(text, lang, { tabSize: 2 }))
         .then((html) => { if (html && code.textContent === text) code.innerHTML = html; })
@@ -2552,6 +2561,7 @@ const Chat = (() => {
       wrap.innerHTML = '';
       const host = el('div', 'monaco-host');
       wrap.appendChild(host);
+      if (typeof window.monaco.editor.setTheme === 'function') window.monaco.editor.setTheme(monacoThemeName());
       const ed = window.monaco.editor.createDiffEditor(host, {
         readOnly: true,
         renderSideBySide: true,
