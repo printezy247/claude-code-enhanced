@@ -97,7 +97,7 @@ body {
   user-select: text;
 }
 .banner b { color: var(--text); }
-.banner code, .mcp-pre code { font-family: var(--mono); color: var(--accent); }
+.banner code { font-family: var(--mono); color: var(--accent); }
 
 /* ---------- terminal view ---------- */
 #tabbar {
@@ -217,14 +217,6 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   border: 1px solid rgba(224, 175, 104, .3); border-radius: 8px; padding: 8px 12px; margin-top: 10px;
 }
 
-/* ---------- mcp list ---------- */
-.mcp-pre {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
-  padding: 12px 14px; font-family: var(--mono); font-size: 12px; line-height: 1.6;
-  color: var(--muted); overflow: auto; max-height: 300px; white-space: pre-wrap;
-  user-select: text;
-}
-#mcp-remove-row { display: none; } /* superseded by the per-row Remove buttons */
 .mcp-rows { display: flex; flex-direction: column; gap: 8px; color: var(--muted); font-size: 12.5px; }
 .mcp-row {
   display: flex; align-items: center; gap: 10px; flex-wrap: wrap;

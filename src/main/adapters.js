@@ -113,7 +113,7 @@ function buildOpenAIBody(body, wantStream) {
       }
       // Reasoning that leaked into an earlier reply must not be replayed as if
       // the model had said it out loud.
-      text = stripThink(text);
+      text = splitThink(text).text;
       // A turn that was only thinking has nothing to send; an assistant message
       // with neither content nor tool calls is a 400 on most providers.
       if (!text && !toolCalls.length) continue;
@@ -175,35 +175,7 @@ function toolResultText(b) {
   return content;
 }
 
-const THINK_CLOSE_RE = /<\/think(?:ing)?\s*>/i;
-
-/** True when `idx` sits inside a ``` fence or an inline `code` span. */
-function inCode(text, idx) {
-  const before = text.slice(0, idx);
-  if ((before.match(/```/g) || []).length % 2 === 1) return true;
-  const line = before.slice(before.lastIndexOf('\n') + 1).replace(/```/g, '');
-  return (line.match(/`/g) || []).length % 2 === 1;
-}
-
-/**
- * Split reasoning that leaked into the text channel from the answer.
- * Covers `<think>…</think>answer` and the commoner `…</think>answer` (the
- * chat template pre-fills the opening tag, so the model only writes the closer).
- * @returns {{thinking: string, text: string}}
- */
-function splitThink(text) {
-  const s = String(text || '');
-  const m = THINK_CLOSE_RE.exec(s);
-  if (m && !inCode(s, m.index)) {
-    const head = s.slice(0, m.index).replace(/^\s*<think(?:ing)?\s*>/i, '');
-    return { thinking: head.trim(), text: s.slice(m.index + m[0].length).replace(/^\s+/, '') };
-  }
-  const open = /^\s*<think(?:ing)?\s*>/i.exec(s);
-  if (open && !m) return { thinking: s.slice(open[0].length).trim(), text: '' };
-  return { thinking: '', text: s };
-}
-
-const stripThink = (text) => splitThink(text).text;
+const { splitThink } = require('../shared/think.js');
 
 function callOpenAI(body, prov, wantStream, signal) {
   const out = buildOpenAIBody(body, wantStream);

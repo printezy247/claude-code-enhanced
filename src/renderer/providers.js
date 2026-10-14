@@ -17,15 +17,9 @@ const ProvidersUI = (() => {
   const modelsdev = () => (state.providers && state.providers.modelsdev) || { providers: 0, models: 0, source: 'bundled' };
   const byPreset = (id) => catalog().find(c => c.id === id) || null;
 
-  function resolveTpl(tpl, values) {
-    return String(tpl || '').replace(/\$\{(\w+)\}/g, (m, k) => {
-      const v = values && values[k];
-      return v == null || v === '' ? m : String(v);
-    });
-  }
-  function placeholdersIn(tpl) {
-    return [...String(tpl || '').matchAll(/\$\{(\w+)\}/g)].map(m => m[1]);
-  }
+  // Shared with the main process (src/shared/tpl.js): both fill URL templates
+  // and must agree on leaving a missing ${KEY} in place.
+  const { resolveTemplate: resolveTpl, placeholdersIn } = window.CCETpl;
 
   function chip(text, cls) { return el('span', 'chip ' + (cls || ''), text); }
   function capChip(cap) {

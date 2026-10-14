@@ -78,6 +78,12 @@ function loadRenderer(opts = {}) {
   // reads switchView/toast from app.js), so they must run in ONE eval scope.
   // Each source's top-level `const` is then hoisted into that shared scope, and
   // the tail re-publishes the names tests need onto window.
+  // src/shared/*.js are real <script> tags in index.html (stripped above), so
+  // load them here too: chat.js reads window.CCEThink, providers.js window.CCETpl.
+  for (const f of ['think.js', 'tpl.js']) {
+    const s = fs.readFileSync(path.join(ROOT, 'src', 'shared', f), 'utf8');
+    window.eval(s + '\n//# sourceURL=shared/' + f);
+  }
   const src = ['chat.js', 'providers.js', 'app.js'].map((f) => (
     fs.readFileSync(path.join(ROOT, 'src', 'renderer', f), 'utf8')
       + '\n//# sourceURL=' + f

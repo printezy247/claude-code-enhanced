@@ -154,9 +154,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     if (err) {
       dbg('upstream HTTP ' + err.status + ' -> ' + err.message.slice(0, 200));
       console.error('[proxy] upstream HTTP ' + err.status + ' for model ' + body.model + ': ' + err.message.replace(/\s+/g, ' ').slice(0, 300));
-      const out = mapError(err.status, err.message);
-      res.writeHead(out.status, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ type: 'error', error: { type: out.type, message: out.message } }));
+      sendBodyError(res, { status: err.status, message: err.message });
       return;
     }
   }
@@ -431,7 +429,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   res.end();
 }
 
-const THINK_CLOSE_RE = /<\/think(?:ing)?\s*>/i;
+const { THINK_CLOSE_RE } = require('../shared/think.js');
 
 // Last model each provider answered with, as a stand-in for one it lacks.
 const lastGoodModel = new Map();
@@ -897,5 +895,4 @@ module.exports = {
   inTokens,
   openaiBase,
   mapError,
-  isModelMissing,
 };

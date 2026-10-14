@@ -226,18 +226,8 @@ function protocolForNpm(npm) {
   return 'openai';
 }
 
-/** Fill a `${KEY}` template. Missing keys are left in place so the UI can flag them. */
-function resolveTemplate(tpl, values) {
-  return String(tpl || '').replace(/\$\{(\w+)\}/g, (m, k) => {
-    const v = values && values[k];
-    return v == null || v === '' ? m : String(v);
-  });
-}
-
-/** Extract `${KEY}` placeholder keys from a template string. */
-function placeholdersIn(tpl) {
-  return [...String(tpl || '').matchAll(/\$\{(\w+)\}/g)].map(m => m[1]);
-}
+// Shared with the renderer, which fills the same templates as the user types.
+const { resolveTemplate, placeholdersIn } = require('../shared/tpl.js');
 
 /** A generic catalog entry derived from a models.dev provider record. */
 function derive(md) {

@@ -1173,10 +1173,6 @@ function fillModeSelect(sel, provider) {
 
 /* ================= connectors view ================= */
 
-function parseMcpNames(output) {
-  return [...new Set([...output.matchAll(/^([a-zA-Z0-9_.-]+):\s/m)].map(m => m[1]))];
-}
-
 // name -> {state, detail, target, kind} from the last health check; connectorCards
 // holds each preset card's live bits so a refresh can repaint them without a rebuild.
 const connectorStatus = new Map();
@@ -1401,13 +1397,6 @@ async function refreshMcpList() {
   servers.forEach(s => connectorStatus.set(s.name, s));
   applyConnectorStatus();
   renderMcpRows(servers);
-  const sel = $('#mcp-remove-name');
-  sel.innerHTML = '';
-  const blank = el('option', '', '— server to remove —'); blank.value = '';
-  sel.appendChild(blank);
-  servers.filter(s => s.kind === 'own').forEach(s => {
-    const o = el('option', '', s.name); o.value = s.name; sel.appendChild(o);
-  });
 }
 
 /* ================= settings view ================= */
@@ -1774,13 +1763,7 @@ function wireChrome() {
       document.addEventListener('mouseup', up);
     });
   })();
-  $('#btn-mcp-remove').addEventListener('click', async () => {
-    const name = $('#mcp-remove-name').value;
-    if (!name) return toast('Pick a server to remove', 'err');
-    const r = await ccx.invoke('connectors:remove', { name });
-    if (r.ok) { toast('Removed ' + name, 'ok'); refreshMcpList(); }
-    else toast(r.error || 'Failed', 'err');
-  });
+  
 
   // global shortcuts
   document.addEventListener('keydown', (e) => {

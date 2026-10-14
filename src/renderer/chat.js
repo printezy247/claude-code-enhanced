@@ -21,32 +21,9 @@ const Chat = (() => {
     }
   };
 
-  const THINK_CLOSE_RE = /<\/think(?:ing)?\s*>/i;
-
-  /** True when `idx` sits inside a ``` fence or an inline `code` span. */
-  function inCode(text, idx) {
-    const before = text.slice(0, idx);
-    if ((before.match(/```/g) || []).length % 2 === 1) return true;
-    const line = before.slice(before.lastIndexOf('\n') + 1).replace(/```/g, '');
-    return (line.match(/`/g) || []).length % 2 === 1;
-  }
-
-  /**
-   * Reasoning that a model wrote into its reply instead of the thinking channel:
-   * `<think>…</think>answer`, or just `…</think>answer` when the chat template
-   * supplied the opening tag. Returned apart so it can fold away like any thought.
-   */
-  function splitThink(text) {
-    const s = String(text || '');
-    const m = THINK_CLOSE_RE.exec(s);
-    if (m && !inCode(s, m.index)) {
-      const head = s.slice(0, m.index).replace(/^\s*<think(?:ing)?\s*>/i, '');
-      return { thinking: head.trim(), text: s.slice(m.index + m[0].length).replace(/^\s+/, '') };
-    }
-    const open = /^\s*<think(?:ing)?\s*>/i.exec(s);
-    if (open && !m) return { thinking: s.slice(open[0].length).trim(), text: '' };
-    return { thinking: '', text: s };
-  }
+  // Reasoning the model wrote into its reply rather than the thinking channel.
+  // Shared with the proxy (src/shared/think.js) — the two must agree on the cut.
+  const { splitThink } = CCEThink;
 
   // Real HTML escaping. The old version was String(s), and it fed innerHTML with
 // tool names — MCP tool names come from remote servers and are untrusted. #7

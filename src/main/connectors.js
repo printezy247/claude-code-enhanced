@@ -138,9 +138,11 @@ function redact(res, secrets) {
   return out;
 }
 
+// Every form the CLI might echo back: the whole header line, the bare value, and
+// the value without its "Bearer " prefix.
 function secretsOf(header) {
-  const h = normalizeHeader(header);
-  return h ? [h, h.replace(/^[^:]+:\s*/, ''), h.replace(/^[^:]+:\s*Bearer\s+/i, '')] : [];
+  const value = String(header || '').replace(/^[^:]+:\s*Bearer\s+/i, '').replace(/^[^:]+:\s*/, '');
+  return value ? [String(header), value] : [];
 }
 
 async function add(claudePath, { preset, scope = 'user', header = '' }) {

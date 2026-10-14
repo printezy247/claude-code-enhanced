@@ -82,13 +82,7 @@
         </div>
         <div id="connector-grid" class="card-grid"></div>
         <div class="panel-head sub"><h3>Your connectors</h3><button id="btn-mcp-refresh" class="btn">↻ Refresh</button></div>
-        <div id="mcp-list-wrap">
-          <div id="mcp-list" class="mcp-rows">Checking your connectors…</div>
-        </div>
-        <div id="mcp-remove-row">
-          <select id="mcp-remove-name"><option value="">— server to remove —</option></select>
-          <button id="btn-mcp-remove" class="btn danger">Remove</button>
-        </div>
+        <div id="mcp-list" class="mcp-rows">Checking your connectors…</div>
       </section>
 
       <section id="view-settings" class="view">
@@ -122,6 +116,8 @@
   <link rel="stylesheet" href="vendor/monaco.css">
   <script src="vendor/monaco-env.js"></script>
   <script src="vendor/monaco.js"></script>
+  <script src="../shared/think.js"></script>
+  <script src="../shared/tpl.js"></script>
   <script src="chat.js"></script>
   <script src="providers.js"></script>
   <script src="app.js"></script>
