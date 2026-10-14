@@ -775,6 +775,7 @@ class ChatManager extends EventEmitter {
       sessionId: s.sessionId,
       mtime: s.mtime,
       preview: previewOf(s.full).slice(0, 120),
+      renamed: false,   // a /rename is only visible to the SDK
       branch: '',
       tag: '',
       size: 0,

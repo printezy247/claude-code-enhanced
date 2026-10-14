@@ -8,58 +8,111 @@ const require = createRequire(import.meta.url);
 const { loadRenderer, flush } = require('./helpers/renderer.js');
 
 describe('session index prefers the SDK and never blocks', () => {
-  it('index() resolves an array and reports branch/title fields', async () => {
+  it('falls back to the disk scan, with the same row shape', async () => {
+    // HERMETIC: a temp HOME with a fake .claude/projects tree, so this does not
+    // depend on the machine's own session history.
     const ChatManager = require('../src/main/chats.js');
-    const mgr = new ChatManager({ sdk: {} });
-    const rows = await mgr.index();
-    expect(Array.isArray(rows)).toBe(true);
-    // Whichever path ran, the shape the renderer consumes is unchanged, plus
-    // the two fields the SDK adds.
-    for (const r of rows.slice(0, 5)) {
-      expect(typeof r.sessionId).toBe('string');
-      expect(typeof r.mtime).toBe('number');
-      expect(r).toHaveProperty('preview');
-      expect(r).toHaveProperty('branch');
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-idx-'));
+    const proj = path.join(home, '.claude', 'projects', '-tmp-demo');
+    fs.mkdirSync(proj, { recursive: true });
+    fs.writeFileSync(path.join(proj, '5e6a8856-685b-7fff-aa97-9f9c1d4e6b22.jsonl'),
+      '{"type":"summary","summary":"the summary"}\n'
+      + '{"type":"user","cwd":"/tmp/demo","message":{"content":[{"type":"text","text":"the first prompt"}]}}\n');
+    const prev = process.env.HOME;
+    process.env.HOME = home;
+    try {
+      const mgr = new ChatManager({ sdk: {} });   // no listSessions -> fallback
+      const rows = await mgr.index();
+      expect(rows.length).toBe(1);
+      expect(rows[0].sessionId).toBe('5e6a8856-685b-7fff-aa97-9f9c1d4e6b22');
+      // The scan prefers the stored summary over the first prompt, which is the
+      // same precedence the SDK path uses (title > summary > first prompt).
+      expect(rows[0].preview).toBe('the summary');
+      expect(rows[0].cwd).toBe('/tmp/demo');
+      // Same shape as the SDK path, so the renderer need not branch.
+      expect(rows[0]).toHaveProperty('branch');
+      expect(rows[0]).toHaveProperty('renamed');
+      expect(typeof rows[0].mtime).toBe('number');
+    } finally {
+      process.env.HOME = prev;
+      fs.rmSync(home, { recursive: true, force: true });
     }
   });
 
-  it('falls back to the disk scan when the SDK has no listSessions', async () => {
-    const ChatManager = require('../src/main/chats.js');
-    // An sdk object with no session helpers: index() must still answer.
-    const mgr = new ChatManager({ sdk: {} });
-    const viaFallback = await mgr.scanIndex();
-    expect(Array.isArray(viaFallback)).toBe(true);
-  });
-
   it('yields the event loop instead of hogging it', async () => {
-    // No sdk override: this is the real production path, where the SDK's own
-    // async work interleaves with our timers. The old synchronous scan allowed
-    // zero ticks.
+    // HERMETIC: a fake SDK whose listSessions awaits a macrotask, which is what
+    // the real one does. The old synchronous scan allowed zero ticks.
     const ChatManager = require('../src/main/chats.js');
-    const mgr = new ChatManager({ proxyToken: 'tok' });
+    const fakeSdk = {
+      listSessions: async () => { await new Promise(r => setTimeout(r, 5)); return []; },
+    };
+    const mgr = new ChatManager({ sdk: fakeSdk });
     let ticks = 0;
     const iv = setInterval(() => ticks++, 0);
-    const rows = await mgr.index();
+    await mgr.index();
     clearInterval(iv);
-    expect(rows.length).toBeGreaterThan(0);
     expect(ticks).toBeGreaterThan(0);
   });
 
-  it('the SDK path is what actually answers, and it carries the extra fields', async () => {
+  it('maps every SDK field the renderer and the row UI rely on', async () => {
+    // HERMETIC: the SDK is the only thing that knows gitBranch / customTitle,
+    // so the mapping is asserted against a fake rather than the local disk.
     const ChatManager = require('../src/main/chats.js');
-    const mgr = new ChatManager({ proxyToken: 'tok' });
-    const rows = await mgr.index();
-    expect(rows.length).toBeGreaterThan(0);
-    // gitBranch is computable only by the SDK; the disk scan cannot produce it.
-    expect(rows.some(r => r.branch)).toBe(true);
-    expect(rows.filter(r => r.branch).every(r => typeof r.branch === 'string')).toBe(true);
+    const SID = '1a571551-242b-4a3c-b175-6aa0b93b1573';
+    const fakeSdk = {
+      listSessions: async () => ([
+        { sessionId: SID, summary: 'generated summary', lastModified: 1700000000000, fileSize: 4096, customTitle: 'my renamed session', firstPrompt: 'the first prompt', gitBranch: 'main', cwd: '/tmp/proj', tag: '' },
+        { sessionId: '2b682662-353c-5c5c-c886-dfc4dde4c284', summary: 'no title', lastModified: 1600000000000, gitBranch: 'feature/x', cwd: '/tmp/other' },
+      ]),
+    };
+    const rows = await new ChatManager({ sdk: fakeSdk }).index();
+    expect(rows.length).toBe(2);
+    // Newest first.
+    expect(rows[0].sessionId).toBe(SID);
+    // A custom title wins over the generated summary and the first prompt.
+    expect(rows[0].preview).toBe('my renamed session');
+    expect(rows[0].renamed).toBe(true);
+    // No custom title: fall back to the summary, and say it is not renamed.
+    expect(rows[1].preview).toBe('no title');
+    expect(rows[1].renamed).toBe(false);
+    // The fields only the SDK can produce.
+    expect(rows[0].branch).toBe('main');
+    expect(rows[1].branch).toBe('feature/x');
+    expect(rows[0].cwd).toBe('/tmp/proj');
+    expect(rows[0].size).toBe(4096);
   });
 
-  it('history() also resolves and is not a bare array', async () => {
+  it('a non-uuid session id from the SDK is dropped, not shown', async () => {
     const ChatManager = require('../src/main/chats.js');
-    const mgr = new ChatManager({ sdk: {} });
-    const rows = await mgr.history(process.cwd());
-    expect(Array.isArray(rows)).toBe(true);
+    const fakeSdk = {
+      listSessions: async () => ([
+        { sessionId: '../../etc/passwd', summary: 'x', lastModified: 1 },
+        { sessionId: '3c793664-464d-6dd6-b06e-b97ee0cd4a95', summary: 'ok', lastModified: 2 },
+      ]),
+    };
+    const rows = await new ChatManager({ sdk: fakeSdk }).index();
+    expect(rows.length).toBe(1);
+    expect(rows[0].sessionId).toBe('3c793664-464d-6dd6-b06e-b97ee0cd4a95');
+  });
+
+  it('history() passes the folder through and maps the same way', async () => {
+    const ChatManager = require('../src/main/chats.js');
+    const seen = [];
+    const fakeSdk = {
+      listSessions: async (opts) => { seen.push(opts); return [{ sessionId: '4d8a7755-575b-7eee-863d-bf0c7ecae6ee', summary: 's', lastModified: 5, gitBranch: 'br' }]; },
+    };
+    const rows = await new ChatManager({ sdk: fakeSdk }).history('/tmp/a-project');
+    expect(seen[0].dir).toBe('/tmp/a-project');
+    expect(rows[0].branch).toBe('br');
+  });
+
+  it('history() resolves an array even with no sessions at all', async () => {
+    const ChatManager = require('../src/main/chats.js');
+    const rows = await new ChatManager({ sdk: {} }).history('/tmp/definitely-no-such-project');
+    expect(rows).toEqual([]);
   });
 
   it('transcriptItems caps the replay at 300 items', async () => {
