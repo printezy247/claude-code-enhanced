@@ -183,10 +183,15 @@ describe('composer (#32)', () => {
   it('turns the send button into stop while busy', () => {
     h.window.Chat.handleEvent({ id: 'c1', kind: 'status', busy: true });
     const btn = pane().querySelector('.chat-send');
-    expect(btn.textContent).toBe('■');
+    // The stop affordance is an SVG icon now, not the ■ glyph.
+    expect(btn.innerHTML).toContain('ic-square');
+    expect(btn.classList.contains('busy')).toBe(true);
     btn.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
     const interrupt = h.calls.filter(c => c.channel === 'chat:interrupt').pop();
     expect(interrupt).toBeTruthy();
+    // And back to send when the turn ends.
+    h.window.Chat.handleEvent({ id: 'c1', kind: 'status', busy: false });
+    expect(btn.innerHTML).toContain('ic-send');
   });
 
   it('queues a message sent mid-turn', () => {

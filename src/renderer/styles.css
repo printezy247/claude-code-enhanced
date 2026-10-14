@@ -1044,3 +1044,34 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 /* Rows and tabs are divs: without this they are not even focusable. */
 .convo-row:focus, .tx-row:focus { outline: none; }
 .tab:focus { outline: none; }
+
+/* ---------- icon set (#54) ----------
+   One stroke family on a 24×24 grid, drawn in currentColor so icons follow the
+   theme and the hover state. They were emoji, which ignored colour, rendered at
+   different sizes per platform, and were announced before their labels. */
+.ic { flex: none; display: inline-block; vertical-align: -2px; }
+svg[data-icon], [data-icon] { display: inline-flex; align-items: center; justify-content: center; }
+[data-icon] > svg { display: block; }
+
+/* Nav glyph column: fixed width so the labels line up regardless of icon. */
+.nav-btn .ico, #btn-convo-drop .ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 17px; height: 17px; flex: none; color: var(--muted);
+}
+.nav-btn.active .ico, .nav-btn:hover .ico, #btn-convo-drop.active .ico { color: var(--accent); }
+#btn-convo-drop .caret {
+  display: inline-flex; width: 11px; height: 11px; font-size: 0;
+}
+.logo-mark { display: inline-flex; align-items: center; justify-content: center; }
+.logo-mark svg { width: 15px; height: 15px; }
+
+.tool-ico { display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--muted); }
+.chat-menu-ico { display: inline-flex; color: var(--muted); }
+.wf-chip [data-icon] { margin-right: 4px; }
+.chat-empty-icon { display: inline-flex; color: var(--accent); }
+.chat-empty-icon svg { width: 30px; height: 30px; stroke-width: 2.2; }
+.mcp-chip { display: inline-flex; align-items: center; gap: 5px; }
+.proj-chip { display: inline-flex; align-items: center; gap: 5px; }
+.copy-btn { display: inline-flex; align-items: center; justify-content: center; }
+/* A heading that starts with an icon needs the baseline nudged back. */
+h4 > svg, .sys-note > svg { vertical-align: -2px; }

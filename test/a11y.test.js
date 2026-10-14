@@ -160,8 +160,16 @@ describe('landmarks and live regions (#53)', () => {
     expect(html()).not.toMatch(/class="ico">📊/);
     const icons = [...html().matchAll(/<span class="ico"([^>]*)>/g)];
     expect(icons.length).toBeGreaterThan(3);
+    // The spans now hold an inline SVG that carries aria-hidden itself, so the
+    // requirement is: every declared icon is either an SVG (hidden by the icon
+    // helper) or explicitly aria-hidden.
     for (const [, attrs] of icons) {
-      expect(attrs, 'icon span without aria-hidden').toContain('aria-hidden="true"');
+      const hidden = attrs.includes('aria-hidden="true"') || attrs.includes('data-icon=');
+      expect(hidden, 'icon span neither aria-hidden nor a declared SVG: ' + attrs).toBe(true);
+    }
+    // No glyph left doing an icon's job.
+    for (const glyph of ['📊', ['2B3C', 'FE0F'].map(String.fromCharCode).join(''), '⚙', '▤']) {
+      expect(html(), 'glyph still used as an icon: ' + glyph).not.toContain('class="ico">' + glyph);
     }
   });
 });

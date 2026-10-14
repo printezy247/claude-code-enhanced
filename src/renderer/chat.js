@@ -40,16 +40,18 @@ const Chat = (() => {
 
   /* ---------------- tool metadata ---------------- */
 
+  // One stroke icon per tool, from the shared SVG set. They were emoji, which
+  // render at different sizes per platform, ignore currentColor (so they could
+  // not follow the theme), and were announced before the tool name. #54
   const TOOL_ICONS = {
-    Bash: '❯', Read: '📄', Write: '✏️', Edit: '✏️', MultiEdit: '✏️', NotebookEdit: '📓',
-    Grep: '🔍', Glob: '📁', WebFetch: '🌐', WebSearch: '🌐', Task: '🤖', Agent: '🤖',
-    TodoWrite: '☑️', ExitPlanMode: '🗺️', Skill: '⚡', AskUserQuestion: '❓',
-    BashOutput: '❯', KillShell: '⏹', NotebookRead: '📓',
+    Bash: 'terminal', BashOutput: 'terminal', Read: 'file', NotebookRead: 'notebook',
+    Write: 'pencil', Edit: 'pencil', MultiEdit: 'pencil', NotebookEdit: 'notebook',
+    Grep: 'search', Glob: 'folder', WebFetch: 'globe', WebSearch: 'globe',
+    Task: 'bot', Agent: 'bot', TodoWrite: 'check', ExitPlanMode: 'map',
+    Skill: 'bolt', AskUserQuestion: 'question', KillShell: 'stop',
   };
-  function toolIcon(name) {
-    if (name && name.startsWith('mcp__')) return '🔌';
-    return TOOL_ICONS[name] || '🔧';
-  }
+  const toolIcon = (name) => CCEIcons.svg(
+    name && name.startsWith('mcp__') ? 'plug' : (TOOL_ICONS[name] || 'wrench'), 15);
   function toolTitle(name, input = {}) {
     const mcp = name.startsWith('mcp__') ? name.replace(/^mcp__/, '').split('__') : null;
     switch (name) {
@@ -100,7 +102,7 @@ const Chat = (() => {
       <div class="chat-body">
         <div class="chat-msgs">
           <div class="chat-empty">
-            <div class="chat-empty-icon">❯</div>
+            <div class="chat-empty-icon" data-icon="terminal"></div>
             <h3>Claude Code</h3>
             <p>Ask anything about this project. Claude can read & edit files, run commands, use skills and MCP tools — you approve each step.</p>
             <p class="chat-empty-hint">Type <b>/</b> for commands · <b>Enter</b> to send · <b>Shift+Enter</b> newline</p>
@@ -111,11 +113,11 @@ const Chat = (() => {
       <div class="chat-perm-slot"></div>
       <div class="chat-composer">
         <div class="chat-workflows" title="One-click workflows">          <span class="wf-label">workflows</span>
-          <button class="wf-chip" data-wf="research">🧭 deep research</button>
-          <button class="wf-chip" data-wf="review">🔍 code review</button>
-          <button class="wf-chip" data-wf="explain">📚 explain repo</button>
-          <button class="wf-chip" data-wf="plan">🗺️ plan feature</button>
-          <button class="wf-chip" data-wf="testfix">🧪 test &amp; fix</button>
+          <button class="wf-chip" data-wf="research"><span data-icon="search"></span> deep research</button>
+          <button class="wf-chip" data-wf="review"><span data-icon="search"></span> code review</button>
+          <button class="wf-chip" data-wf="explain"><span data-icon="notebook"></span> explain repo</button>
+          <button class="wf-chip" data-wf="plan"><span data-icon="map"></span> plan feature</button>
+          <button class="wf-chip" data-wf="testfix"><span data-icon="check"></span> test &amp; fix</button>
         </div>
         <div class="chat-imgs hidden"></div>
         <div class="chat-queued hidden"></div>
@@ -136,6 +138,10 @@ const Chat = (() => {
       </div>`;
 
     $('#terminals').appendChild(pane);
+    // The shell template declares icons by name; fill them with the shared SVG
+    // set. Defined in app.js, which loads after this file but before any chat
+    // is created. #54
+    if (typeof paintDeclaredIcons === 'function') paintDeclaredIcons(pane);
 
     const chat = {
       follow: true,   // keep the view pinned to new output until the user scrolls up
@@ -380,7 +386,7 @@ const Chat = (() => {
     const r = await ccx.invoke('chat:transcript', { cwd: chat.cwd, sessionId });
     if (!r.ok || !r.items || !r.items.length) return;
     chat.msgs.querySelector('.chat-empty')?.remove();
-    const top = el('div', 'sys-note', '🕘 previous conversation restored — ' + r.items.length + ' entries');
+    const top = el('div', 'sys-note', 'previous conversation restored — ' + r.items.length + ' entries');
     chat.msgs.insertBefore(top, chat.msgs.firstChild);
     const items = r.items.slice(-150);
     for (const it of items) {
@@ -565,9 +571,11 @@ const Chat = (() => {
   function wireHeaderMenu(chat, forkConversation) {
     let menu = null;
     const close = () => { if (menu) { menu.remove(); menu = null; } };
+    // `icon` is a name from the shared SVG set, not a glyph: it inherits
+    // currentColor and is hidden from assistive tech. #54
     const item = (icon, label, run) => {
       const b = el('button', 'chat-menu-item');
-      b.appendChild(el('span', '', icon));
+      b.appendChild(elIcon('span', 'chat-menu-ico', CCEIcons.svg(icon, 15)));
       b.appendChild(el('span', '', label));
       b.addEventListener('click', () => { close(); run(); });
       return b;
@@ -575,17 +583,17 @@ const Chat = (() => {
     chat.moreBtn.addEventListener('click', () => {
       if (menu) return close();
       menu = el('div', 'chat-menu');
-      menu.appendChild(item('⚡', 'Skills, commands, agents, hooks', () => toggleSkillsPanel(chat)));
-      menu.appendChild(item('⧉', 'MCP servers (live)', () => toggleMcpPanel(chat)));
-      menu.appendChild(item('🕘', 'Past conversations', () => toggleHistoryPanel(chat)));
+      menu.appendChild(item('bolt', 'Skills, commands, agents, hooks', () => toggleSkillsPanel(chat)));
+      menu.appendChild(item('plug2', 'MCP servers (live)', () => toggleMcpPanel(chat)));
+      menu.appendChild(item('clock', 'Past conversations', () => toggleHistoryPanel(chat)));
       menu.appendChild(item('⏪', 'Rewind files', () => toggleRewindPanel(chat)));
-      menu.appendChild(item('🧠', 'Memory & rules', () => toggleMemoryPanel(chat)));
+      menu.appendChild(item('brain', 'Memory & rules', () => toggleMemoryPanel(chat)));
       menu.appendChild(item('⑂', 'Fork this conversation', forkConversation));
       menu.appendChild(item('⌨', 'Terminal tab in this folder', () => window.createSession({ cwd: chat.cwd, type: 'shell' })));
-      menu.appendChild(item('▶', 'Run build / test scripts', () => chat.runBtn.click()));
+      menu.appendChild(item('play', 'Run build / test scripts', () => chat.runBtn.click()));
       menu.appendChild(item('▦', 'Toggle split view', () => window.toggleSplit && window.toggleSplit()));
       if (chat.provider && chat.provider.baseUrl) {
-        menu.appendChild(item('⚙', 'Model manager (load / unload)',
+        menu.appendChild(item('gear', 'Model manager (load / unload)',
           () => (window.ProvidersUI ? ProvidersUI.openLocalManager(chat.provider.baseUrl) : (window.openOllamaManager && window.openOllamaManager(chat.provider)))));
       }
       const rect = chat.moreBtn.getBoundingClientRect();
@@ -782,7 +790,7 @@ const Chat = (() => {
       const r = await ccx.invoke('git:info', { cwd: chat.cwd });
       if (!r.ok || !chat.projEl) return;
       chat.projEl.innerHTML = '';
-      const folder = el('span', 'proj-chip', '📁 ' + basename(chat.cwd));
+      const folder = elIcon('span', 'proj-chip', CCEIcons.svg('folder', 13) + ' ' + basename(chat.cwd));
       folder.title = chat.cwd + (r.remote ? '\nremote: ' + r.remote : '') + (r.branch ? '\nbranch: ' + r.branch : '');
       chat.projEl.appendChild(folder);
       if (r.repo) {
@@ -805,7 +813,7 @@ const Chat = (() => {
   async function toggleMemoryPanel(chat) {
     if (chat.pane.querySelector('.chat-memory-panel')) { chat.pane.querySelector('.chat-memory-panel').remove(); return; }
     const panel = el('div', 'chat-skills-panel chat-memory-panel');
-    panel.appendChild(el('h4', '', '🧠 Memory & rules'));
+    panel.appendChild(elIcon('h4', '', CCEIcons.svg('brain', 15) + ' Memory & rules'));
     panel.appendChild(el('p', 'hint', 'What the engine loads at session start: CLAUDE.md memory, .claude/rules/*.md, and settings.json hooks. Hooks apply to sessions started after saving.'));
     const pick = el('select', 'skills-search');
     const editor = el('textarea', 'mem-editor');
@@ -870,14 +878,14 @@ const Chat = (() => {
       ['Connectors', 'connectors'], ['Settings', 'settings']]) {
       add('view', label, '', () => { close(); switchView(view); });
     }
-    add('panel', '⚡ skills, agents, hooks, tools', '', () => { close(); toggleSkillsPanel(chat); });
-    add('panel', '⧉ MCP servers (live)', '', () => { close(); toggleMcpPanel(chat); });
-    add('panel', '🕘 past conversations', '', () => { close(); toggleHistoryPanel(chat); });
+    add('panel', 'Skills, agents, hooks, tools', '', () => { close(); toggleSkillsPanel(chat); });
+    add('panel', 'MCP servers (live)', '', () => { close(); toggleMcpPanel(chat); });
+    add('panel', 'past conversations', '', () => { close(); toggleHistoryPanel(chat); });
     add('panel', '⏪ rewind files', '', () => { close(); toggleRewindPanel(chat); });
-    add('panel', '🧠 memory & rules', '', () => { close(); toggleMemoryPanel(chat); });
+    add('panel', 'memory & rules', '', () => { close(); toggleMemoryPanel(chat); });
     add('chat', '⑂ fork this conversation', '', () => { close(); chat.forkBtn.click(); });
     add('chat', '⌨ terminal tab in this folder', '', () => { close(); chat.termBtn.click(); });
-    add('chat', '✍ summarize session into a handoff brief', '', () => { close(); prefilledSummary(chat); });
+    add('chat', 'summarize session into a handoff brief', '', () => { close(); prefilledSummary(chat); });
     add('chat', '■ stop / interrupt', '', () => { close(); chat.stopBtn.click(); });
 
     for (const o of chat.modelSel.options) {
@@ -964,7 +972,7 @@ const Chat = (() => {
     let panel = chat.pane.querySelector('.chat-skills-panel');
     if (panel) { panel.remove(); return; }
     panel = el('div', 'chat-skills-panel');
-    panel.appendChild(el('h4', '', '⚡ Skills & commands'));
+    panel.appendChild(elIcon('h4', '', CCEIcons.svg('bolt', 15) + ' Skills & commands'));
     panel.appendChild(el('p', 'hint', 'Type / in the composer to run a command; skills auto-trigger when a task matches. Click a row to use it. Esc closes.'));
 
     const search = el('input', 'skills-search');
@@ -1114,7 +1122,7 @@ const Chat = (() => {
     render();
 
     // Memory & rules editor (CLAUDE.md, .claude/rules, settings hooks)
-    const memBtn = el('button', 'btn small', '🧠 edit memory & rules');
+    const memBtn = elIcon('button', 'btn small', CCEIcons.svg('brain', 14) + ' edit memory & rules');
     memBtn.addEventListener('click', () => { panel.remove(); toggleMemoryPanel(chat); });
     panel.appendChild(memBtn);
 
@@ -1146,7 +1154,7 @@ const Chat = (() => {
 
     // MCP status chips
     if (chat.init && (chat.init.mcp_servers || []).length) {
-      panel.appendChild(el('h4', '', '⧉ MCP servers'));
+      panel.appendChild(elIcon('h4', '', CCEIcons.svg('plug2', 15) + ' MCP servers'));
       const mrow = el('div', 'mcp-chip-row');
       for (const s of chat.init.mcp_servers) {
         mrow.appendChild(el('span', 'chip mcp-chip ' + (s.status === 'connected' ? 'mcp-ok' : ''), `${s.name} · ${s.status}`));
@@ -1164,12 +1172,12 @@ const Chat = (() => {
   async function toggleMcpPanel(chat) {
     if (chat.pane.querySelector('.chat-mcp-panel')) { chat.pane.querySelector('.chat-mcp-panel').remove(); return; }
     const panel = el('div', 'chat-skills-panel chat-mcp-panel');
-    panel.appendChild(el('h4', '', '⧉ MCP servers'));
+    panel.appendChild(elIcon('h4', '', CCEIcons.svg('plug2', 15) + ' MCP servers'));
     panel.appendChild(el('p', 'hint', 'Live session status. Disable/enable applies to this session only; ↻ reconnects a failed server. Server config lives in Connectors.'));
     const body = el('div', 'skills-list');
     body.appendChild(el('div', 'hint', 'loading…'));
     panel.appendChild(body);
-    const link = el('button', 'btn small', '⚙ open connectors');
+    const link = elIcon('button', 'btn small', CCEIcons.svg('gear', 14) + ' open connectors');
     link.addEventListener('click', () => { panel.remove(); switchView('connectors'); });
     panel.appendChild(link);
     chat.pane.appendChild(panel);
@@ -1193,7 +1201,7 @@ const Chat = (() => {
         });
         row.appendChild(tog);
         if (s.status === 'failed' || s.status === 'needs-auth') {
-          const rc = el('button', 'btn small', '↻ reconnect');
+          const rc = elIcon('button', 'btn small', CCEIcons.svg('refresh', 14) + ' reconnect');
           rc.addEventListener('click', async () => {
             rc.disabled = true;
             const nr = await ccx.invoke('chat:mcp', { id: chat.id, op: 'reconnect', name: s.name });
@@ -1360,11 +1368,11 @@ const Chat = (() => {
     const node = el('div', 'tool-card kind-agent bg-task');
     const head = el('div', 'tool-head');
     const dot = el('span', 'tool-dot running');
-    const ico = el('span', 'tool-ico', '🤖');
+    const ico = elIcon('span', 'tool-ico', CCEIcons.svg('bot', 15));
     const title = el('span', 'tool-title mono', '');
     const chip = el('span', 'chip', info.subagent_type || 'task');
     head.appendChild(dot); head.appendChild(ico); head.appendChild(title); head.appendChild(chip);
-    const stop = el('button', 'btn small', '⏹ stop');
+    const stop = elIcon('button', 'btn small', CCEIcons.svg('stop', 12) + ' stop');
     stop.title = 'Stop this background task';
     stop.addEventListener('click', async () => {
       stop.disabled = true;
@@ -1382,7 +1390,7 @@ const Chat = (() => {
   /** Paint a task card from either a task_* event or a background_tasks_changed entry. */
   function bgTaskPaint(row, info) {
     const usage = info.usage ? ' · ' + Math.round((info.usage.total_tokens || 0) / 1000) + 'k tok' : '';
-    row.title.textContent = '⏳ ' + row.label
+    row.title.textContent = CCEIcons.svg('clock', 13) + ' ' + row.label
       + (info.last_tool_name ? ' — ' + info.last_tool_name : '')
       + (info.status ? ' · ' + info.status : '') + usage;
     if (info.summary) row.title.title = String(info.summary).slice(0, 600);
@@ -1517,8 +1525,8 @@ const Chat = (() => {
     chat.imgs.innerHTML = '';
     chat.imgs.classList.toggle('hidden', !chat.pendingImages.length);
     chat.pendingImages.forEach((img, i) => {
-      const chip = el('span', 'img-chip', '🖼 image ' + (i + 1));
-      const x = el('button', 'close', '✕');
+      const chip = elIcon('span', 'img-chip', CCEIcons.svg('file', 13) + ' image ' + (i + 1));
+      const x = elIcon('button', 'close', CCEIcons.svg('close', 13));
       x.title = 'Remove';
       x.setAttribute('aria-label', 'Remove image');
       x.addEventListener('click', () => { chat.pendingImages.splice(i, 1); renderImageChips(chat); });
@@ -1548,7 +1556,7 @@ const Chat = (() => {
     chat.slashIdx = 0;
     chat.slash.innerHTML = '';
     files.forEach((f, i) => {
-      const item = el('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''), '📄 ' + f);
+      const item = elIcon('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg('file', 14) + ' ' + f);
       item.addEventListener('mousedown', (e) => { e.preventDefault(); chat.slashIdx = i; applyAt(chat); });
       chat.slash.appendChild(item);
     });
@@ -1580,14 +1588,15 @@ const Chat = (() => {
   }
 
   function addCopyBtn(host, getText, cls) {
-    const b = el('button', 'copy-btn ' + (cls || ''), '⧉');
+    const b = elIcon('button', 'copy-btn ' + (cls || ''), CCEIcons.svg('copy', 14));
     b.title = 'Copy';
+    b.setAttribute('aria-label', 'Copy to clipboard');
     b.addEventListener('click', async (e) => {
       e.stopPropagation();
       const ok = await copyText(getText());
-      b.textContent = ok ? '✓' : '✗';
+      b.innerHTML = CCEIcons.svg(ok ? 'check' : 'close', 14);
       b.title = ok ? 'Copied' : 'Copy failed';
-      setTimeout(() => { b.textContent = '⧉'; b.title = 'Copy'; }, 1200);
+      setTimeout(() => { b.innerHTML = CCEIcons.svg('copy', 14); b.title = 'Copy'; }, 1200);
     });
     host.appendChild(b);
   }
@@ -1595,13 +1604,22 @@ const Chat = (() => {
   function enhanceMarkdown(container, rawText) {
     addCopyBtn(container, () => rawText, 'msg-copy');
     container.querySelectorAll('pre').forEach(pre => {
-      const code = pre.querySelector('code') || pre;
-      // Take the text BEFORE the copy button is added and before highlighting: Monaco's
-      // colorized HTML uses &nbsp; for spaces and <br> for line breaks, so reading
-      // textContent afterwards pasted odd spaces and no newlines.
-      const plain = code.textContent;
-      addCopyBtn(pre, () => plain, 'pre-copy');
+      // Take the text BEFORE the copy button is added and before highlighting:
+      // Monaco's colorized HTML uses &nbsp; for spaces and <br> for line breaks,
+      // so reading textContent afterwards pasted odd spaces and no newlines.
+      let code = pre.querySelector('code');
+      const plain = code ? code.textContent : pre.textContent;
+      // Highlighting replaces innerHTML, so it must never target the <pre>
+      // itself — that would also destroy the copy button living inside it. A
+      // bare <pre> gets a <code> wrapper first. #54
+      if (!code) {
+        code = document.createElement('code');
+        code.textContent = plain;
+        pre.textContent = '';
+        pre.appendChild(code);
+      }
       colorizeCode(pre, code, plain);
+      addCopyBtn(pre, () => plain, 'pre-copy');
     });
   }
 
@@ -1691,7 +1709,7 @@ const Chat = (() => {
     let panel = chat.pane.querySelector('.chat-history-panel');
     if (panel) { panel.remove(); return; }
     panel = el('div', 'chat-skills-panel chat-history-panel');
-    panel.appendChild(el('h4', '', '🕘 Past conversations — ' + basename(chat.cwd)));
+    panel.appendChild(el('h4', '', 'Past conversations — ' + basename(chat.cwd)));
     panel.appendChild(el('p', 'hint', 'From the claude engine\u2019s transcript store — includes terminal TUI sessions. Open resumes; Fork branches without touching the original.'));
     const list = el('div', 'skills-list');
     panel.appendChild(list);
@@ -1714,11 +1732,12 @@ const Chat = (() => {
       const fork = el('button', 'btn small', '⑂ fork');
       fork.title = 'Branch from this point — original stays untouched';
       fork.addEventListener('click', () => createSession({ cwd: chat.cwd, providerUid: chat.provider ? chat.provider.uid : null, model: chat.model || '', permissionMode: chat.mode, resume: s.sessionId, fork: true }));
-      const del = el('button', 'btn small danger', '🗑');
+      const del = elIcon('button', 'btn small danger', CCEIcons.svg('trash', 14));
+      del.setAttribute('aria-label', 'Delete this session from disk');
       del.title = 'Delete this session from disk';
       let armed = false;
       del.addEventListener('click', async () => {
-        if (!armed) { armed = true; del.textContent = 'sure?'; setTimeout(() => { armed = false; del.textContent = '🗑'; }, 2500); return; }
+        if (!armed) { armed = true; del.textContent = 'sure?'; setTimeout(() => { armed = false; del.innerHTML = CCEIcons.svg('trash', 14); }, 2500); return; }
         const rd = await ccx.invoke('chat:delete', { cwd: chat.cwd, sessionId: s.sessionId });
         if (rd.ok) { row.remove(); toast('Session deleted', 'ok'); } else toast(rd.error, 'err');
       });
@@ -1769,7 +1788,7 @@ const Chat = (() => {
     if (chat.planViewer) return chat.planViewer.body;
     const wrap = el('div', 'chat-plan-viewer');
     const head = el('div', 'plan-head');
-    head.appendChild(el('h4', '', '🗺 Plan'));
+    head.appendChild(elIcon('h4', '', CCEIcons.svg('map', 14) + ' Plan'));
     const close = el('button', 'close', '✕');
     close.title = 'Hide plan panel';
     close.setAttribute('aria-label', 'Hide plan panel');
@@ -1871,7 +1890,7 @@ const Chat = (() => {
     else if (kind === 'auth') onAuth(chat, evt);
     else if (kind === 'interrupted') {
       if (evt.stillQueued) {
-        chat.msgs.appendChild(el('div', 'sys-note', '⏹ interrupted — ' + evt.stillQueued + ' queued message(s) still run next'));
+        chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' interrupted — ' + evt.stillQueued + ' queued message(s) still run next'));
         scrollDownSoft(chat);
       }
     }
@@ -1890,7 +1909,7 @@ const Chat = (() => {
     chat.stopBtn.classList.toggle('hidden', !busy);
     chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
     // While a turn runs the primary button becomes stop, as in the desktop app.
-    chat.sendBtn.textContent = busy ? '■' : '➤';
+    chat.sendBtn.innerHTML = CCEIcons.svg(busy ? 'square' : 'send', 15);
     chat.sendBtn.title = busy ? 'Stop (Esc)' : 'Send (Enter)';
     chat.sendBtn.classList.toggle('busy', busy);
     if (busy) { chat.statusLine.textContent = 'working…'; startContextPolling(chat); }
@@ -2108,7 +2127,7 @@ const Chat = (() => {
   function onPermissionDenied(chat, msg) {
     const reason = msg.reason || msg.message || 'no reason given';
     chat.msgs.appendChild(el('div', 'sys-note warn',
-      '🚫 ' + String(msg.tool_name || 'tool') + ' denied: ' + String(reason).slice(0, 200)));
+      CCEIcons.svg('error', 13) + ' ' + String(msg.tool_name || 'tool') + ' denied: ' + String(reason).slice(0, 200)));
     scrollDownSoft(chat);
   }
 
@@ -2239,7 +2258,7 @@ const Chat = (() => {
         const g = (r.global.content || '').length;
         const pr = r.project && r.project.content ? r.project.content.length : 0;
         if (g || pr) {
-          const chip = el('span', 'proj-chip sandbox', '🧠 memory loaded');
+          const chip = elIcon('span', 'proj-chip sandbox', CCEIcons.svg('brain', 13) + ' memory loaded');
           chip.title = 'Auto-imported from your claude config:\n'
             + '~/.claude/CLAUDE.md — ' + g.toLocaleString() + ' chars'
             + (pr ? '\n' + r.project.path + ' — ' + pr.toLocaleString() + ' chars' : '')
@@ -2284,7 +2303,7 @@ const Chat = (() => {
     const bad = servers.filter(s => s.status !== 'connected');
     if (bad.length) {
       chat.msgs.appendChild(el('div', 'sys-note',
-        '⚠ MCP not ready: ' + bad.map(s => s.name + ' (' + s.status + ')').join(', ') + ' — open ⧉ mcp to reconnect'));
+        '⚠ MCP not ready: ' + bad.map(s => s.name + ' (' + s.status + ')').join(', ') + ' — run /mcp to reconnect'));
       scrollDownSoft(chat);
     }
     ccx.invoke('tools:check').then((r) => {
@@ -2292,7 +2311,7 @@ const Chat = (() => {
       const missing = (r.tools || []).filter(t => !t.found).map(t => t.name);
       if (missing.length) {
         chat.msgs.appendChild(el('div', 'sys-note',
-          '⚠ missing tools some skills need: ' + missing.join(', ') + ' — install them from ⚡ skills'));
+          '⚠ missing tools some skills need: ' + missing.join(', ') + ' — install them from the skills panel'));
         scrollDownSoft(chat);
       }
     }).catch(() => {});
@@ -2304,7 +2323,7 @@ const Chat = (() => {
     if (!servers.length) return;
     const row = el('div', 'chat-mcp-chips');
     for (const s of servers) {
-      const chip = el('span', 'chip mcp-chip ' + (s.status === 'connected' ? 'mcp-ok' : ''), `⧉ ${s.name}`);
+      const chip = elIcon('span', 'chip mcp-chip ' + (s.status === 'connected' ? 'mcp-ok' : ''), CCEIcons.svg('plug2', 13) + ' ' + s.name);
       chip.title = 'MCP server: ' + s.name + ' (' + s.status + ')';
       row.appendChild(chip);
     }
@@ -2422,7 +2441,7 @@ const Chat = (() => {
           blk.text += d.thinking || '';
           blk.body.textContent = blk.text;
           const pill = blk.node.querySelector('.think-pill');
-          if (pill) pill.textContent = '✻ Thinking… ' + ((Date.now() - blk.t0) / 1000).toFixed(0) + 's';
+          if (pill) pill.textContent = CCEIcons.svg('thought', 13) + ' Thinking… ' + ((Date.now() - blk.t0) / 1000).toFixed(0) + 's';
         } else if (d.type === 'input_json_delta') {
           blk.json += d.partial_json || '';
           const card = live.tools.get(blk.toolId);
@@ -2452,7 +2471,7 @@ const Chat = (() => {
         } else if (blk.type === 'thinking') {
           const secs = ((Date.now() - (blk.t0 || Date.now())) / 1000).toFixed(0);
           const pill = blk.node.querySelector('.think-pill');
-          if (pill) pill.textContent = '✻ Thought for ' + secs + 's — click to view';
+          if (pill) pill.textContent = CCEIcons.svg('thought', 13) + ' Thought for ' + secs + 's — click to view';
           blk.node.open = false;   // collapse into the desktop-style summary pill
         }
         break;
@@ -2474,7 +2493,7 @@ const Chat = (() => {
     const d = el('details', 'thinking-block');
     d.open = true;
     const s = el('summary');
-    s.appendChild(el('span', 'think-pill', '✻ ' + label));
+    s.appendChild(elIcon('span', 'think-pill', CCEIcons.svg('thought', 13) + ' ' + label));
     d.appendChild(s);
     d.appendChild(el('div', 'think-body'));
     return d;
@@ -2490,7 +2509,7 @@ const Chat = (() => {
   function makeGroup(host, name) {
     const wrap = el('details', 'tool-group');
     const sum = el('summary', 'group-head');
-    sum.appendChild(el('span', 'tool-ico', toolIcon(name)));
+    sum.appendChild(elIcon('span', 'tool-ico', toolIcon(name)));
     const countEl = el('span', 'group-count', '');
     sum.appendChild(countEl);
     wrap.appendChild(sum);
@@ -2581,7 +2600,7 @@ const Chat = (() => {
     const card = el('div', 'tool-card kind-' + toolKind(name));
     const head = el('div', 'tool-head');
     const dot = el('span', 'tool-dot running');
-    const icon = el('span', 'tool-ico', toolIcon(name));
+    const icon = elIcon('span', 'tool-ico', toolIcon(name));
     const title = el('span', 'tool-title mono', toolTitle(name, input));
     const chip = el('span', 'chip', name.startsWith('mcp__') ? 'mcp' : toolKind(name));
     head.appendChild(dot); head.appendChild(icon); head.appendChild(title); head.appendChild(chip);
@@ -2924,7 +2943,7 @@ const Chat = (() => {
     const card = el('div', 'perm-card' + (toolName === 'ExitPlanMode' ? ' plan' : ''));
     card.dataset.rid = requestId;
     const head = el('div', 'perm-head');
-    head.appendChild(el('span', 'tool-ico', toolIcon(toolName)));
+    head.appendChild(elIcon('span', 'tool-ico', toolIcon(toolName)));
 
     // Use the engine's own prompt sentence when it sends one; only fall back to
     // reconstructing from the tool name. #28
@@ -3064,7 +3083,7 @@ const Chat = (() => {
     const answers = {};
     const card = el('div', 'perm-card ask');
     const head = el('div', 'perm-head');
-    head.appendChild(el('span', 'tool-ico', toolIcon('AskUserQuestion')));
+    head.appendChild(elIcon('span', 'tool-ico', toolIcon('AskUserQuestion')));
     const t = el('span', '', '');
     t.innerHTML = '<b>Claude has questions</b> — answer to continue';
     head.appendChild(t);

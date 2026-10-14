@@ -12,6 +12,21 @@ function el(tag, cls, text) {
   if (text !== undefined) n.textContent = text;
   return n;
 }
+
+/**
+ * An element whose content is trusted markup (an inline SVG from CCEIcons).
+ *
+ * `el()` assigns textContent on purpose — that is what makes it safe to pass
+ * model and server strings. Icons are the one thing that must be parsed, so they
+ * get their own constructor instead of turning `el()` into an innerHTML helper
+ * for everyone. #54
+ */
+function elIcon(tag, cls, markup) {
+  const n = document.createElement(tag);
+  if (cls) n.className = cls;
+  n.innerHTML = String(markup || '');
+  return n;
+}
 function toast(msg, kind = '') {
   const t = el('div', 'toast ' + kind, msg);
   // An error toast is the app telling you something went wrong; a screen-reader
@@ -23,6 +38,22 @@ function toast(msg, kind = '') {
 }
 // Real HTML escaping: several call sites interpolate provider- and
 // server-supplied strings into innerHTML, and MCP server names are untrusted. #7
+/**
+ * Fill every <span data-icon="name"> in the static markup with its SVG. The
+ * HTML stays readable and the icon set stays in one file; emoji cannot do this
+ * because they cannot inherit colour or follow the theme. #54
+ */
+function paintDeclaredIcons(root) {
+  const scope = root || document;
+  for (const host of scope.querySelectorAll('[data-icon]')) {
+    if (host.dataset.iconPainted) continue;
+    const svg = CCEIcons.svg(host.dataset.icon);
+    if (!svg) continue;
+    host.innerHTML = svg;
+    host.dataset.iconPainted = '1';
+  }
+}
+
 function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, (c) => (
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -662,7 +693,7 @@ async function createSession(opts) {
 
   const tab = el('div', 'tab active');
   tab.appendChild(el('span', '', res.label));
-  const closeBtn = el('button', 'close', '✕');
+  const closeBtn = elIcon('button', 'close', CCEIcons.svg('close', 13));
   closeBtn.title = 'Close session';
   closeBtn.setAttribute('aria-label', 'Close session');
   tab.appendChild(closeBtn);
@@ -984,7 +1015,7 @@ function renderProviders() {
   overlay.setAttribute('role', 'dialog');
   overlay.setAttribute('aria-modal', 'true');
     const modal = el('div', 'modal');
-    modal.appendChild(el('h3', '', '⚙ Model manager — ' + p.name));
+    modal.appendChild(elIcon('h3', '', CCEIcons.svg('gear', 14) + ' Model manager — ' + p.name));
     modal.appendChild(el('div', 'hint', 'Load models into memory with a context size, or unload them to free VRAM. The context size applies while the model stays loaded — chats use it automatically.'));
 
     const loadedBox = el('div', 'settings-card');
@@ -1920,6 +1951,7 @@ function renderClaudeBanner() {
 function wireChrome() {
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.addEventListener('click', () => switchView(b.dataset.view)));
+  paintDeclaredIcons();
   $('#qa-new').addEventListener('click', openNewSessionModal);
   $('#btn-convo-drop').addEventListener('click', () => toggleConversations());
   $('#qa-resume').addEventListener('click', resumeLatest);

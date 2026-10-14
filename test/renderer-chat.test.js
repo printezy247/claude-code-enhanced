@@ -301,7 +301,7 @@ describe('copy buttons', () => {
     await flush(4);
     const call = h.calls.filter(c => c.channel === 'clipboard:write').pop();
     expect(call.payload.text).toBe('copy me please');
-    expect(btn.textContent).toBe('✓');
+    expect(btn.innerHTML).toContain('ic-check');
   });
 
   it('uses the main process too when navigator.clipboard rejects', async () => {
@@ -312,17 +312,17 @@ describe('copy buttons', () => {
     click(btn);
     await flush(4);
     expect(h.calls.filter(c => c.channel === 'clipboard:write').pop().payload.text).toBe('second reply');
-    expect(btn.textContent).toBe('✓');
+    expect(btn.innerHTML).toContain('ic-check');
   });
 
-  it('shows ✗ instead of failing silently when nothing can copy', async () => {
+  it('shows a close icon instead of failing silently when nothing can copy', async () => {
     const chat = h.window.Chat.chats.get('c1');
     h.window.ccx.invoke = async () => ({ ok: false });
     assistant('nope');
     const btn = [...chat.msgs.querySelectorAll('.assistant-msg .msg-copy')].pop();
     click(btn);
     await flush(4);
-    expect(btn.textContent).toBe('✗');
+    expect(btn.innerHTML).toContain('ic-close');
   });
 });
 

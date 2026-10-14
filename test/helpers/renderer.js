@@ -79,8 +79,8 @@ function loadRenderer(opts = {}) {
   // Each source's top-level `const` is then hoisted into that shared scope, and
   // the tail re-publishes the names tests need onto window.
   // src/shared/*.js are real <script> tags in index.html (stripped above), so
-  // load them here too: chat.js reads window.CCEThink, providers.js window.CCETpl.
-  for (const f of ['think.js', 'tpl.js']) {
+  // load them here too: chat.js reads window.CCEIcons/CCEThink, providers.js CCETpl.
+  for (const f of ['icons.js', 'think.js', 'tpl.js']) {
     const s = fs.readFileSync(path.join(ROOT, 'src', 'shared', f), 'utf8');
     window.eval(s + '\n//# sourceURL=shared/' + f);
   }
@@ -99,6 +99,8 @@ window.tabRegistry = tabRegistry;
 window.__activate = window.__activate;
 window.killSession = killSession;
 window.recentlyClosedCount = () => recentlyClosed.length;
+window.paintDeclaredIcons = paintDeclaredIcons;
+window.elIcon = elIcon;
 window.parseForceCtx = (typeof parseForceCtx !== 'undefined') ? parseForceCtx : undefined;
 `);
 

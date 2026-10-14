@@ -12,15 +12,15 @@
   <div id="app">
     <aside id="sidebar">
       <div class="logo">
-        <span class="logo-mark">❯</span>
+        <span class="logo-mark" data-icon="terminal"></span>
         <span class="logo-text">Claude Code<br /><em>Enhanced</em></span>
       </div>
       <nav id="nav" aria-label="Sections">
-        <button class="nav-btn active" data-view="conversations" aria-current="page"><span class="ico" aria-hidden="true">▤</span><span>Conversations</span><span id="sess-count" class="badge" role="status" aria-live="polite" aria-label="open conversations">0</span></button>
-        <button class="nav-btn" data-view="usage"><span class="ico" aria-hidden="true">▤</span><span>Usage</span></button>
-        <button class="nav-btn" data-view="providers"><span class="ico" aria-hidden="true">⬡</span><span>Providers</span></button>
-        <button class="nav-btn" data-view="connectors"><span class="ico" aria-hidden="true">⧉</span><span>Connectors</span></button>
-        <button class="nav-btn" data-view="settings"><span class="ico" aria-hidden="true">⚙</span><span>Settings</span></button>
+        <button class="nav-btn active" data-view="conversations" aria-current="page"><span class="ico" data-icon="layers"></span><span>Conversations</span><span id="sess-count" class="badge" role="status" aria-live="polite" aria-label="open conversations">0</span></button>
+        <button class="nav-btn" data-view="usage"><span class="ico" data-icon="chart"></span><span>Usage</span></button>
+        <button class="nav-btn" data-view="providers"><span class="ico" data-icon="hex"></span><span>Providers</span></button>
+        <button class="nav-btn" data-view="connectors"><span class="ico" data-icon="plug2"></span><span>Connectors</span></button>
+        <button class="nav-btn" data-view="settings"><span class="ico" data-icon="gear"></span><span>Settings</span></button>
       </nav>
       <div id="claude-banner" class="hidden"></div>
       <div class="sidebar-foot" id="foot-info"></div>
@@ -30,7 +30,7 @@
       <section id="view-conversations" class="view active">
         <div id="tabbar">
           <button id="btn-convo-drop" title="Conversations — past and open chats (Ctrl+B)">
-            <span class="ico" aria-hidden="true">▤</span><span>Conversations</span><span class="caret" aria-hidden="true">▾</span>
+            <span class="ico" data-icon="layers"></span><span>Conversations</span><span class="caret" data-icon="chevron"></span>
           </button>
           <div id="tabs"></div>
         </div>
@@ -53,8 +53,8 @@
 
       <section id="view-usage" class="view">
         <div class="panel-head">
-          <h2>📊 Usage</h2>
-          <button id="btn-usage-refresh" class="btn">↻ Refresh</button>
+          <h2><span data-icon="chart"></span> Usage</h2>
+          <button id="btn-usage-refresh" class="btn"><span data-icon="refresh"></span> Refresh</button>
         </div>
         <div class="banner">
           Daily tokens and message counts parsed from the transcripts this machine stores under
@@ -128,6 +128,7 @@
   <link rel="stylesheet" href="vendor/monaco.css">
   <script src="vendor/monaco-env.js"></script>
   <script src="vendor/monaco.js"></script>
+  <script src="../shared/icons.js"></script>
   <script src="../shared/think.js"></script>
   <script src="../shared/tpl.js"></script>
   <script src="chat.js"></script>
