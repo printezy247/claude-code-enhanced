@@ -86,14 +86,16 @@ function transcriptItems(records) {
     if (!msg || !msg.content) continue;
     if (j.type === 'user') {
       const c = msg.content;
+      // Keep the uuid: it is what forkSession({ upToMessageId }) needs, so the
+      // transcript can branch from any message rather than only the latest.
       if (typeof c === 'string') {
         const t = c.replace(/<[^>]+>/g, '').trim();
-        if (t) items.push({ t: 'user', text: t });
+        if (t) items.push({ t: 'user', text: t, uuid: j.uuid || null });
       } else if (Array.isArray(c)) {
         for (const b of c) {
           if (b.type === 'text') {
             const t = b.text.replace(/<[^>]+>/g, '').trim();
-            if (t) items.push({ t: 'user', text: t });
+            if (t) items.push({ t: 'user', text: t, uuid: j.uuid || null });
           } else if (b.type === 'tool_result') {
             const it = tools.get(b.tool_use_id);
             if (it) {

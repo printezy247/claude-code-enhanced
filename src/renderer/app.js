@@ -160,9 +160,11 @@ function renderConversationList() {
   const folder = (document.querySelector('#convo-drop .convo-filter') || {}).value || '';
   const sort = (document.querySelector('#convo-drop .convo-sort') || {}).value || 'new';
 
-  let items = convoSessions.filter((s) => !q
+  // Archived conversations stay on disk but out of the way until asked for.
+  const showArchived = (document.querySelector('#convo-drop .convo-archived') || {}).checked === true;
+  let items = convoSessions.filter((s) => (showArchived || s.tag !== 'archived') && (!q
     || String(s.preview || '').toLowerCase().includes(q)
-    || String(s.cwd || s.folder || '').toLowerCase().includes(q));
+    || String(s.cwd || s.folder || '').toLowerCase().includes(q)));
   if (folder) items = items.filter((s) => String(s.cwd || s.folder || '~') === folder);
 
   // Sort first, then bucket: the bucket pass preserves this order inside groups.
@@ -280,6 +282,31 @@ function openConvoMenu(anchor, s, cwd) {
     toggleConversations(false);
     switchView('conversations');
   });
+  add('Rename…', 'name it yourself', async () => {
+    const title = window.prompt('Name this conversation', s.preview || '');
+    if (!title || !title.trim()) return;
+    const r = await ccx.invoke('session:rename', { sessionId: s.sessionId, title: title.trim(), cwd });
+    if (!r.ok) return toast(r.error || 'rename failed', 'err');
+    s.preview = title.trim();
+    s.renamed = true;
+    renderConversationList();
+    toast('Renamed', 'ok');
+  });
+  // Archive hides the row without touching the transcript, so a mistake is
+  // always recoverable — unlike Delete below.
+  add(s.tag === 'archived' ? 'Unarchive' : 'Archive', s.tag === 'archived' ? 'bring it back' : 'hide, keep on disk',
+    async () => {
+      const next = s.tag === 'archived' ? '' : 'archived';
+      const r = await ccx.invoke('session:tag', { sessionId: s.sessionId, tag: next, cwd });
+      if (!r.ok) return toast(r.error || 'failed', 'err');
+      if (next) {
+        convoSessions = convoSessions.filter((x) => x.sessionId !== s.sessionId);
+      } else {
+        s.tag = '';
+      }
+      renderConversationList();
+      toast(next ? 'Archived — find it under “show archived”' : 'Restored', 'ok');
+    });
   add('Transcript', 'read it first', () => showTranscript(s, cwd));
   add('Export', 'markdown file', async () => {
     const r = await ccx.invoke('chat:export', { cwd, sessionId: s.sessionId });
@@ -323,16 +350,42 @@ async function showTranscript(s, cwd) {
   const modal = el('div', 'modal wide');
   modal.appendChild(el('h3', '', (s.preview || 'Conversation').slice(0, 90)));
   modal.appendChild(el('div', 'hint', cwd + ' · ' + new Date(s.mtime).toLocaleString()));
-  const body = el('pre', 'transcript-pre', 'loading…');
+  const body = el('div', 'transcript-pre');
+  body.textContent = 'loading…';
   modal.appendChild(body);
+  let items = [];
   const r = await ccx.invoke('chat:transcript', { cwd, sessionId: s.sessionId });
   if (r && r.ok && r.items) {
-    body.textContent = r.items.map((it) => {
-      if (it.t === 'user') return '## You\n' + it.text;
-      if (it.t === 'assistant') return '## Claude\n' + it.text;
-      if (it.t === 'thinking') return '(thinking) ' + it.text.slice(0, 400);
-      return '[' + it.name + '] ' + JSON.stringify(it.input || {}).slice(0, 300);
-    }).join('\n\n') || '(empty)';
+    items = r.items;
+    body.innerHTML = '';
+    // Each user message carries the uuid forkSession needs, so "branch from
+    // here" is available at any point — not just the latest message. #52
+    for (const it of items) {
+      const row = el('div', 'tx-row tx-' + it.t);
+      const txt = it.t === 'user' ? it.text
+        : it.t === 'assistant' ? it.text
+          : it.t === 'thinking' ? '(thinking) ' + String(it.text).slice(0, 400)
+            : '[' + it.name + '] ' + JSON.stringify(it.input || {}).slice(0, 300);
+      row.appendChild(el('div', 'tx-who', it.t === 'user' ? 'You' : it.t === 'assistant' ? 'Claude' : it.t));
+      row.appendChild(el('div', 'tx-text', String(txt || '')));
+      if (it.t === 'user' && it.uuid) {
+        const br = el('button', 'btn tiny', 'branch from here');
+        br.title = 'Copy this conversation up to this message, then continue in a new session';
+        br.addEventListener('click', async () => {
+          br.disabled = true;
+          const f = await ccx.invoke('session:fork', { sessionId: s.sessionId, upToMessageId: it.uuid, cwd });
+          if (!f.ok) { toast(f.error || 'fork failed', 'err'); br.disabled = false; return; }
+          overlay.remove();
+          toast('Branched — opening the copy', 'ok');
+          Chat.createSession({ cwd, resume: f.sessionId });
+          toggleConversations(false);
+          switchView('conversations');
+        });
+        row.appendChild(br);
+      }
+      body.appendChild(row);
+    }
+    if (!items.length) body.appendChild(el('div', 'hint', '(empty)'));
   } else {
     body.textContent = 'could not read this transcript' + (r && r.error ? ': ' + r.error : '');
   }
@@ -420,6 +473,9 @@ function ensureConvoDrop() {
       <button class="btn small" id="btn-convo-hide" title="Close (Ctrl+B)">✕</button>
     </div>
     <div class="convo-list" id="convo-list"></div>
+    <label class="convo-archived-wrap">
+      <input class="convo-archived" type="checkbox" /> show archived
+    </label>
     <div class="convo-foot" id="convo-foot"></div>`;
   document.querySelector('#view-conversations').appendChild(drop);
   drop.querySelector('#btn-convo-refresh').addEventListener('click', () => loadConversationList());
@@ -427,6 +483,7 @@ function ensureConvoDrop() {
   drop.querySelector('.convo-search').addEventListener('input', () => renderConversationList());
   drop.querySelector('.convo-sort').addEventListener('change', () => renderConversationList());
   drop.querySelector('.convo-filter').addEventListener('change', () => renderConversationList());
+  drop.querySelector('.convo-archived').addEventListener('change', () => renderConversationList());
   // Clicking outside closes it; Escape is handled globally.
   document.addEventListener('mousedown', (e) => {
     const d = document.querySelector('#convo-drop');
@@ -607,9 +664,16 @@ async function createSession(opts) {
 
 async function killSession(id) {
   const meta = tabRegistry.get(id);
-  if (meta && meta.kind === 'chat') { await Chat.closeChat(id); return; }
+  if (meta && meta.kind === 'chat') {
+    // Remember it first: closing a chat is how you switch away, and being able
+    // to bring the last one back is expected in every tabbed app.
+    pushRecentlyClosed({ kind: 'chat', cwd: meta.cwd, sessionId: meta.sessionId || null });
+    await Chat.closeChat(id);
+    return;
+  }
   const s = state.sessions.get(id);
   if (!s) return;
+  pushRecentlyClosed({ kind: 'pty', cwd: s.cwd, command: s.command, args: s.args });
   if (s.alive) await ccx.invoke('session:kill', { id });
   s.term.dispose();
   s.pane.remove();
@@ -624,10 +688,95 @@ async function killSession(id) {
   }
 }
 
+/* ================= conversations navigation ================= */
+
+// Closed tabs, newest last, so Ctrl+Shift+T-style reopening works the way every
+// other tabbed app behaves. Capped — this is a convenience, not an archive.
+const RECENT_MAX = 12;
+let recentlyClosed = [];
+
+/** Remember a closed tab so "↶ Closed tab" can bring it back. */
+function pushRecentlyClosed(entry) {
+  if (!entry || !entry.kind) return;
+  recentlyClosed = recentlyClosed.filter((e) => e.kind + ':' + e.cwd !== entry.kind + ':' + entry.cwd);
+  recentlyClosed.push(entry);
+  if (recentlyClosed.length > RECENT_MAX) recentlyClosed.shift();
+  paintReopenButton();
+}
+
+function paintReopenButton() {
+  const b = document.querySelector('#qa-reopen');
+  if (!b) return;
+  const last = recentlyClosed[recentlyClosed.length - 1];
+  b.disabled = !last;
+  if (last) {
+    b.textContent = '↶ ' + (last.kind === 'pty' ? 'Terminal' : 'Chat') + (last.cwd ? ' · ' + basenameOf(last.cwd) : '');
+    b.title = 'Reopen ' + (last.kind === 'pty' ? 'terminal' : 'chat') + ' in ' + (last.cwd || '~');
+  }
+}
+
+async function reopenLastClosed() {
+  const last = recentlyClosed.pop();
+  paintReopenButton();
+  if (!last) return;
+  if (last.kind === 'pty') await createSession({ cwd: last.cwd, command: last.command, args: last.args });
+  else await Chat.createSession({ cwd: last.cwd, resume: last.sessionId || undefined });
+}
+
+/**
+ * Resume the newest conversation for the active folder. Cheaper than browsing
+ * the list for the common "carry on where I left off".
+ */
+async function resumeLatest() {
+  const btn = document.querySelector('#qa-resume');
+  if (btn) { btn.disabled = true; btn.textContent = '↻ looking…'; }
+  try {
+    const active = tabRegistry.get(state.activeId);
+    const cwd = (active && active.cwd) || (state.settings && state.settings.defaultCwd) || '';
+    const r = await ccx.invoke('chat:history', { cwd });
+    const rows = (r && r.sessions) || [];
+    const mine = rows.filter((s) => s.sessionId && !tabRegistryHas(s.sessionId));
+    if (!mine.length) {
+      toast(rows.length ? 'That conversation is already open' : 'No past conversation in this folder yet', '');
+      return;
+    }
+    await Chat.createSession({ cwd, resume: mine[0].sessionId });
+  } catch (err) {
+    toast(String((err && err.message) || err), 'err');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '↻ Resume latest'; }
+  }
+}
+
+const tabRegistryHas = (sessionId) => [...tabRegistry.values()].some((m) => m.sessionId === sessionId);
+
+/**
+ * The sidebar badge stops being a plain count: it says whether any tab is
+ * waiting on you (a permission prompt), working, or just open. That is the
+ * distinction users of the newer agent desktops rely on to know where to look.
+ */
 function updateSessionCount() {
-  $('#sess-count').textContent = String(tabRegistry.size);
+  const badge = $('#sess-count');
+  if (!badge) return;
+  const nav = badge.closest('.nav-btn');
+  const metas = [...tabRegistry.values()];
+  const chatMetas = metas.filter((m) => m.kind === 'chat');
+  const needsYou = chatMetas.filter((m) => m.needsYou).length;
+  const busy = chatMetas.filter((m) => m.busy).length;
+  badge.textContent = String(tabRegistry.size);
+  badge.classList.toggle('attn', needsYou > 0);
+  badge.classList.toggle('busy', needsYou === 0 && busy > 0);
+  if (nav) {
+    nav.classList.toggle('needs-you', needsYou > 0);
+    nav.classList.toggle('busy-dot', needsYou === 0 && busy > 0);
+    nav.title = needsYou > 0
+      ? needsYou + ' tab' + (needsYou === 1 ? '' : 's') + ' waiting on you'
+      : busy > 0 ? busy + ' tab' + (busy === 1 ? '' : 's') + ' working' : '';
+  }
 }
 window.updateTabCount = updateSessionCount;
+/** Chat.js raises this when a tab needs the user, or stops needing them. */
+window.updateNavState = updateSessionCount;
 
 function updateStatusbar(sess) {
   const p = sess.provider;
@@ -1734,8 +1883,12 @@ function renderClaudeBanner() {
 function wireChrome() {
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.addEventListener('click', () => switchView(b.dataset.view)));
-  $('#btn-new-session').addEventListener('click', openNewSessionModal);
+  $('#qa-new').addEventListener('click', openNewSessionModal);
   $('#btn-convo-drop').addEventListener('click', () => toggleConversations());
+  $('#qa-resume').addEventListener('click', resumeLatest);
+  $('#qa-browse').addEventListener('click', () => toggleConversations());
+  $('#qa-reopen').addEventListener('click', reopenLastClosed);
+  paintReopenButton();
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
   $('#btn-add-provider').addEventListener('click', () => (window.ProvidersUI ? ProvidersUI.openConnect() : openProviderEditor(null)));
   $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);

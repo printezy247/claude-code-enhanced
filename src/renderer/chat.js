@@ -447,6 +447,22 @@ const Chat = (() => {
   };
 
   function registerTab(id, meta) { if (window.__tabs) window.__tabs.set(id, meta); }
+
+  /**
+   * Publish what this tab needs from the user, so the sidebar can say "waiting
+   * on you" instead of just counting tabs. A permission prompt is the case that
+   * matters: the turn is blocked and only this user can unblock it.
+   */
+  function publishTabState(chat) {
+    const meta = window.__tabs && window.__tabs.get(chat.id);
+    if (!meta) return;
+    const busy = !!chat.busy;
+    const needsYou = !!(chat.permCount > 0) || (!!chat.queued && chat.queued > 0);
+    if (meta.busy === busy && meta.needsYou === needsYou) return;
+    meta.busy = busy;
+    meta.needsYou = needsYou;
+    if (typeof window.updateNavState === 'function') window.updateNavState();
+  }
   function activateChat(id) {
     const chat = chats.get(id);
     if (!chat) return;
@@ -1865,6 +1881,7 @@ const Chat = (() => {
 
   function setBusy(chat, busy) {
     chat.busy = busy;
+    publishTabState(chat);
     chat.dot.classList.toggle('busy', busy);
     chat.stopBtn.classList.toggle('hidden', !busy);
     chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
@@ -2185,6 +2202,7 @@ const Chat = (() => {
   // is still coming.
   function showQueued(chat, n) {
     chat.queued = n;
+    publishTabState(chat);
     chat.queuedNote?.remove();
     chat.queuedNote = null;
     if (n > 0) {
@@ -3030,6 +3048,7 @@ const Chat = (() => {
     } else {
       chat.permSlot.removeAttribute('title');
     }
+    publishTabState(chat);   // a pending prompt is what "waiting on you" means
   }
 
   // AskUserQuestion arrives as a permission request, but it is a question, not

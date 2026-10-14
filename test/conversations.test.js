@@ -135,14 +135,14 @@ describe('filter and sort', () => {
 });
 
 describe('per-row actions menu', () => {
-  it('offers open, fork, transcript, export, new, delete', async () => {
+  it('offers open, fork, rename, archive, transcript, export, new, delete', async () => {
     const h = await boot();
     const more = rows(h.window)[0].querySelector('.convo-more');
     more.dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
     const menu = h.window.document.querySelector('.convo-menu');
     expect(menu).toBeTruthy();
     const labels = [...menu.querySelectorAll('.cm-label')].map(b => b.textContent);
-    expect(labels).toEqual(['Open', 'Fork', 'Transcript', 'Export', 'New chat in this folder', 'Delete']);
+    expect(labels).toEqual(['Open', 'Fork', 'Rename…', 'Archive', 'Transcript', 'Export', 'New chat in this folder', 'Delete']);
     h.window.close();
   });
 

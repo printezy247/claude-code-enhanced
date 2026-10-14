@@ -121,12 +121,6 @@ body {
   font-size: 13px; padding: 0 2px; border-radius: 4px;
 }
 .tab .close:hover { color: var(--danger); background: var(--bg4); }
-#btn-new-session {
-  background: none; border: 1px dashed var(--border); color: var(--muted);
-  border-radius: 8px; padding: 5px 12px; cursor: pointer; font: inherit; font-size: 12.5px;
-  margin-bottom: 5px;
-}
-#btn-new-session:hover { color: var(--accent); border-color: var(--accent); }
 
 #terminals { flex: 1; min-height: 0; position: relative; background: #0f0f15; }
 .term-pane { position: absolute; inset: 0; padding: 6px 2px 2px 8px; display: none; }
@@ -742,9 +736,36 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 #btn-convo-drop {
   background: var(--bg2); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; flex: none;
+  display: flex; align-items: center; gap: 7px; margin-bottom: 5px;
 }
 #btn-convo-drop:hover { border-color: var(--accent); }
 #btn-convo-drop.active { background: var(--accent-soft); border-color: var(--accent); }
+#btn-convo-drop .caret { font-size: 9px; opacity: .6; transition: transform .15s; }
+#btn-convo-drop.active .caret { transform: rotate(180deg); opacity: .9; }
+
+/* Quick actions under the tab bar — the three things you do between chats. */
+.convo-quick {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--bg);
+}
+.convo-quick .spacer { flex: 1 1 auto; }
+.convo-quick .btn.ghost { background: none; border-color: var(--border); color: var(--muted); }
+.convo-quick .btn.ghost:not(:disabled):hover { color: var(--accent); border-color: var(--accent); }
+.convo-quick .btn:disabled { opacity: .4; cursor: default; }
+.convo-quick .btn.primary { box-shadow: 0 1px 0 rgba(255, 255, 255, .08) inset; }
+.convo-quick .hint { font-size: 11px; white-space: nowrap; }
+
+/* Nav state: the sidebar badge stops being a plain count. */
+.nav-btn[data-view="conversations"] { position: relative; }
+.nav-btn .badge.attn { background: var(--warn); color: #1b1400; font-weight: 700; }
+.nav-btn .badge.busy { background: var(--accent); color: #1b0d06; }
+.nav-btn.needs-you::after {
+  content: ''; position: absolute; top: 6px; right: 6px; width: 7px; height: 7px;
+  border-radius: 50%; background: var(--warn); box-shadow: 0 0 0 2px var(--bg);
+}
+@keyframes cce-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .45; } }
+.nav-btn.busy-dot .badge.busy { animation: cce-pulse 1.4s ease-in-out infinite; }
+
 #view-conversations { position: relative; }
 #convo-drop {
   position: absolute; top: 46px; left: 10px; z-index: 50;
@@ -763,6 +784,10 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 }
 #convo-drop .convo-filter { flex: 2 1 0; }
 #convo-drop .convo-list { flex: 1; overflow: auto; padding: 2px 6px 8px; min-height: 120px; }
+#convo-drop .convo-archived-wrap {
+  display: flex; align-items: center; gap: 6px; padding: 4px 12px;
+  font-size: 11.5px; color: var(--muted);
+}
 #convo-drop .convo-foot { padding: 6px 10px; border-top: 1px solid var(--border); font-size: 11px;
   color: var(--muted); }
 #convo-drop .convo-group { margin-bottom: 10px; }
@@ -949,3 +974,16 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   margin: -4px 0 8px; font-size: 11.5px;
 }
 .tool-spill .hint.mono { overflow-wrap: anywhere; }
+
+/* ---------- transcript modal: branch from any message (#52) ---------- */
+.transcript-pre {
+  max-height: 52vh; overflow: auto; display: flex; flex-direction: column;
+  gap: 2px; padding: 10px 12px; background: var(--bg); border: 1px solid var(--border);
+  border-radius: 10px; font-size: 12px; color: var(--muted);
+}
+.tx-row { padding: 6px 8px; border-radius: 8px; }
+.tx-row.tx-user { background: var(--accent-soft); }
+.tx-who { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; margin-bottom: 2px; }
+.tx-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
+.tx-row .btn.tiny { margin-top: 6px; opacity: 0; transition: opacity .12s; }
+.tx-row:hover .btn.tiny, .tx-row:focus-within .btn.tiny { opacity: 1; }

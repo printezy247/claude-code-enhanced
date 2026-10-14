@@ -261,6 +261,10 @@ function classifyNetError(err) {
   return m;
 }
 
+// Session ids come back from a renderer that renders untrusted model output, so
+// every session-management call re-checks the shape before touching the disk.
+const isSessionIdLike = (id) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(id || ''));
+
 const MIME_BY_EXT = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
   '.gif': 'image/gif', '.webp': 'image/webp',
@@ -392,6 +396,16 @@ function createWindow() {
         ).then(r => console.log('CCE_SMOKE: probe ' + r))
           .catch(e => console.log('CCE_SMOKE: probe failed ' + e));
       }, 4000);
+      const shoot2 = async (file) => {
+        try {
+          if (!win || win.isDestroyed()) return;
+          await win.webContents.executeJavaScript('document.querySelector("#convo-drop").classList.add("hidden")');
+          await new Promise(r => setTimeout(r, 300));
+          const img = await win.webContents.capturePage();
+          fs.writeFileSync(file, img.toPNG());
+          console.log('CCE_SMOKE: shot2', file);
+        } catch (e) { console.error('CCE_SMOKE: capture2 failed:', e); }
+      };
       const shoot = async (file) => {
         try {
           if (!win || win.isDestroyed()) return;
@@ -548,7 +562,11 @@ function createWindow() {
           setTimeout(async () => { await shoot(out); app.quit(); }, 60000);
         }, Number(process.env.CCE_SMOKE_SEND_DELAY || 12000));
       } else {
-        setTimeout(async () => { await shoot(out); app.quit(); }, Number(process.env.CCE_SMOKE_DELAY || 6000));
+        setTimeout(async () => {
+          await shoot(out);
+          await shoot2(out.replace(/\.png$/, '.quickbar.png'));
+          app.quit();
+        }, Number(process.env.CCE_SMOKE_DELAY || 6000));
       }
     });
   }
@@ -1351,6 +1369,48 @@ function registerIpc() {
   handle('chat:delete', async ({ cwd, sessionId }) => chats.deleteSession(cwd, sessionId));
   handle('chat:deleteFolder', async ({ cwd }) => chats.deleteFolder(cwd));
   handle('chat:fork', async ({ id }) => chats.forkParams(id));
+
+  // ----- session management through the SDK (#52) -----
+  // Rename, tag (archive) and branch-from-a-message all used to be impossible
+  // from CCE: a /rename done in a terminal session showed up in the list with
+  // the old title, and there was no way to hide or branch a conversation.
+  handle('session:rename', async ({ sessionId, title, cwd }) => {
+    if (!isSessionIdLike(sessionId)) throw new Error('invalid session id');
+    const { renameSession } = await chats.sdk();
+    if (typeof renameSession !== 'function') throw new Error('this SDK build cannot rename sessions');
+    await renameSession(sessionId, String(title || '').slice(0, 200), cwd ? { dir: cwd } : undefined);
+    return {};
+  });
+
+  // Archive is a tag, not a delete: the transcript stays on disk and the row can
+  // be unhidden. Deleting is still one click away in the same menu.
+  handle('session:tag', async ({ sessionId, tag, cwd }) => {
+    if (!isSessionIdLike(sessionId)) throw new Error('invalid session id');
+    const { tagSession } = await chats.sdk();
+    if (typeof tagSession !== 'function') throw new Error('this SDK build cannot tag sessions');
+    await tagSession(sessionId, tag ? String(tag).slice(0, 64) : null, cwd ? { dir: cwd } : undefined);
+    return {};
+  });
+
+  handle('session:fork', async ({ sessionId, upToMessageId, title, cwd }) => {
+    if (!isSessionIdLike(sessionId)) throw new Error('invalid session id');
+    const { forkSession } = await chats.sdk();
+    if (typeof forkSession !== 'function') throw new Error('this SDK build cannot fork sessions');
+    const opts = {};
+    if (cwd) opts.dir = cwd;
+    if (upToMessageId) opts.upToMessageId = String(upToMessageId);
+    if (title) opts.title = String(title).slice(0, 200);
+    const res = await forkSession(sessionId, opts);
+    return { sessionId: res.sessionId, title: res.title || null };
+  });
+
+  // Subagent transcripts, for a drill-down of what a Task call actually did.
+  handle('session:subagents', async ({ sessionId }) => {
+    if (!isSessionIdLike(sessionId)) throw new Error('invalid session id');
+    const { listSubagents } = await chats.sdk();
+    if (typeof listSubagents !== 'function') return { agents: [] };
+    return { agents: (await listSubagents(sessionId)) || [] };
+  });
 
   // Memory (CLAUDE.md) — view/edit what the engine already loads
   handle('memory:read', async ({ cwd }) => {

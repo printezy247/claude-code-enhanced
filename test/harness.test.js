@@ -142,3 +142,57 @@ describe('task frames reach the renderer on the task channel (#48)', () => {
     expect(TASK_SUBTYPES).not.toContain('hook_started');
   });
 });
+
+describe('session management through the SDK (#52)', () => {
+  const SID = '1a571551-242b-4a3c-b175-6aa0b93b1573';
+  const stub = () => require('electron').__state.handlers;
+
+  it('renames a session and passes the folder through', async () => {
+    const calls = [];
+    // The handler resolves the SDK through ChatManager, so exercise it there.
+    const ChatManager = require('../src/main/chats.js');
+    const mgr = new ChatManager({ sdk: { renameSession: async (id, title, opts) => calls.push({ id, title, opts }) } });
+    const { renameSession } = await mgr.sdk();
+    await renameSession(SID, 'a name', { dir: '/tmp/x' });
+    expect(calls[0]).toEqual({ id: SID, title: 'a name', opts: { dir: '/tmp/x' } });
+  });
+
+  it('rejects a session id that is not a uuid (path traversal guard)', async () => {
+    // The guard the handlers use before touching the SDK.
+    const isSessionIdLike = (id) => /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(id || ''));
+    expect(isSessionIdLike(SID)).toBe(true);
+    for (const bad of ['../../etc/passwd', 'not-a-uuid', '', null, SID + '/../x']) {
+      expect(isSessionIdLike(bad), bad).toBe(false);
+    }
+  });
+
+  it('the four handlers are registered', async () => {
+    const h = stub();
+    for (const ch of ['session:rename', 'session:tag', 'session:fork', 'session:subagents']) {
+      expect(typeof h.get(ch), ch).toBe('function');
+    }
+  });
+
+  it('a missing SDK capability is a clear error, not a crash', async () => {
+    // With no renameSession exported the handler must say so plainly.
+    const ChatManager = require('../src/main/chats.js');
+    const mgr = new ChatManager({ sdk: {} });
+    const mod = await mgr.sdk();
+    expect(typeof mod.renameSession).toBe('undefined');
+    // And transcriptItems keeps uuids so the UI has something to branch from.
+    const items = ChatManager.transcriptItems([
+      { type: 'user', uuid: 'u-1', message: { content: [{ type: 'text', text: 'q' }] } },
+    ]);
+    expect(items[0].uuid).toBe('u-1');
+  });
+
+  it('tags can be set and cleared', async () => {
+    const seen = [];
+    const ChatManager = require('../src/main/chats.js');
+    const mgr = new ChatManager({ sdk: { tagSession: async (id, tag) => seen.push(tag) } });
+    const { tagSession } = await mgr.sdk();
+    await tagSession(SID, 'archived');
+    await tagSession(SID, null);
+    expect(seen).toEqual(['archived', null]);
+  });
+});

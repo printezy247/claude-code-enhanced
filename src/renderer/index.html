@@ -29,9 +29,19 @@
     <main id="main">
       <section id="view-conversations" class="view active">
         <div id="tabbar">
-          <button id="btn-convo-drop" title="Conversations — past and open chats (Ctrl+B)">▤ Conversations ▾</button>
+          <button id="btn-convo-drop" title="Conversations — past and open chats (Ctrl+B)">
+            <span class="ico">▤</span><span>Conversations</span><span class="caret">▾</span>
+          </button>
           <div id="tabs"></div>
-          <button id="btn-new-session" title="New session (Ctrl+Shift+T)">＋ new</button>
+        </div>
+        <!-- Quick actions: the three things you actually do between chats. -->
+        <div id="convo-quick" class="convo-quick">
+          <button class="btn small primary" id="qa-new" title="Start a fresh session (Ctrl+Shift+T)">＋ New chat</button>
+          <button class="btn small" id="qa-resume" title="Reopen the most recent conversation for this folder">↻ Resume latest</button>
+          <button class="btn small" id="qa-browse" title="Browse every conversation (Ctrl+B)">▤ All conversations</button>
+          <button class="btn small ghost" id="qa-reopen" title="Reopen the last closed tab" disabled>↶ Closed tab</button>
+          <span class="spacer"></span>
+          <span class="hint" id="qa-hint">Ctrl+B browse · Ctrl+Shift+T new</span>
         </div>
         <div id="terminals"></div>
         <div id="statusbar">

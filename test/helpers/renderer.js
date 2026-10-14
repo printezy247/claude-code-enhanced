@@ -97,6 +97,8 @@ window.toast = toast;
 window.state = state;
 window.tabRegistry = tabRegistry;
 window.__activate = window.__activate;
+window.killSession = killSession;
+window.recentlyClosedCount = () => recentlyClosed.length;
 window.parseForceCtx = (typeof parseForceCtx !== 'undefined') ? parseForceCtx : undefined;
 `);
 
