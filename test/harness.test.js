@@ -95,3 +95,50 @@ describe('env refresh and custom lean tools (#21, #12)', () => {
     await handlers.get('providers:delete')(null, { uid: saved.uid });
   });
 });
+
+describe('tool-result spill reveal is confined (#50)', () => {
+  const os = require('os');
+  const spillDir = os.homedir() + '/.claude/tool-results';
+  const call = async (payload) => {
+    const stub = require('electron');
+    // main handlers are Electron-style: (_event, payload)
+    return await stub.__state.handlers.get('shell:reveal')(null, payload);
+  };
+
+  it('refuses a path outside the engine tool-results directory', async () => {
+    const r = await call({ path: '/etc/passwd' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/refusing/);
+  });
+
+  it('refuses a traversal that escapes the spill root', async () => {
+    const r = await call({ path: spillDir + '/../../../../etc/shadow' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/refusing/);
+  });
+
+  it('refuses a missing file rather than throwing', async () => {
+    const r = await call({ path: spillDir + '/definitely-not-here.txt' });
+    expect(r.ok).toBe(false);
+    expect(r.error).toMatch(/no longer exists/);
+  });
+
+  it('refuses an empty path', async () => {
+    const r = await call({ path: '' });
+    expect(r.ok).toBe(false);
+  });
+});
+
+describe('task frames reach the renderer on the task channel (#48)', () => {
+  it('routes background_tasks_changed alongside the task_* edges', () => {
+    const { TASK_SUBTYPES } = require('../src/main/chats.js');
+    // The level signal must be routed too, or a dropped task_notification
+    // leaves a card spinning forever.
+    for (const s of ['task_started', 'task_updated', 'task_progress', 'task_notification', 'background_tasks_changed']) {
+      expect(TASK_SUBTYPES).toContain(s);
+    }
+    // It must NOT be a wildcard: unrelated system frames stay on other channels.
+    expect(TASK_SUBTYPES).not.toContain('init');
+    expect(TASK_SUBTYPES).not.toContain('hook_started');
+  });
+});

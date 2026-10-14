@@ -1605,6 +1605,20 @@ function registerIpc() {
     return {};
   });
 
+  // Reveal a tool-result spill file in the file manager. The path arrives from
+  // tool output, so it is not trusted: only files under the engine's own
+  // tool-results directory may be opened, and only if they actually exist.
+  handle('shell:reveal', async ({ path: p }) => {
+    const file = String(p || '');
+    const spillRoot = path.join(os.homedir(), '.claude', 'tool-results');
+    const real = path.resolve(file);
+    const underRoot = real === spillRoot || real.startsWith(spillRoot + path.sep);
+    if (!underRoot) throw new Error('refusing to open a path outside ' + spillRoot);
+    if (!fs.existsSync(real)) throw new Error('that file no longer exists');
+    shell.showItemInFolder(real);
+    return {};
+  });
+
   // ----- settings -----
   handle('settings:get', async () => ({
     settings: { ...store.settings, loginEnv: { PATH: loginEnv().PATH || '' } },

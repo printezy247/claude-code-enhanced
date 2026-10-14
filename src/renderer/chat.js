@@ -1280,6 +1280,37 @@ const Chat = (() => {
   /* ---------------- background tasks ---------------- */
 
   function onTaskEvent(chat, msg) {
+    // background_tasks_changed is a LEVEL, not an edge: every payload is the
+    // complete set of live tasks. Pairing task_started/task_notification edges
+    // instead meant one dropped frame left a task card spinning forever — this
+    // replaces the set wholesale, so the indicator cannot wedge. #48
+    if (msg.subtype === 'background_tasks_changed') {
+      const live = new Set();
+      for (const t of (msg.tasks || [])) {
+        live.add(t.task_id);
+        let row = chat.bgTasks.get(t.task_id);
+        if (!row) {
+          row = bgTaskRow(chat, t.task_id, t);
+          chat.bgTasks.set(t.task_id, row);
+        }
+        row.label = t.description || row.label;
+        bgTaskPaint(row, t);
+        if (t.subagent_type && !row.chipText) {
+          const chip = row.node.querySelector('.chip');
+          if (chip) { chip.textContent = t.subagent_type; row.chipText = t.subagent_type; }
+        }
+      }
+      // Anything no longer in the level has ended.
+      for (const [tid, row] of chat.bgTasks) {
+        if (!live.has(tid)) {
+          row.dot.className = 'tool-dot done';
+          row.title.textContent = '✓ ' + row.label;
+          row.stop?.remove();
+          chat.bgTasks.delete(tid);
+        }
+      }
+      return;
+    }
     if (msg.subtype === 'task_notification') {
       const t = chat.bgTasks.get(msg.task_id);
       if (t) {
@@ -1299,31 +1330,45 @@ const Chat = (() => {
     }
     let t = chat.bgTasks.get(msg.task_id);
     if (!t) {
-      const node = el('div', 'tool-card kind-agent bg-task');
-      const head = el('div', 'tool-head');
-      const dot = el('span', 'tool-dot running');
-      const ico = el('span', 'tool-ico', '🤖');
-      const title = el('span', 'tool-title mono', '');
-      const chip = el('span', 'chip', msg.subagent_type || 'task');
-      head.appendChild(dot); head.appendChild(ico); head.appendChild(title); head.appendChild(chip);
-      const stop = el('button', 'btn small', '⏹ stop');
-      stop.title = 'Stop this background task';
-      stop.addEventListener('click', async () => {
-        stop.disabled = true;
-        const rr = await ccx.invoke('chat:stopTask', { id: chat.id, taskId: msg.task_id });
-        if (!rr.ok) { toast(rr.error, 'err'); stop.disabled = false; }
-      });
-      head.appendChild(stop);
-      node.appendChild(head);
-      chat.msgs.appendChild(node);
-      t = { node, dot, title, stop, label: msg.description || 'background task' };
-      chat.bgTasks.set(msg.task_id, t);
+      t = bgTaskRow(chat, msg.task_id, msg);
       scrollDownSoft(chat);
     }
     t.label = msg.description || t.label;
-    const usage = msg.usage ? ' · ' + Math.round((msg.usage.total_tokens || 0) / 1000) + 'k tok' : '';
-    t.title.textContent = '⏳ ' + t.label + (msg.last_tool_name ? ' — ' + msg.last_tool_name : '') + usage;
+    bgTaskPaint(t, msg);
     if (msg.subtype === 'task_started' && !msg.is_backgrounded) t.stop.remove();  // foreground task: turn blocks on it anyway
+  }
+
+  /** One background-task card. Shared by the edge events and the level payload. */
+  function bgTaskRow(chat, taskId, info) {
+    const node = el('div', 'tool-card kind-agent bg-task');
+    const head = el('div', 'tool-head');
+    const dot = el('span', 'tool-dot running');
+    const ico = el('span', 'tool-ico', '🤖');
+    const title = el('span', 'tool-title mono', '');
+    const chip = el('span', 'chip', info.subagent_type || 'task');
+    head.appendChild(dot); head.appendChild(ico); head.appendChild(title); head.appendChild(chip);
+    const stop = el('button', 'btn small', '⏹ stop');
+    stop.title = 'Stop this background task';
+    stop.addEventListener('click', async () => {
+      stop.disabled = true;
+      const rr = await ccx.invoke('chat:stopTask', { id: chat.id, taskId });
+      if (!rr.ok) { toast(rr.error, 'err'); stop.disabled = false; }
+    });
+    head.appendChild(stop);
+    node.appendChild(head);
+    chat.msgs.appendChild(node);
+    const row = { node, dot, title, stop, label: info.description || 'background task', chipText: '' };
+    chat.bgTasks.set(taskId, row);
+    return row;
+  }
+
+  /** Paint a task card from either a task_* event or a background_tasks_changed entry. */
+  function bgTaskPaint(row, info) {
+    const usage = info.usage ? ' · ' + Math.round((info.usage.total_tokens || 0) / 1000) + 'k tok' : '';
+    row.title.textContent = '⏳ ' + row.label
+      + (info.last_tool_name ? ' — ' + info.last_tool_name : '')
+      + (info.status ? ' · ' + info.status : '') + usage;
+    if (info.summary) row.title.title = String(info.summary).slice(0, 600);
   }
 
   /* ---------------- hooks (live audit) ---------------- */
@@ -1427,11 +1472,15 @@ const Chat = (() => {
   // render them nested inside their parent card (orchestration view).
   function nestedTarget(chat, parentId) {
     if (!parentId) return null;
-    const ctx = chat.tools.get(parentId);
+    // A subagent-of-a-subagent names its parent by agent_id, not by the tool_use
+    // id the outer frame carried. Resolve through that map so depth >= 2 still
+    // lands in the right card instead of falling back to the top level. #49
+    const ctx = chat.tools.get(parentId) || chat.tools.get((chat.agentTasks || new Map()).get(parentId) || '');
     if (!ctx) return null;
     if (!ctx.nested) {
       ctx.nested = el('div', 'nested-agents');
-      ctx.nested.appendChild(el('div', 'nested-label', '⌥ subagent activity'));
+      const deep = toolDepth(chat, parentId);
+      ctx.nested.appendChild(el('div', 'nested-label', deep > 1 ? '⌥ subagent activity · depth ' + deep : '⌥ subagent activity'));
       ctx.body.insertBefore(ctx.nested, ctx.body.firstChild);
       ctx.body.classList.remove('hidden');
     }
@@ -1896,7 +1945,12 @@ const Chat = (() => {
             const t = typeof c2 === 'string'
               ? c2
               : (Array.isArray(c2) ? c2.filter(b => b.type === 'text').map(b => b.text).join(' ') : '');
-            if (String(t || '').trim()) {
+            // Already drawn under this exact uuid (the engine replays a turn
+            // after a reconnect). Drop it rather than draw the prompt twice —
+            // matching by uuid, not by text, so two identical prompts are safe.
+            const drawn = [...chat.msgs.querySelectorAll('.msg.user-msg')]
+              .some(n => n.dataset.uuid === msg.uuid);
+            if (!drawn && String(t || '').trim()) {
               // The composer already showed this message when it was sent; the
               // engine's replay only adds the uuid. Swap it in place instead of
               // drawing the message twice.
@@ -1929,6 +1983,12 @@ const Chat = (() => {
         if (metered && typeof msg.total_cost_usd === 'number') chat.spent = (chat.spent || 0) + msg.total_cost_usd;
         setStatusLine(chat);
         setBusy(chat, false);
+        // A coalesced turn can answer several prompts at once; say which, so a
+        // user who sent two messages knows both were taken.
+        for (const u of (msg.user_message_uuids || (msg.user_message_uuid ? [msg.user_message_uuid] : []))) {
+          if (u) (chat.answeredUuids || (chat.answeredUuids = new Set())).add(u);
+        }
+        showQueued(chat, Number(msg.queued_turn_count) || 0);
         if (chat.compacting) {
           chat.compacting = false;
           const brief = String(msg.result || '').trim();
@@ -1970,7 +2030,8 @@ const Chat = (() => {
             chat.msgs.appendChild(m);
             scrollDownSoft(chat);
           } else {
-            appendError(chat, 'Turn failed (' + msg.subtype + '): ' + text.slice(0, 300));
+            appendError(chat, (explainTerminal(msg.terminal_reason) || 'Turn failed (' + msg.subtype + ')')
+              + (text ? ': ' + text.slice(0, 300) : ''));
           }
         }
         break;
@@ -2092,6 +2153,47 @@ const Chat = (() => {
   }
 
   // System subtypes that are neither init nor compact_boundary.
+  // The engine now reports WHY a turn ended in `terminal_reason`, so a dead turn
+  // is classified from that instead of being guessed at from the subtype or by
+  // matching prose. Each reason maps to the one thing the user can actually do.
+  const TERMINAL_WHY = {
+    prompt_too_long: 'This prompt is too long for the model — the context is full.',
+    model_error: 'The model rejected the request.',
+    api_error: 'The provider failed mid-turn.',
+    image_error: 'An image in the conversation could not be read.',
+    budget_exhausted: 'The budget cap stopped this turn.',
+    max_turns: 'The turn limit stopped this turn.',
+    blocking_limit: 'A limit on the conversation blocked this turn.',
+    rapid_refill_breaker: 'Paused after too many rapid retries — the provider is struggling.',
+    malformed_tool_use_exhausted: 'The model could not produce a valid tool call.',
+    structured_output_retry_exhausted: 'The model could not produce valid structured output.',
+    tool_deferred_unavailable: 'A tool this turn needed was unavailable.',
+    tool_deferred: 'A tool was deferred to a later turn.',
+    stop_hook_prevented: 'A Stop hook ended this turn before it was finished.',
+    hook_stopped: 'A hook stopped this turn.',
+    aborted_streaming: 'Interrupted while streaming.',
+    aborted_tools: 'Interrupted while tools were running.',
+    background_requested: 'This turn moved to a background task.',
+    turn_setup_failed: 'The turn could not be started.',
+  };
+  function explainTerminal(reason) {
+    return reason && reason !== 'completed' ? (TERMINAL_WHY[reason] || null) : null;
+  }
+
+  // Messages sent while a turn was running are queued, not dropped. The engine
+  // reports how many are left; without this the composer looks idle when work
+  // is still coming.
+  function showQueued(chat, n) {
+    chat.queued = n;
+    chat.queuedNote?.remove();
+    chat.queuedNote = null;
+    if (n > 0) {
+      chat.queuedNote = el('div', 'sys-note', '⏭ ' + n + ' message' + (n === 1 ? '' : 's') + ' queued — running next');
+      chat.msgs.appendChild(chat.queuedNote);
+      scrollDownSoft(chat);
+    }
+  }
+
   function handleSystemSubtype(chat, msg) {
     if (msg.subtype === 'permission_denied') return onPermissionDenied(chat, msg);
     if (msg.subtype === 'commands_changed') return onCommandsChanged(chat, msg);
@@ -2101,6 +2203,12 @@ const Chat = (() => {
 
   function onInit(chat) {
     chat.msgs.querySelector('.chat-empty')?.remove();
+    // A plugin that failed to load is simply absent from the tool list, which
+    // used to look like "that connector does not exist". Say which ones broke.
+    for (const e of (chat.init.plugin_errors || [])) {
+      const n = el('div', 'sys-note warn', '⚠ plugin ' + (e.plugin || '?') + ' failed to load: ' + String(e.message || e.type || '').slice(0, 200));
+      chat.msgs.appendChild(n);
+    }
     // show what CLAUDE.md memory the engine auto-loads (imported from claude config)
     if (!chat.memChipAdded) {
       chat.memChipAdded = true;
@@ -2441,6 +2549,10 @@ const Chat = (() => {
       // never rendered (the throw was swallowed by the event handler's catch).
       card, body, name, input, dot, title, status: 'running', source: null,
       parentId: parentId || null,
+      // A Task/Agent call is the subagent itself: remember which agent_id the
+      // engine stamps on the frames it emits, so nested-of-nested frames can
+      // find this card by agent id instead of falling back to top level. #49
+      agentId: (name === 'Task' || name === 'Agent') ? String((input && input.agentId) || toolUseId) : null,
       setStatus(status, note) {
         ctx.status = status;
         dot.className = 'tool-dot ' + status;
@@ -2498,6 +2610,10 @@ const Chat = (() => {
       ctx.isError = early.isError;
     }
     chat.tools.set(toolUseId, ctx);
+    if (ctx.agentId) {
+      chat.agentTasks = chat.agentTasks || new Map();
+      chat.agentTasks.set(ctx.agentId, toolUseId);
+    }
     // Bound the registry: entries are only needed to resolve results, and a
     // long session would otherwise hold every card's context forever. #8
     if (chat.tools.size > 300) {
@@ -2672,7 +2788,21 @@ const Chat = (() => {
       out = el('pre', 'tool-output mono' + (ctx.isError ? ' tool-err' : ''));
       ctx.body.insertBefore(out, ctx.body.firstChild);
     }
-    out.textContent = (ctx.output || (ctx.status === 'running' ? '…' : '(no output)')).slice(0, 8000);
+    const text = ctx.output || (ctx.status === 'running' ? '…' : '(no output)');
+    // The engine spills a big result to a file and leaves a short notice here.
+    // Showing only the notice looks like the tool returned nothing, so offer the
+    // path. #50
+    const spill = /Full output saved to:\s*(\S+)/.exec(String(text));
+    out.textContent = String(text).slice(0, 8000);
+    if (spill) {
+      const note = el('div', 'tool-spill');
+      note.appendChild(el('span', 'hint', 'output spilled to file — '));
+      const open = el('button', 'btn tiny', 'open');
+      open.addEventListener('click', () => ccx.invoke('shell:reveal', { path: spill[1] }));
+      note.appendChild(open);
+      note.appendChild(el('span', 'hint mono', spill[1]));
+      out.after(note);
+    }
   }
 
   /* ---------------- permissions ---------------- */

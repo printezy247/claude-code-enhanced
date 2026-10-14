@@ -338,7 +338,7 @@ class ChatManager extends EventEmitter {
           if (msg.type === 'auth_status') {
             this.emit('event', id, { kind: 'auth', authenticating: !!msg.isAuthenticating, output: msg.output || [], error: msg.error || '' });
           }
-          if (msg.type === 'system' && ['task_started', 'task_updated', 'task_progress', 'task_notification'].includes(msg.subtype)) {
+          if (msg.type === 'system' && TASK_SUBTYPES.includes(msg.subtype)) {
             this.emit('event', id, { kind: 'task', msg });
           } else if (msg.type === 'system' && (msg.subtype === 'hook_started' || msg.subtype === 'hook_response')) {
             this.emit('event', id, { kind: 'hook', msg });
@@ -768,6 +768,11 @@ class ChatManager extends EventEmitter {
 // answers often do not parse, and Claude Code then denies the action silently and
 // stops the turn after ten no-verdict responses. So auto falls back to acceptEdits there.
 const MODES = ['auto', 'acceptEdits', 'plan', 'bypassPermissions'];
+
+// Engine frames about background work. background_tasks_changed is a LEVEL (the
+// complete live set on every change) while the rest are edges — the renderer
+// needs both to keep a running-task indicator honest. #48
+const TASK_SUBTYPES = ['task_started', 'task_updated', 'task_progress', 'task_notification', 'background_tasks_changed'];
 function normalizeMode(mode, providerInstance, yolo) {
   if (yolo) return 'bypassPermissions';
   let m = MODES.includes(mode) ? mode : 'acceptEdits';
@@ -778,3 +783,4 @@ function normalizeMode(mode, providerInstance, yolo) {
 module.exports = ChatManager;
 module.exports.normalizeMode = normalizeMode;
 module.exports.MODES = MODES;
+module.exports.TASK_SUBTYPES = TASK_SUBTYPES;

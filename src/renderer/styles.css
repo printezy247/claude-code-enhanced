@@ -928,3 +928,10 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .diag-row { display: flex; gap: 8px; }
 .diag-row .dk { min-width: 120px; opacity: .6; }
 .diag-row .dv { font-family: var(--mono); word-break: break-all; }
+
+/* ---------- tool-result spill notice (#50) ---------- */
+.tool-spill {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin: -4px 0 8px; font-size: 11.5px;
+}
+.tool-spill .hint.mono { overflow-wrap: anywhere; }
