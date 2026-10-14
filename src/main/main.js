@@ -406,6 +406,16 @@ function createWindow() {
           console.log('CCE_SMOKE: shot2', file);
         } catch (e) { console.error('CCE_SMOKE: capture2 failed:', e); }
       };
+      const shootNarrow = async (file) => {
+        try {
+          if (!win || win.isDestroyed()) return;
+          win.setSize(960, 640);
+          await new Promise(r => setTimeout(r, 500));
+          fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
+          win.setSize(1280, 860);
+          console.log('CCE_SMOKE: shot-narrow', file);
+        } catch (e) { console.error('CCE_SMOKE: narrow capture failed:', e); }
+      };
       const shoot = async (file) => {
         try {
           if (!win || win.isDestroyed()) return;
@@ -565,6 +575,7 @@ function createWindow() {
         setTimeout(async () => {
           await shoot(out);
           await shoot2(out.replace(/\.png$/, '.quickbar.png'));
+          await shootNarrow(out.replace(/\.png$/, '.narrow.png'));
           app.quit();
         }, Number(process.env.CCE_SMOKE_DELAY || 6000));
       }

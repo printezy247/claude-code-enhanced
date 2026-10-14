@@ -64,6 +64,8 @@ body {
   background: none; border: none; color: var(--muted);
   font: inherit; text-align: left;
   padding: 9px 10px; border-radius: 8px; cursor: pointer;
+  /* The sidebar selection changed colour instantly. #55 */
+  transition: background .12s, color .12s;
 }
 .nav-btn:hover { background: var(--bg3); color: var(--text); }
 .nav-btn.active { background: var(--accent-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
@@ -121,6 +123,7 @@ body {
   border-radius: 8px 8px 0 0;
   padding: 6px 10px 6px 12px; cursor: pointer; white-space: nowrap;
   font-size: 12.5px;
+  transition: background .12s, color .12s, border-color .12s;
 }
 .tab.active { background: var(--bg3); color: var(--text); box-shadow: inset 0 2px 0 var(--accent); }
 .tab.dead { opacity: .55; }
@@ -162,7 +165,7 @@ body {
 .card .row { display: flex; gap: 8px; align-items: center; margin-top: 4px; flex-wrap: wrap; }
 .card .spacer { flex: 1; }
 .chip {
-  font-size: 10.5px; padding: 2px 8px; border-radius: 8px;
+  font-size: 11px; padding: 2px 8px; border-radius: 8px;
   background: var(--bg4); color: var(--muted); font-weight: 600;
 }
 .chip.default { background: var(--accent-soft); color: var(--accent); }
@@ -174,6 +177,8 @@ body {
 .btn {
   background: var(--bg3); color: var(--text); border: 1px solid var(--border);
   border-radius: 8px; padding: 7px 14px; cursor: pointer; font: inherit; font-size: 13px;
+  /* The hover colour change used to be instant. #55 */
+  transition: background .12s, border-color .12s, color .12s;
 }
 .btn:hover { border-color: var(--accent); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #1a120e; font-weight: 600; }
@@ -444,7 +449,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .ask-q { padding: 9px 0; border-bottom: 1px dashed var(--border); }
 .ask-q:last-of-type { border-bottom: none; }
 .ask-chip {
-  display: inline-block; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  display: inline-block; font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
   color: var(--muted); border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; margin-bottom: 5px;
 }
 .ask-text { font-size: 13.5px; margin-bottom: 8px; }
@@ -536,7 +541,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 }
 .proj-chip.repo { color: #9cc2ff; cursor: pointer; border-color: rgba(122, 162, 247, .4); }
 .proj-chip.repo:hover { background: rgba(122, 162, 247, .12); }
-.proj-chip.branch { color: var(--muted); font-family: var(--mono); font-size: 10.5px; }
+.proj-chip.branch { color: var(--muted); font-family: var(--mono); font-size: 11px; }
 
 /* skills browser */
 .skills-search { margin: 6px 0 10px; }
@@ -559,7 +564,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 
 /* workflows bar */
 .chat-workflows { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
-.wf-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; flex: none; }
+.wf-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; flex: none; }
 .wf-chip {
   flex: none; background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
   border-radius: 999px; padding: 3px 11px; font-size: 11.5px; cursor: pointer;
@@ -568,7 +573,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 
 /* nested subagent timelines */
 .nested-agents { border-left: 2px solid rgba(187, 154, 247, .4); margin: 6px 0 8px; padding-left: 10px; }
-.nested-label { font-size: 10px; color: #a99cf9; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
+.nested-label { font-size: 11px; color: #a99cf9; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
 .nested-agents .assistant-msg { font-size: 12.5px; }
 .nested-agents .tool-card { margin: 6px 0; }
 
@@ -599,7 +604,11 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   border-radius: 6px; padding: 2px 8px; font-size: 11px; cursor: pointer;
   opacity: 0; transition: opacity .12s;
 }
-.md:hover > .msg-copy, .user-bubble:hover > .copy-btn, pre:hover > .pre-copy { opacity: 1; }
+/* :focus-within so a keyboard user can reach the copy button at all — it was
+   hover-only, which the skill lists under Priority 2 as an anti-pattern. #55 */
+.md:hover > .msg-copy, .md:focus-within > .msg-copy,
+.user-bubble:hover > .copy-btn, .user-bubble:focus-within > .copy-btn,
+pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
 .copy-btn:hover { color: var(--text); border-color: var(--accent); }
 .user-bubble { padding-right: 34px; }
 .md > .msg-copy { position: absolute; top: -26px; right: 0; }
@@ -764,10 +773,11 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   background: var(--bg2); border: 1px solid var(--border); color: var(--text);
   border-radius: 8px; padding: 5px 12px; font-size: 12.5px; cursor: pointer; flex: none;
   display: flex; align-items: center; gap: 7px; margin-bottom: 5px;
+  transition: background .12s, border-color .12s;
 }
 #btn-convo-drop:hover { border-color: var(--accent); }
 #btn-convo-drop.active { background: var(--accent-soft); border-color: var(--accent); }
-#btn-convo-drop .caret { font-size: 9px; opacity: .6; transition: transform .15s; }
+#btn-convo-drop .caret { font-size: 11px; opacity: .6; transition: transform .15s; }
 #btn-convo-drop.active .caret { transform: rotate(180deg); opacity: .9; }
 
 /* Quick actions under the tab bar — the three things you do between chats. */
@@ -823,26 +833,29 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   font-size: 12px; color: var(--text); font-weight: 600;
   background: var(--bg2); padding: 4px 0;
 }
-#convo-drop .cs-path { font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+#convo-drop .cs-path { font-size: 11px; color: var(--muted); font-family: var(--mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
-#convo-drop .cs-count { font-size: 10.5px; color: var(--muted); font-family: var(--mono);
+#convo-drop .cs-count { font-size: 11px; color: var(--muted); font-family: var(--mono);
   background: var(--bg3); border-radius: 999px; padding: 1px 6px; }
-#convo-drop .convo-bucket { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+#convo-drop .convo-bucket { font-size: 11px; text-transform: uppercase; letter-spacing: .05em;
   color: var(--muted); margin: 6px 6px 2px; }
 #convo-drop .convo-rows { display: flex; flex-direction: column; gap: 2px; }
 #convo-drop .convo-row { padding: 6px 6px 6px 8px; border-radius: 7px; cursor: pointer;
-  display: flex; gap: 6px; align-items: center; border: 1px solid transparent; }
+  display: flex; gap: 6px; align-items: center; border: 1px solid transparent;
+  transition: background .12s, border-color .12s; }
 #convo-drop .convo-row:hover { background: var(--bg3); }
 #convo-drop .convo-row.is-open { border-color: var(--accent); background: var(--accent-soft); }
 #convo-drop .convo-main { min-width: 0; flex: 1; }
 #convo-drop .convo-preview { font-size: 12.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #convo-drop .convo-meta { font-size: 11px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#convo-drop .open-chip { flex: none; font-size: 10px; padding: 1px 6px; color: var(--accent); }
+#convo-drop .open-chip { flex: none; font-size: 11px; padding: 1px 6px; color: var(--accent); }
 #convo-drop .convo-more {
   flex: none; background: transparent; border: 1px solid transparent; color: var(--muted);
   border-radius: 6px; cursor: pointer; padding: 1px 5px; font-size: 12px; opacity: 0;
+  transition: opacity .12s, color .12s, border-color .12s, background .12s;
 }
-#convo-drop .convo-row:hover .convo-more, #convo-drop .convo-more:focus { opacity: 1; }
+#convo-drop .convo-row:hover .convo-more, #convo-drop .convo-row:focus-within .convo-more,
+#convo-drop .convo-more:focus-visible { opacity: 1; }
 #convo-drop .convo-more:hover { color: var(--text); border-color: var(--border); background: var(--bg2); }
 
 /* ---------- split view (#44) ---------- */
@@ -1013,10 +1026,13 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 }
 .tx-row { padding: 6px 8px; border-radius: 8px; }
 .tx-row.tx-user { background: var(--accent-soft); }
-.tx-who { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; margin-bottom: 2px; }
+.tx-who { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; opacity: .7; margin-bottom: 2px; }
 .tx-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 .tx-row .btn.tiny { margin-top: 6px; opacity: 0; transition: opacity .12s; }
 .tx-row:hover .btn.tiny, .tx-row:focus-within .btn.tiny { opacity: 1; }
+/* A disabled control must not look interactive. */
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn:disabled:hover { border-color: var(--border); filter: none; }
 
 /* ---------- focus visibility (#53) ----------
    The global :focus-visible rule covers anything that kept its outline. These
@@ -1075,3 +1091,44 @@ svg[data-icon], [data-icon] { display: inline-flex; align-items: center; justify
 .copy-btn { display: inline-flex; align-items: center; justify-content: center; }
 /* A heading that starts with an icon needs the baseline nudged back. */
 h4 > svg, .sys-note > svg { vertical-align: -2px; }
+
+/* ---------- reduced motion (#55) ----------
+   Priority 7 lists "no reduced-motion handling" as an anti-pattern. There was no
+   prefers-reduced-motion rule at all, against 3 keyframes and 5 infinite
+   animations.
+
+   Note what is NOT done here: the busy/running pulses are not simply removed.
+   They carry meaning — a pulsing dot says "this is working". Under reduced
+   motion the colour and the static dot still say so, because the state is also
+   carried by --warn/--ok/--danger rather than by movement alone. #55 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+  /* Entrance animation would leave content mid-transition; land it directly. */
+  .modal, .toast, .drop { animation: none !important; }
+}
+
+/* ---------- minimum text size (#55) ----------
+   48 declarations sat below 12px, the worst at 9px. The uppercase micro-labels
+   and chips that carried the worst of it are now on an 11px floor, which stays
+   dense enough for a developer tool while dropping the unreadable sizes. The
+   remaining 11px / 11.5px rules are meta text (hints, tool output, diff lines)
+   and are a deliberate density choice, not an oversight. */
+
+/* ---------- narrow-window behaviour (#55) ----------
+   The window can be dragged down to its 960px minimum. Below ~820px of usable
+   width the quick-action row starts to wrap into the transcript, so the hint
+   text drops first and the sidebar narrows. */
+@media (max-width: 1080px) {
+  .convo-quick .hint { display: none; }
+}
+@media (max-width: 960px) {
+  .convo-quick { gap: 6px; padding: 6px 8px; }
+  .convo-quick .btn { padding: 6px 10px; font-size: 12px; }
+}
