@@ -2295,6 +2295,9 @@ const Chat = (() => {
     const key = parentId || 'main';
     const live = chat.lives && chat.lives.get(key);
     if (!live) return;
+    // Paint the last coalesced delta out fully before the finalized blocks
+    // replace these — otherwise a short reply can lose its final sentence.
+    for (const [, b] of live.blocks) if (b.type === 'text' && b.text) flushMarkdown(b);
     for (const [, b] of live.blocks) { b.node && b.node.remove(); b.think && b.think.remove(); }
     chat.lives.delete(key);
   }
@@ -2306,18 +2309,46 @@ const Chat = (() => {
 
   // Re-parsing markdown on every streamed token is O(n^2) and visibly stutters
   // on long answers. Coalesce to one render per frame. #21
+  // Tokens can arrive far faster than the screen refreshes. Re-parsing the whole
+  // growing markdown on every rAF is the transcript's hot path — measured at
+  // 124ms mean / 290ms p95 per delta at ~150 rows before coalescing commits.
+  // Commit at most every STREAM_COMMIT_MS, and always flush at message_stop so
+  // the last delta is never dropped. #51
+  const STREAM_COMMIT_MS = 50;
+
   function scheduleMarkdown(blk) {
     if (blk._raf) return;
-    blk._raf = requestAnimationFrame(() => {
-      blk._raf = null;
+    const paint = (final) => {
+      blk._raf = null; blk._timer = null;
       const cut = splitThink(blk.text);
       blk.body.innerHTML = md(cut.text);
+      // Copy buttons and syntax colours are only worth the work once the block
+      // stops growing — a user cannot copy a half-written reply.
+      if (final) enhanceMarkdown(blk.body, cut.text);
       if (cut.thinking) {
         // The reply opened with reasoning: fold it away above the answer.
         if (!blk.think) { blk.think = thoughtNode(''); blk.node.before(blk.think); }
         blk.think.querySelector('.think-body').textContent = cut.thinking;
       }
-    });
+    };
+    // First delta paints immediately so the reply appears at once; after that,
+    // coalesce. rAF alone still allows ~60 commits/second.
+    if (!blk._painted) { blk._painted = true; blk._raf = requestAnimationFrame(() => paint(false)); return; }
+    blk._timer = setTimeout(() => { blk._raf = requestAnimationFrame(() => paint(false)); }, STREAM_COMMIT_MS);
+  }
+
+  /** Force the pending streaming paint out now, fully enhanced. */
+  function flushMarkdown(blk) {
+    if (!blk) return;
+    if (blk._timer) { clearTimeout(blk._timer); blk._timer = null; }
+    if (blk._raf) { cancelAnimationFrame(blk._raf); blk._raf = null; }
+    const cut = splitThink(blk.text);
+    blk.body.innerHTML = md(cut.text);
+    enhanceMarkdown(blk.body, cut.text);
+    if (cut.thinking) {
+      if (!blk.think) { blk.think = thoughtNode(''); blk.node.before(blk.think); }
+      blk.think.querySelector('.think-body').textContent = cut.thinking;
+    }
   }
 
   function ensureLive(chat, parentId) {

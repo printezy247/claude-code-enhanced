@@ -13,13 +13,12 @@ const providers = require('./providers');
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
 // from inside app.asar the SDK can't resolve/spawn its engine (ENOTDIR).
-let sdkPromise = null;
 // Injection seam: tests pass a fake SDK so no engine process is spawned. The
 // dynamic import below bypasses vitest's mock registry (the module is loaded
-// through Node's CJS require), so a constructor argument is the reliable hook.
-let sdkOverride = null;
-function sdk() {
-  if (sdkOverride) return Promise.resolve(sdkOverride);
+// through Node's CJS require), so a constructor argument is the reliable hook —
+// and it must stay per-instance, or one fake leaks into every later manager.
+let sdkPromise = null;
+function loadSdk() {
   if (!sdkPromise) {
     sdkPromise = (async () => {
       const { app } = require('electron');
@@ -72,6 +71,56 @@ function previewOf(full) {
   return summary || preview || '(empty session)';
 }
 
+/**
+ * Turn stored transcript records into the flat item list the chat pane replays:
+ * user text, thinking, tool_use (with its tool_result output attached),
+ * assistant text. Shared by the file reader and the SDK reader.
+ */
+function transcriptItems(records) {
+  const items = [];
+  const tools = new Map();
+  for (const j of records || []) {
+    if (j.isSidechain || j.isMeta || j.type === 'summary') continue;
+    if (j.type !== 'user' && j.type !== 'assistant') continue;
+    const msg = j.message;
+    if (!msg || !msg.content) continue;
+    if (j.type === 'user') {
+      const c = msg.content;
+      if (typeof c === 'string') {
+        const t = c.replace(/<[^>]+>/g, '').trim();
+        if (t) items.push({ t: 'user', text: t });
+      } else if (Array.isArray(c)) {
+        for (const b of c) {
+          if (b.type === 'text') {
+            const t = b.text.replace(/<[^>]+>/g, '').trim();
+            if (t) items.push({ t: 'user', text: t });
+          } else if (b.type === 'tool_result') {
+            const it = tools.get(b.tool_use_id);
+            if (it) {
+              const out = typeof b.content === 'string'
+                ? b.content
+                : Array.isArray(b.content) ? b.content.map((x) => x.type === 'text' ? x.text : '[' + x.type + ']').join('\n') : '';
+              it.output = String(out || '').slice(0, 4000);
+              it.isError = !!b.is_error;
+            }
+          }
+        }
+      }
+    } else {
+      for (const b of msg.content || []) {
+        if (b.type === 'text' && b.text && b.text.trim()) items.push({ t: 'assistant', text: b.text });
+        else if (b.type === 'thinking' && b.thinking) items.push({ t: 'thinking', text: b.thinking });
+        else if (b.type === 'tool_use') {
+          const it = { t: 'tool', name: b.name, input: b.input || {} };
+          items.push(it);
+          tools.set(b.id, it);
+        }
+      }
+    }
+  }
+  return items.slice(-300);
+}
+
 function cwdOf(full) {
   try {
     const fd = fs.openSync(full, 'r');
@@ -88,12 +137,20 @@ class ChatManager extends EventEmitter {
   constructor({ proxyToken = null, sdk = null } = {}) {
     super();
     this.proxyToken = proxyToken;
-    if (sdk) sdkOverride = sdk;
+    // Per instance, not module-global: a global leaked one instance's fake SDK
+    // into every later ChatManager, so the session helpers silently fell back
+    // to the disk scan in tests and in any second manager.
+    this.sdkOverride = sdk || null;
     this.chats = new Map();      // id -> chat
     this.pendingPerms = new Map(); // requestId -> {resolve, timer, toolName}
     this.nextId = 1;
     this.permSeq = 1;
     this.lastCreatedId = null;
+  }
+
+  /** The SDK for this manager: the injected fake, else the real module. */
+  sdk() {
+    return this.sdkOverride ? Promise.resolve(this.sdkOverride) : loadSdk();
   }
 
   /** Remove a pending permission entry. Returns false if it was already gone. */
@@ -111,7 +168,7 @@ class ChatManager extends EventEmitter {
   }
 
   async create({ cwd, providerInstance, settings, model, permissionMode, yolo, resume, resumeAt, claudePath, fork, anthropicBaseUrl }) {
-    const { query } = await sdk();
+    const { query } = await this.sdk();
     const opts_fork = !!fork;
     const id = 'c' + this.nextId++;
     const dir = (cwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
@@ -580,55 +637,55 @@ class ChatManager extends EventEmitter {
     const { projDir } = this.projDirFor(cwd);
     let raw = '';
     try { raw = fs.readFileSync(path.join(projDir, sessionId + '.jsonl'), 'utf8'); } catch { return { items: [] }; }
-    const items = [];
-    const tools = new Map();
+    const records = [];
     for (const line of raw.split('\n')) {
       if (!line.trim()) continue;
-      let j;
-      try { j = JSON.parse(line); } catch { continue; }
-      if (j.isSidechain || j.isMeta || j.type === 'summary') continue;
-      if (j.type !== 'user' && j.type !== 'assistant') continue;
-      const msg = j.message;
-      if (!msg || !msg.content) continue;
-      if (j.type === 'user') {
-        const c = msg.content;
-        if (typeof c === 'string') {
-          const t = c.replace(/<[^>]+>/g, '').trim();
-          if (t) items.push({ t: 'user', text: t });
-        } else if (Array.isArray(c)) {
-          for (const b of c) {
-            if (b.type === 'text') {
-              const t = b.text.replace(/<[^>]+>/g, '').trim();
-              if (t) items.push({ t: 'user', text: t });
-            } else if (b.type === 'tool_result') {
-              const it = tools.get(b.tool_use_id);
-              if (it) {
-                const out = typeof b.content === 'string'
-                  ? b.content
-                  : Array.isArray(b.content) ? b.content.map(x => x.type === 'text' ? x.text : '[' + x.type + ']').join('\n') : '';
-                it.output = String(out || '').slice(0, 4000);
-                it.isError = !!b.is_error;
-              }
-            }
-          }
-        }
-      } else {
-        for (const b of msg.content || []) {
-          if (b.type === 'text' && b.text && b.text.trim()) items.push({ t: 'assistant', text: b.text });
-          else if (b.type === 'thinking' && b.thinking) items.push({ t: 'thinking', text: b.thinking });
-          else if (b.type === 'tool_use') {
-            const it = { t: 'tool', name: b.name, input: b.input || {} };
-            items.push(it);
-            tools.set(b.id, it);
-          }
-        }
-      }
+      try { records.push(JSON.parse(line)); } catch { continue; }
     }
-    return { items: items.slice(-300) };
+    return { items: transcriptItems(records) };
+  }
+
+  // Same replay, but through the SDK: getSessionMessages parses the transcript
+  // for us off the main thread instead of reading a whole JSONL synchronously.
+  async transcriptVia(cwd, sessionId) {
+    if (!isSessionId(sessionId)) return null;
+    try {
+      const { getSessionMessages } = await this.sdk();
+      if (typeof getSessionMessages !== 'function') return null;
+      const msgs = await getSessionMessages(sessionId, { dir: cwd, limit: 2000 });
+      if (!Array.isArray(msgs) || !msgs.length) return null;
+      return { items: transcriptItems(msgs) };
+    } catch (err) {
+      console.warn('[chats] getSessionMessages unavailable, reading the file:', String((err && err.message) || err));
+      return null;
+    }
   }
 
   // Past sessions for a folder, from the claude engine's own transcript store  // (~/.claude/projects/<path-with-dashes>/<sessionId>.jsonl) — includes TUI sessions.
-  history(cwd) {
+  // listSessions({ dir }) covers this without the per-file head read; the scan
+  // stays as the fallback.
+  async history(cwd) {
+    try {
+      const { listSessions } = await this.sdk();
+      if (typeof listSessions === 'function') {
+        const rows = await listSessions({ dir: cwd, limit: 40 });
+        return rows
+          .filter((r) => isSessionId(r.sessionId))
+          .map((r) => ({
+            sessionId: r.sessionId,
+            mtime: r.lastModified || r.createdAt || 0,
+            preview: r.customTitle || r.summary || r.firstPrompt || '',
+            branch: r.gitBranch || '',
+          }))
+          .sort((a, b) => b.mtime - a.mtime);
+      }
+    } catch (err) {
+      console.warn('[chats] listSessions(dir) unavailable, falling back:', String((err && err.message) || err));
+    }
+    return this.scanHistory(cwd);
+  }
+
+  scanHistory(cwd) {
     const { projDir } = this.projDirFor(cwd);
     let files = [];
     try { files = fs.readdirSync(projDir).filter(f => f.endsWith('.jsonl')); } catch { return []; }
@@ -641,6 +698,7 @@ class ChatManager extends EventEmitter {
         sessionId: f.replace(/\.jsonl$/, ''),
         mtime: st.mtimeMs,
         preview: previewOf(full).slice(0, 140),
+        branch: '',
       });
     }
     out.sort((a, b) => b.mtime - a.mtime);
@@ -648,7 +706,41 @@ class ChatManager extends EventEmitter {
   }
 
   // Flat, recency-sorted index of every stored session across all folders.
-  index() {
+  // The SDK's listSessions does this without spawning anything and without
+  // reading 64KB+8KB per file: it stats the transcripts and slices only the
+  // head/tail it needs. That also keeps the Electron main thread free (the
+  // hand-rolled scan was fully synchronous) and yields fields we could never
+  // compute here — gitBranch for every session, customTitle for the renamed
+  // ones. Falls back to the disk scan if the SDK is unavailable or errors.
+  async index() {
+    try {
+      const { listSessions } = await this.sdk();
+      if (typeof listSessions === 'function') {
+        const rows = await listSessions({ limit: 300 });
+        return rows
+          .filter((r) => isSessionId(r.sessionId))
+          .map((r) => ({
+            sessionId: r.sessionId,
+            cwd: r.cwd || null,
+            mtime: r.lastModified || r.createdAt || 0,
+            // A renamed session shows its custom title; otherwise the generated
+            // summary; otherwise the first prompt.
+            preview: r.customTitle || r.summary || r.firstPrompt || '',
+            renamed: !!r.customTitle,
+            branch: r.gitBranch || '',
+            tag: r.tag || '',
+            size: r.fileSize || 0,
+          }))
+          .sort((a, b) => b.mtime - a.mtime);
+      }
+    } catch (err) {
+      console.warn('[chats] listSessions unavailable, falling back to the disk scan:', String((err && err.message) || err));
+    }
+    return this.scanIndex();
+  }
+
+  // The original hand-rolled scan, kept as the fallback path.
+  scanIndex() {
     const home = process.env.HOME || os.homedir();
     const root = path.join(home, '.claude', 'projects');
     let dirs = [];
@@ -675,12 +767,17 @@ class ChatManager extends EventEmitter {
     }
     found.sort((a, b) => b.mtime - a.mtime);
     // previews are IO — only for the rows we will actually show
+    // Same row shape as the SDK path (branch/tag are simply unknown here) so the
+    // renderer does not have to branch on which one produced the list.
     return found.slice(0, 300).map(s => ({
       folder: s.folder,
       cwd: cwdOf(s.full),
       sessionId: s.sessionId,
       mtime: s.mtime,
       preview: previewOf(s.full).slice(0, 120),
+      branch: '',
+      tag: '',
+      size: 0,
     }));
   }
 
@@ -784,3 +881,4 @@ module.exports = ChatManager;
 module.exports.normalizeMode = normalizeMode;
 module.exports.MODES = MODES;
 module.exports.TASK_SUBTYPES = TASK_SUBTYPES;
+module.exports.transcriptItems = transcriptItems;

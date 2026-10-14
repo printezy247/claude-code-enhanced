@@ -228,7 +228,10 @@ function convoRow(s, cwd) {
   row.title = (s.preview || '(empty session)') + '\n' + cwd;
   const main = el('div', 'convo-main');
   main.appendChild(el('div', 'convo-preview', s.preview || '(empty session)'));
-  main.appendChild(el('div', 'convo-meta', basenameOf(cwd) + ' · ' + convoAge(s.mtime)));
+  // gitBranch comes free with the SDK's index; knowing which branch a session
+  // ended on is what makes a list of 200 rows navigable.
+  main.appendChild(el('div', 'convo-meta',
+    basenameOf(cwd) + (s.branch ? ' · ' + s.branch : '') + ' · ' + convoAge(s.mtime)));
   row.appendChild(main);
 
   // Live tab state, so the row shows which conversations are already open.

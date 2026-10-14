@@ -375,6 +375,19 @@ function createWindow() {
           + ' try { const tc = await ccx.invoke("tools:check");'
           + ' out.tools = (tc.tools || []).map(x => x.name + "=" + (x.found ? "yes" : "no")).join(",");'
           + ' } catch (err) { out.tools = "error: " + err.message; }'
+          // The conversation index now comes from the SDK, not a per-file disk
+          // scan: prove it answers and that branch titles survived.
+          + ' try { const t0 = Date.now(); const ci = await ccx.invoke("chats:index");'
+          + ' out.convos = (ci.sessions || []).length + " in " + (Date.now() - t0) + "ms";'
+          + ' out.convoBranch = (ci.sessions || []).filter(s => s.branch).length;'
+          + ' out.convoTitled = (ci.sessions || []).filter(s => s.renamed).length;'
+          + ' } catch (err) { out.convos = "error: " + err.message; }'
+          // Prove the list actually renders the new branch column.
+          + ' try { document.querySelector("#btn-convo-drop").click();'
+          + ' await new Promise(r => setTimeout(r, 2500));'
+          + ' out.convoRows = document.querySelectorAll(".convo-row").length;'
+          + ' out.convoMeta = (document.querySelector(".convo-meta") || {}).textContent || "";'
+          + ' } catch (err) { out.convoRows = "error: " + err.message; }'
           + ' return JSON.stringify(out); })()'
         ).then(r => console.log('CCE_SMOKE: probe ' + r))
           .catch(e => console.log('CCE_SMOKE: probe failed ' + e));
@@ -1332,9 +1345,9 @@ function registerIpc() {
   });
 
 
-  handle('chat:history', async ({ cwd }) => ({ sessions: chats.history(cwd) }));
+  handle('chat:history', async ({ cwd }) => ({ sessions: await chats.history(cwd) }));
   // Replay a stored session transcript so resumed chats show their past conversation.
-  handle('chat:transcript', async ({ cwd, sessionId }) => chats.transcript(cwd, sessionId));
+  handle('chat:transcript', async ({ cwd, sessionId }) => (await chats.transcriptVia(cwd, sessionId)) || chats.transcript(cwd, sessionId));
   handle('chat:delete', async ({ cwd, sessionId }) => chats.deleteSession(cwd, sessionId));
   handle('chat:deleteFolder', async ({ cwd }) => chats.deleteFolder(cwd));
   handle('chat:fork', async ({ id }) => chats.forkParams(id));
@@ -1486,7 +1499,7 @@ function registerIpc() {
   });
 
   // desktop-style history index: every session on disk, flat + recency-sorted
-  handle('chats:index', async () => ({ sessions: chats.index() }));
+  handle('chats:index', async () => ({ sessions: await chats.index() }));
 
   // Usage dashboard: sum total_cost_usd over result frames in stored transcripts.
   handle('usage:scan', async () => {
