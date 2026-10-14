@@ -173,6 +173,7 @@ const Chat = (() => {
     tab.appendChild(el('span', '', '⌘ ' + basename(res.cwd)));
     const closeBtn = el('button', 'close', '✕');
     closeBtn.title = 'Close chat';
+    closeBtn.setAttribute('aria-label', 'Close chat');
     tab.appendChild(closeBtn);
     closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeChat(id); });
     tab.addEventListener('click', () => activateChat(id));
@@ -1519,6 +1520,7 @@ const Chat = (() => {
       const chip = el('span', 'img-chip', '🖼 image ' + (i + 1));
       const x = el('button', 'close', '✕');
       x.title = 'Remove';
+      x.setAttribute('aria-label', 'Remove image');
       x.addEventListener('click', () => { chat.pendingImages.splice(i, 1); renderImageChips(chat); });
       chip.appendChild(x);
       chat.imgs.appendChild(chip);
@@ -1649,6 +1651,7 @@ const Chat = (() => {
     // the menu item and the Ctrl+K palette can trigger it.
     const btn = el('button', 'chat-btn', '▶');
     btn.title = 'Run build / test scripts in a terminal tab';
+    btn.setAttribute('aria-label', 'Run build or test scripts in a terminal tab');
     btn.style.display = 'none';
     chat.pane.appendChild(btn);
     chat.runBtn = btn;
@@ -1769,6 +1772,7 @@ const Chat = (() => {
     head.appendChild(el('h4', '', '🗺 Plan'));
     const close = el('button', 'close', '✕');
     close.title = 'Hide plan panel';
+    close.setAttribute('aria-label', 'Hide plan panel');
     close.addEventListener('click', () => { wrap.remove(); chat.planViewer = null; });
     head.appendChild(close);
     const body = el('div', 'plan-body md');

@@ -14,6 +14,9 @@ function el(tag, cls, text) {
 }
 function toast(msg, kind = '') {
   const t = el('div', 'toast ' + kind, msg);
+  // An error toast is the app telling you something went wrong; a screen-reader
+  // user was never told, because the toast area was not a live region. #53
+  if (kind === 'err') t.setAttribute('role', 'alert');
   $('#toasts').appendChild(t);
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 3600);
   setTimeout(() => t.remove(), 4000);
@@ -246,16 +249,30 @@ function convoRow(s, cwd) {
 
   const menu = el('button', 'convo-more', '▾');
   menu.title = 'Conversation actions';
+  // A glyph is not an accessible name; `title` alone is unreliable, so the
+  // button is named for assistive tech too. #53
+  menu.setAttribute('aria-label', 'Conversation actions');
+  menu.setAttribute('aria-haspopup', 'true');
   menu.addEventListener('click', (e) => {
     e.stopPropagation();
     openConvoMenu(menu, s, cwd);
   });
   row.appendChild(menu);
 
-  row.addEventListener('click', () => {
+  // A row was a bare div with a click handler: no tab stop, no Enter, no role.
+  // Now it is a real control. #53
+  row.tabIndex = 0;
+  row.setAttribute('role', 'button');
+  row.setAttribute('aria-label', (s.preview || 'Conversation') + ' — ' + basenameOf(cwd));
+  const openIt = () => {
     Chat.createSession({ cwd, resume: s.sessionId });
     toggleConversations(false);
     switchView('conversations');
+  };
+  row.addEventListener('click', openIt);
+  row.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); openIt(); }
+    else if (e.key === ' ') { e.preventDefault(); openConvoMenu(menu, s, cwd); }
   });
   return row;
 }
@@ -264,8 +281,11 @@ function convoRow(s, cwd) {
 function openConvoMenu(anchor, s, cwd) {
   document.querySelectorAll('.convo-menu').forEach(m => m.remove());
   const menu = el('div', 'convo-menu');
+  menu.setAttribute('role', 'menu');
+  menu.setAttribute('aria-label', 'Conversation actions');
   const add = (label, hint, run) => {
     const b = el('button', 'convo-menu-item');
+    b.setAttribute('role', 'menuitem');
     b.appendChild(el('span', 'cm-label', label));
     if (hint) b.appendChild(el('span', 'cm-hint', hint));
     b.addEventListener('click', () => { menu.remove(); run(); });
@@ -347,6 +367,10 @@ function openConvoMenu(anchor, s, cwd) {
 /** Read-only transcript modal, with Resume / Fork at the bottom. */
 async function showTranscript(s, cwd) {
   const overlay = el('div', 'modal-overlay');
+  // A dialog must say so: role + aria-modal, or a screen reader treats the
+  // backdrop as ordinary content and keeps reading the page behind it. #53
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
   const modal = el('div', 'modal wide');
   modal.appendChild(el('h3', '', (s.preview || 'Conversation').slice(0, 90)));
   modal.appendChild(el('div', 'hint', cwd + ' · ' + new Date(s.mtime).toLocaleString()));
@@ -640,6 +664,7 @@ async function createSession(opts) {
   tab.appendChild(el('span', '', res.label));
   const closeBtn = el('button', 'close', '✕');
   closeBtn.title = 'Close session';
+  closeBtn.setAttribute('aria-label', 'Close session');
   tab.appendChild(closeBtn);
   closeBtn.addEventListener('click', (e) => { e.stopPropagation(); killSession(id); });
   tab.addEventListener('click', () => activateSession(id));
@@ -802,6 +827,10 @@ function updateStatusbar(sess) {
 
 function openNewSessionModal() {
   const overlay = el('div', 'modal-overlay');
+  // A dialog must say so: role + aria-modal, or a screen reader treats the
+  // backdrop as ordinary content and keeps reading the page behind it. #53
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
   const modal = el('div', 'modal');
   modal.appendChild(el('h3', '', 'New session'));
 
@@ -950,6 +979,10 @@ function renderProviders() {
   }
 
   function openOllamaManager(p) {    const overlay = el('div', 'modal-overlay');
+  // A dialog must say so: role + aria-modal, or a screen reader treats the
+  // backdrop as ordinary content and keeps reading the page behind it. #53
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
     const modal = el('div', 'modal');
     modal.appendChild(el('h3', '', '⚙ Model manager — ' + p.name));
     modal.appendChild(el('div', 'hint', 'Load models into memory with a context size, or unload them to free VRAM. The context size applies while the model stays loaded — chats use it automatically.'));
@@ -1052,6 +1085,10 @@ function renderProviders() {
   const preset = state.providers.presets.find(p => p.id === presetId) || state.providers.presets[0];
 
   const overlay = el('div', 'modal-overlay');
+  // A dialog must say so: role + aria-modal, or a screen reader treats the
+  // backdrop as ordinary content and keeps reading the page behind it. #53
+  overlay.setAttribute('role', 'dialog');
+  overlay.setAttribute('aria-modal', 'true');
   const modal = el('div', 'modal');
   modal.appendChild(el('h3', '', editing ? 'Edit provider' : 'Add provider'));
 

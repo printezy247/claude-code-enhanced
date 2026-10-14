@@ -15,12 +15,12 @@
         <span class="logo-mark">❯</span>
         <span class="logo-text">Claude Code<br /><em>Enhanced</em></span>
       </div>
-      <nav id="nav">
-        <button class="nav-btn active" data-view="conversations"><span class="ico">▤</span><span>Conversations</span><span id="sess-count" class="badge">0</span></button>
-        <button class="nav-btn" data-view="usage"><span class="ico">📊</span><span>Usage</span></button>
-        <button class="nav-btn" data-view="providers"><span class="ico">⬡</span><span>Providers</span></button>
-        <button class="nav-btn" data-view="connectors"><span class="ico">⧉</span><span>Connectors</span></button>
-        <button class="nav-btn" data-view="settings"><span class="ico">⚙</span><span>Settings</span></button>
+      <nav id="nav" aria-label="Sections">
+        <button class="nav-btn active" data-view="conversations" aria-current="page"><span class="ico" aria-hidden="true">▤</span><span>Conversations</span><span id="sess-count" class="badge" role="status" aria-live="polite" aria-label="open conversations">0</span></button>
+        <button class="nav-btn" data-view="usage"><span class="ico" aria-hidden="true">▤</span><span>Usage</span></button>
+        <button class="nav-btn" data-view="providers"><span class="ico" aria-hidden="true">⬡</span><span>Providers</span></button>
+        <button class="nav-btn" data-view="connectors"><span class="ico" aria-hidden="true">⧉</span><span>Connectors</span></button>
+        <button class="nav-btn" data-view="settings"><span class="ico" aria-hidden="true">⚙</span><span>Settings</span></button>
       </nav>
       <div id="claude-banner" class="hidden"></div>
       <div class="sidebar-foot" id="foot-info"></div>
@@ -30,7 +30,7 @@
       <section id="view-conversations" class="view active">
         <div id="tabbar">
           <button id="btn-convo-drop" title="Conversations — past and open chats (Ctrl+B)">
-            <span class="ico">▤</span><span>Conversations</span><span class="caret">▾</span>
+            <span class="ico" aria-hidden="true">▤</span><span>Conversations</span><span class="caret" aria-hidden="true">▾</span>
           </button>
           <div id="tabs"></div>
         </div>
@@ -115,8 +115,10 @@
     </section>
   </div>
 
+  <!-- Status messages must be announced, not just drawn. -->
+  <div id="toasts" role="status" aria-live="polite" aria-atomic="false"></div>
+  <!-- Dialogs are appended here; each one declares role="dialog" itself. -->
   <div id="modal-root"></div>
-  <div id="toasts"></div>
 
   <script src="../../node_modules/@xterm/xterm/lib/xterm.js"></script>
   <script src="../../node_modules/@xterm/addon-fit/lib/addon-fit.js"></script>

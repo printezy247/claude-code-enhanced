@@ -6,11 +6,19 @@
   --border: #2c2d3a;
   --text: #e9e9f0;
   --muted: #9a9aac;
-  --accent: #d97757;
-  --accent-soft: rgba(217, 119, 87, 0.15);
+  /* #d97757 measured 4.36:1 as text on --bg4 (below AA). #e08a6d is 5.20:1 as
+     text AND 7.06:1 for the dark ink on it that .btn.primary pairs with, so one
+     change fixes both roles. #53 */
+  --accent: #e08a6d;
+  --accent-soft: rgba(224, 138, 109, 0.15);
   --ok: #7dc98f;
   --warn: #e0af68;
-  --danger: #d2626a;
+  /* #e07b83 / #e08a6d were #d2626a / #d97757: the originals measured 3.69:1 and
+     4.36:1 against the raised surfaces (--bg3/--bg4), below the 4.5:1 AA floor.
+     These are 4.75:1 and 5.20:1 in the same hues. #53 */
+  --danger: #e07b83;
+  /* Focus ring: 3:1 against every surface it can land on, per WCAG 2.2. */
+  --focus: #7fb2ff;
   --mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'DejaVu Sans Mono', monospace;
   --sans: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
@@ -179,9 +187,26 @@ input[type="text"], input[type="password"], select, textarea {
   background: #101017; color: var(--text);
   border: 1px solid var(--border); border-radius: 8px;
   padding: 8px 10px; font: inherit; font-size: 13px;
-  outline: none; width: 100%;
+  width: 100%;
+}
+/* Keyboard focus is now visible everywhere. There was no focus-visible rule in
+   this stylesheet at all, and two bare `outline: none` — so a keyboard user
+   could not tell where they were. focus-visible (not :focus) keeps the ring off
+   mouse clicks, which is what made it tempting to suppress in the first place.
+   #53 */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  border-color: var(--focus);
+  outline-offset: 1px;
 }
 input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+input:focus:not(:focus-visible), select:focus:not(:focus-visible), textarea:focus:not(:focus-visible) {
+  outline: none;   /* mouse focus: the border change is enough */
+}
 textarea { font-family: var(--mono); font-size: 12px; resize: vertical; min-height: 64px; }
 input[type="checkbox"] { accent-color: var(--accent); width: 15px; height: 15px; }
 label.fld { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--muted); }
@@ -350,7 +375,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   border: 1px solid var(--border); border-radius: 10px; margin: 8px 0;
   background: var(--bg2); max-width: 860px; overflow: hidden;
 }
-.tool-card.kind-edit { border-left: 3px solid #e0af68; }
+.tool-card.kind-edit { border-left: 3px solid var(--warn); }
 .tool-card.kind-mcp { border-left: 3px solid #7aa2f7; }
 .tool-card.kind-agent { border-left: 3px solid #bb9af7; }
 .tool-card.kind-skill { border-left: 3px solid var(--accent); }
@@ -476,8 +501,8 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .skill-row code { font-family: var(--mono); color: var(--accent); flex: none; }
 .skill-desc { flex: 1; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mcp-chip-row { display: flex; gap: 6px; flex-wrap: wrap; }
-.chip.mcp-ok { color: var(--ok, #7bd88f); border-color: var(--ok, #7bd88f); }
-.chip.mcp-err { color: #e5484d; border-color: #e5484d; }
+.chip.mcp-ok { color: var(--ok); border-color: var(--ok); }
+.chip.mcp-err { color: var(--danger); border-color: var(--danger); }
 .chip.mcp-warn { color: var(--warn); border-color: var(--warn); }
 .chip.mcp-off { opacity: .5; }
 
@@ -648,9 +673,11 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.5); overflow: hidden;
 }
 .palette input {
-  width: 100%; background: transparent; border: none; outline: none;
+  width: 100%; background: transparent; border: none;
   color: var(--text); font-size: 15px; padding: 14px 16px; border-bottom: 1px solid var(--border);
 }
+/* The global :focus-visible ring covers this input (its border:none would
+   otherwise leave nothing at all). */
 .palette-list { max-height: 46vh; overflow: auto; padding: 6px; }
 .palette-item {
   display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px;
@@ -839,11 +866,14 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   --border: #d9d9e2;
   --text: #1b1b22;
   --muted: #61616f;
-  --accent: #b8542f;
-  --accent-soft: rgba(184, 84, 47, 0.12);
-  --ok: #2f7d46;
-  --warn: #9a6b1a;
+  /* Light theme had three more sub-4.5:1 pairs (#b8542f 3.75, #2f7d46 3.93,
+     #9a6b1a 3.63 against --bg4). These measure 4.57 / 5.15 / 5.02. #53 */
+  --accent: #a4492a;
+  --accent-soft: rgba(164, 73, 42, 0.12);
+  --ok: #27693a;
+  --warn: #7d5713;
   --danger: #b23b43;
+  --focus: #1f5fbf;
 }
 :root[data-theme="light"] body { background: var(--bg); color: var(--text); }
 :root[data-theme="light"] .perm-command,
@@ -914,21 +944,21 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 
 /* ===== provider settings (OpenCode-style) ===== */
 .provider-card .pstatus { font-size: 12px; margin-right: 6px; }
-.provider-card .pstatus.ok { color: #7dc98f; }
-.provider-card .pstatus.err { color: #d2626a; }
+.provider-card .pstatus.ok { color: var(--ok); }
+.provider-card .pstatus.err { color: var(--danger); }
 .provider-card .pstatus.unknown { color: #61627a; }
 .provider-card.disabled { opacity: .55; }
-.provider-card .auth-none { color: #e0af68; }
+.provider-card .auth-none { color: var(--warn); }
 .cap-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
 .chip.cap-openai-compat { background: #1d2b3a; color: #7dcfff; }
-.chip.cap-native-anthropic { background: #3a2a1d; color: #e0af68; }
+.chip.cap-native-anthropic { background: #3a2a1d; color: var(--warn); }
 .chip.cap-oauth { background: #2a2140; color: #bb9af7; }
 .chip.cap-subscription { background: #213a2a; color: #9ddba7; }
 .chip.cap-local { background: #202030; color: #c8c8d4; }
 .chip.cap-tools { background: #23303a; color: #7dcfff; }
 .chip.cap-live { background: #1f3a2a; color: #9ddba7; }
 .chip.kind-disabled { background: #3a2020; color: #e8878d; }
-.chip.kind-anthropic { background: #3a2a1d; color: #e0af68; }
+.chip.kind-anthropic { background: #3a2a1d; color: var(--warn); }
 .chip.kind-openai, .chip.kind-openai-responses, .chip.kind-gemini { background: #1d2b3a; color: #7dcfff; }
 .chip.kind-oauth { background: #2a2140; color: #bb9af7; }
 .chip.kind-api { background: #21303a; color: #7dcfff; }
@@ -936,10 +966,10 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .provider-search { width: 100%; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 7px; padding: 8px 10px; margin: 8px 0; }
 .filter-row { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 6px; }
 .chip.filter { cursor: pointer; border: 1px solid var(--border); background: transparent; }
-.chip.filter.active { background: var(--accent, #d97757); color: #101017; }
+.chip.filter.active { background: var(--accent); color: #1a120e; }
 .connect-list { max-height: 46vh; overflow: auto; display: flex; flex-direction: column; gap: 4px; }
 .connect-row { display: flex; align-items: center; gap: 10px; text-align: left; width: 100%; background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; color: var(--text); }
-.connect-row:hover { border-color: var(--accent, #d97757); }
+.connect-row:hover { border-color: var(--accent); }
 .connect-main { flex: 1; min-width: 0; }
 .connect-name { font-weight: 600; }
 .connect-blurb { font-size: 12px; opacity: .75; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -948,13 +978,13 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .provider-detail .detail-head { display: flex; align-items: center; gap: 8px; }
 .tab-row { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 10px 0; }
 .tab { background: transparent; border: none; color: var(--text); opacity: .7; padding: 8px 12px; cursor: pointer; border-bottom: 2px solid transparent; }
-.tab.active { opacity: 1; border-bottom-color: var(--accent, #d97757); font-weight: 600; }
+.tab.active { opacity: 1; border-bottom-color: var(--accent); font-weight: 600; }
 .detail-body { max-height: 52vh; overflow: auto; }
 .pane { display: flex; flex-direction: column; gap: 10px; }
 .auth-box { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
 .auth-status { display: flex; align-items: center; gap: 8px; }
-.test-out.ok { color: #7dc98f; }
-.test-out.err { color: #d2626a; }
+.test-out.ok { color: var(--ok); }
+.test-out.err { color: var(--danger); }
 .oauth-link { color: #7dcfff; word-break: break-all; font-size: 12px; }
 .oauth-code { font-family: var(--mono); font-size: 18px; letter-spacing: 2px; }
 
@@ -987,3 +1017,30 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .tx-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text); }
 .tx-row .btn.tiny { margin-top: 6px; opacity: 0; transition: opacity .12s; }
 .tx-row:hover .btn.tiny, .tx-row:focus-within .btn.tiny { opacity: 1; }
+
+/* ---------- focus visibility (#53) ----------
+   The global :focus-visible rule covers anything that kept its outline. These
+   are the controls that were invisible to a keyboard: custom-styled rows, tabs
+   and toggles where a border/background change alone reads as "hover". */
+.nav-btn:focus-visible,
+.tab:focus-visible,
+#btn-convo-drop:focus-visible,
+#qa-new:focus-visible,
+#qa-resume:focus-visible,
+#qa-browse:focus-visible,
+#qa-reopen:focus-visible,
+.convo-row:focus-visible,
+.convo-menu-item:focus-visible,
+.tx-row:focus-visible,
+.perm-actions .btn:focus-visible,
+.msg-actions .btn:focus-visible,
+.chip:focus-visible,
+.tool-head:focus-visible,
+.mcp-row .btn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+/* Rows and tabs are divs: without this they are not even focusable. */
+.convo-row:focus, .tx-row:focus { outline: none; }
+.tab:focus { outline: none; }
