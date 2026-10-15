@@ -529,3 +529,19 @@ describe('local context default', () => {
     expect(store.settings.localNumCtx).toBe(262144);
   });
 });
+
+describe('key that cannot work at this URL', () => {
+  const { keyUrlMismatch } = require('../src/main/providers.js');
+  it('says a Xiaomi Token Plan key needs the Token Plan URL', () => {
+    expect(keyUrlMismatch('https://api.xiaomimimo.com/v1', 'tp-slx123rge5')).toMatch(/Token Plan key.*token-plan-cn\.xiaomimimo\.com\/v1/);
+  });
+  it('says a pay-as-you-go key needs the pay-as-you-go URL', () => {
+    expect(keyUrlMismatch('https://token-plan-sgp.xiaomimimo.com/v1', 'sk-abc')).toMatch(/api\.xiaomimimo\.com\/v1/);
+  });
+  it('stays quiet when key and URL match, or for other providers', () => {
+    expect(keyUrlMismatch('https://token-plan-sgp.xiaomimimo.com/v1', 'tp-abc')).toBe('');
+    expect(keyUrlMismatch('https://api.xiaomimimo.com/v1', 'sk-abc')).toBe('');
+    expect(keyUrlMismatch('https://router.bynara.id/v1', 'tp-abc')).toBe('');
+    expect(keyUrlMismatch('https://api.xiaomimimo.com/v1', '')).toBe('');
+  });
+});

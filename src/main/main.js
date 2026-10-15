@@ -898,6 +898,9 @@ function registerIpc() {
         ? { ok: true, note: 'official Anthropic API', detail: key ? 'API key set' : 'no key — run /login in a terminal, or add one' }
         : { ok: false, error: 'No base URL set for this provider.' };
     }
+    // Some keys only work at one of a provider's hosts; say which instead of a bare 401.
+    const mismatch = providers.keyUrlMismatch(base, key);
+    if (mismatch) return { ok: false, error: mismatch };
     // A local runtime is tested by asking it what it has, not by sending a
     // Claude model name it cannot know (which 404s and looks like a dead server).
     if (isLocalBase(base)) {

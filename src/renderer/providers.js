@@ -406,7 +406,10 @@ const ProvidersUI = (() => {
       keyBox.appendChild(el('h4', '', 'API key'));
       const l = el('label', 'fld');
       l.appendChild(el('span', '', 'Key (stored in auth.json' + (entry.local ? ' — leave blank for local' : '') + ')'));
-      const inp = el('input'); inp.type = 'password'; inp.placeholder = p.authHint ? 'leave blank to keep ' + p.authHint : 'paste the API key';
+      const inp = el('input'); inp.type = 'password';
+      // Repainted after Save/Clear: it kept naming the old key once a new one was saved.
+      const paintPlaceholder = () => { inp.placeholder = p.authHint ? 'leave blank to keep ' + p.authHint : 'paste the API key'; };
+      paintPlaceholder();
       l.appendChild(inp); keyBox.appendChild(l);
       const row = el('div', 'row');
       const save = el('button', 'btn primary', 'Save key');
@@ -414,14 +417,14 @@ const ProvidersUI = (() => {
         const key = inp.value.trim();
         if (!key) return toast('Enter a key first', 'err');
         const r = await ccx.invoke('auth:setKey', { uid: p.uid, key });
-        if (r.ok) { inp.value = ''; await refreshProviders(); const np = instances().find(x => x.uid === p.uid); Object.assign(p, np || {}); paintStatus(); toast('Key saved', 'ok'); }
+        if (r.ok) { inp.value = ''; await refreshProviders(); const np = instances().find(x => x.uid === p.uid); Object.assign(p, np || {}); paintStatus(); paintPlaceholder(); toast('Key saved', 'ok'); }
         else toast(r.error, 'err');
       });
       row.appendChild(save);
       const clear = el('button', 'btn small danger', 'Clear');
       clear.addEventListener('click', async () => {
         const r = await ccx.invoke('auth:clear', { uid: p.uid });
-        if (r.ok) { await refreshProviders(); const np = instances().find(x => x.uid === p.uid); Object.assign(p, np || {}); paintStatus(); toast('Credential cleared', 'ok'); }
+        if (r.ok) { await refreshProviders(); const np = instances().find(x => x.uid === p.uid); Object.assign(p, np || {}); paintStatus(); paintPlaceholder(); toast('Credential cleared', 'ok'); }
         else toast(r.error, 'err');
       });
       row.appendChild(clear);
