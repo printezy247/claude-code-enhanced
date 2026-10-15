@@ -15,4 +15,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Fail the build on known-vulnerable runtime dependencies. Dev-only
+      # tooling (electron-builder chain) is excluded: its advisories cannot
+      # ship to users.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm test

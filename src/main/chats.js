@@ -9,6 +9,7 @@ const path = require('path');
 const os = require('os');
 const { EventEmitter } = require('events');
 const providers = require('./providers');
+const { atomicWriteJson, readJsonSafe } = require('./atomic');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
@@ -330,7 +331,7 @@ class ChatManager extends EventEmitter {
       busy: false, sessionId: null,
       provider: providerInstance ? providers.publicInstance(providerInstance) : null,
       providerInstance,
-      push: stream.push, close: null, lastResult: null,
+      push: stream.push, close: stream.close, lastResult: null,
       checkpoints: [],   // user-message uuids -> rewind anchors (file checkpointing)
     };
     this.lastCreatedId = id;
@@ -346,7 +347,7 @@ class ChatManager extends EventEmitter {
     // leaving the tab silently dead (e.g. spawn failures inside the SDK).
     chat.gotFirstFrame = false;
     chat.watchdog = setTimeout(() => {
-      if (!chat.gotFirstFrame) {
+      if (!chat.gotFirstFrame && this.chats.has(id)) {
         this.emit('event', id, {
           kind: 'error',
           error: 'Chat engine did not start (no frames from the claude engine within 20s). '
@@ -412,6 +413,12 @@ class ChatManager extends EventEmitter {
         }
         this.emit('event', id, { kind: 'exit' });
         this.chats.delete(id);
+      } finally {
+        // The watchdog must not outlive the loop either way: a tab closed
+        // before the first frame would otherwise fire a phantom "engine did
+        // not start" error into a removed chat. #sec
+        clearTimeout(chat.watchdog);
+        stream.close();
       }
     })();
 
@@ -425,15 +432,28 @@ class ChatManager extends EventEmitter {
   _makeInputStream() {
     const queue = [];
     let wake = null;
+    let closed = false;
     return {
       push(m) {
+        if (closed) return;
         if (wake) { const w = wake; wake = null; w(m); }
         else queue.push(m);
       },
+      // End the generator instead of leaving it suspended forever on the
+      // pending `wake` promise — a suspended generator keeps the whole chat
+      // (SDK stream + closures) alive after close. #sec
+      close() {
+        closed = true;
+        const w = wake; wake = null;
+        if (w) w(undefined);
+      },
       iterate: async function* () {
         for (;;) {
-          if (queue.length) yield queue.shift();
-          else yield await new Promise((r) => { wake = r; });
+          if (queue.length) { yield queue.shift(); continue; }
+          if (closed) return;
+          const v = await new Promise((r) => { wake = r; });
+          if (closed) return;
+          yield v;
         }
       },
     };
@@ -446,13 +466,14 @@ class ChatManager extends EventEmitter {
       // keep a side-file to avoid config.json churn.
       const file = path.join(process.env.HOME || os.homedir(), '.claude', 'cce-chat-sessions.json');
       let data = {};
-      try { data = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { /* first run */ }
+      const loaded = readJsonSafe(file);
+      if (loaded && typeof loaded === 'object') data = loaded;
       data[dir] = sessionId;
       // keep it bounded
       const keys = Object.keys(data);
       if (keys.length > 50) keys.slice(0, keys.length - 50).forEach(k => delete data[k]);
       fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, JSON.stringify(data, null, 2), { mode: 0o600 });
+      atomicWriteJson(file, data);
     } catch { /* non-fatal */ }
   }
 
@@ -824,6 +845,8 @@ class ChatManager extends EventEmitter {
       }
     }
     if (!chat) return;
+    clearTimeout(chat.watchdog);       // never fire "engine did not start" on a closed tab
+    try { chat.close && chat.close(); } catch { /* stream already ended */ }
     try { chat.abort.abort(); } catch { /* already closing */ }
   }
 

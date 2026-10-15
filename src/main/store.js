@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { app } = require('electron');
+const { atomicWriteJson, readJsonSafe } = require('./atomic');
 
 const DEFAULT_SETTINGS = {
   claudePath: '',            // empty = auto-detect
@@ -46,10 +47,10 @@ class Store {
     fs.mkdirSync(dir, { recursive: true });
     try { fs.chmodSync(dir, 0o700); } catch { /* best effort */ }
     this.file = path.join(dir, 'config.json');
-    try {
-      const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      this.data = { ...this.data, ...parsed };
-    } catch { /* first run or corrupt file -> defaults */ }
+    // A file that exists but does not parse is preserved as *.corrupt-<ts>
+    // before we start from defaults, so a half-written config is recoverable.
+    const parsed = readJsonSafe(this.file);
+    if (parsed && typeof parsed === 'object') this.data = { ...this.data, ...parsed };
     this.data.providers ??= [];
     this.data.configVersion ??= 2;
     this.data.settings = { ...DEFAULT_SETTINGS, ...(this.data.settings || {}) };
@@ -57,7 +58,7 @@ class Store {
   }
 
   save() {
-    fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2), { mode: 0o600 });
+    atomicWriteJson(this.file, this.data);
   }
 
   get settings() { return this.data.settings; }

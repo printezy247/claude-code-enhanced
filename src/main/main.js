@@ -66,6 +66,21 @@ function secretFor(uid) { return secretCache.get(uid) || {}; }
 const oauthSessions = new Map();
 let oauthSeq = 0;
 
+// Reap abandoned sign-ins. If the Connect dialog is closed without completing,
+// nothing else cancels the flow — the PKCE callback server would keep listening
+// and the device-flow poll would keep spinning. #sec
+const OAUTH_TTL_MS = 10 * 60 * 1000;
+const oauthReaper = setInterval(() => {
+  const now = Date.now();
+  for (const [sid, sess] of oauthSessions) {
+    if (now - (sess.createdAt || 0) > OAUTH_TTL_MS) {
+      try { sess.flow && sess.flow.cancel && sess.flow.cancel(); } catch { /* noop */ }
+      oauthSessions.delete(sid);
+    }
+  }
+}, 60 * 1000);
+oauthReaper.unref();
+
 /**
  * Refresh an OAuth provider's token if it is expired (or about to). Copilot
  * short-lived tokens are re-minted from the long-lived GitHub token.
@@ -307,6 +322,9 @@ function createWindow() {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      // The preload only needs `electron`; a sandboxed preload cannot drag the
+      // main world's Node surface into the renderer if it is ever compromised.
+      sandbox: true,
       spellcheck: false,
     },
   });
@@ -1482,14 +1500,37 @@ function registerIpc() {
 
   // Read a file so an Edit diff can show real context lines instead of only the
   // old_string snippet, and so the split view can show a file. #29
+  // The renderer must not be able to read arbitrary disk (~/.ssh, ~/.aws, …):
+  // only files under a currently-open project root (a live chat or terminal
+  // session cwd) are readable, resolved through realpath so `..` and symlink
+  // tricks cannot escape upward.
+  const readableRoots = () => {
+    const home = process.env.HOME || os.homedir();
+    const roots = [];
+    const add = (d) => {
+      if (!d) return;
+      const p = path.resolve(String(d).replace(/^~(?=\/|$)/, home));
+      try { roots.push(fs.realpathSync(p)); } catch { roots.push(p); }
+    };
+    for (const c of chats.chats.values()) add(c.cwd);
+    for (const s of sessions.list()) add(s.cwd);
+    return roots;
+  };
   handle('file:read', async ({ path: p, maxBytes }) => {
     if (!p) throw new Error('path required');
     const home = process.env.HOME || os.homedir();
     const real = path.resolve(String(p).replace(/^~(?=\/|$)/, home));
+    let target;
+    try { target = fs.realpathSync(real); } catch { throw new Error('file not found'); }
+    const roots = readableRoots();
+    if (!roots.some((r) => target === r || target.startsWith(r + path.sep))) {
+      throw new Error('path is outside any open project');
+    }
     const limit = Math.min(Number(maxBytes) > 0 ? Number(maxBytes) : 200000, 2000000);
-    const st = fs.statSync(real);
-    if (st.size > limit) return { path: real, tooLarge: true, size: st.size, content: '' };
-    return { path: real, tooLarge: false, size: st.size, content: fs.readFileSync(real, 'utf8') };
+    const st = fs.statSync(target);
+    if (!st.isFile()) throw new Error('not a file');
+    if (st.size > limit) return { path: target, tooLarge: true, size: st.size, content: '' };
+    return { path: target, tooLarge: false, size: st.size, content: fs.readFileSync(target, 'utf8') };
   });
 
   // Everything the engine reads as memory/rules for a project — one panel edits them.

@@ -112,6 +112,17 @@ class Tray extends EventEmitter {
 }
 
 const Menu = { buildFromTemplate: (t) => ({ t }), setApplicationMenu() {}, createPopup: () => ({ popup() {} }) };
+
+// Preload support: the stub records what a preload script exposes so tests can
+// drive the real src/preload/preload.js guard logic.
+const exposed = new Map();
+const invokeCalls = [];
+const contextBridge = { exposeInMainWorld: (name, api) => exposed.set(name, api) };
+const ipcRenderer = {
+  invoke: async (channel, payload) => { invokeCalls.push({ channel, payload }); return { ok: true, channel }; },
+  send: (channel, payload) => { invokeCalls.push({ channel, payload, send: true }); },
+  on() {}, once() {}, removeListener() {},
+};
 const nativeImage = { createFromPath: () => ({ isEmpty: () => true }), createFromDataURL: () => ({ isEmpty: () => true }) };
 const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showMessageBox: async () => ({ response: 0 }) };
 const shell = {
@@ -122,8 +133,9 @@ const shell = {
 
 module.exports = {
   app, ipcMain, BrowserWindow, Notification, Tray, Menu, nativeImage, dialog, shell,
+  contextBridge, ipcRenderer,
   // --- test helpers -------------------------------------------------------
-  __state: { handlers, sent, notifications, opened, appEvents, windows },
+  __state: { handlers, sent, notifications, opened, appEvents, windows, exposed, invokeCalls },
   __reset() {
     handlers.clear();
     sent.length = 0;
@@ -131,6 +143,8 @@ module.exports = {
     opened.length = 0;
     appEvents.clear();
     windows.length = 0;
+    exposed.clear();
+    invokeCalls.length = 0;
   },
   __userDataDir: ensureUserData,
 };

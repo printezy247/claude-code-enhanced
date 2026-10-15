@@ -8,6 +8,7 @@
 //
 // Exports `callUpstream(prov, body, wantStream, signal) -> Response-like`.
 'use strict';
+const { parsedDataEvents } = require('./sse');
 
 /** OpenAI-compatible root for a provider base URL (bare Ollama roots get /v1). */
 function openaiBase(baseUrl) {
@@ -260,43 +261,26 @@ function buildResponsesInput(body) {
   return req;
 }
 
-/** Yield the body chunks, then a newline so a final unterminated SSE line is parsed. */
-async function* withFlush(body) {
-  for await (const c of body) yield c;
-  yield Buffer.from('\n');
-}
-
 /** Translate a /responses SSE stream into OpenAI chat.completions chunks. */
 async function* responsesChunks(upstream, model) {
-  const dec = new TextDecoder();
-  let buf = '';
   const toolIdx = new Map();
   let n = 0;
-  for await (const chunk of withFlush(upstream.body)) {
-    buf += dec.decode(chunk, { stream: true });
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      let ev; try { ev = JSON.parse(payload); } catch { continue; }
-      const type = ev.type || '';
-      if (type === 'response.output_text.delta' && ev.delta) {
-        yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: ev.delta } }] };
-      } else if (type === 'response.output_item.added' && ev.item && ev.item.type === 'function_call') {
-        const idx = n++;
-        toolIdx.set(ev.item.id || ev.item.call_id, idx);
-        yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, id: ev.item.call_id || ev.item.id, type: 'function', function: { name: ev.item.name, arguments: '' } }] } }] };
-      } else if (type === 'response.function_call_arguments.delta') {
-        const idx = toolIdx.get(ev.item_id) != null ? toolIdx.get(ev.item_id) : 0;
-        yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, function: { arguments: ev.delta || '' } }] } }] };
-      } else if (type === 'response.completed' || type === 'response.incomplete') {
-        const u = (ev.response && ev.response.usage) || {};
-        const hasTools = n > 0;
-        const cut = type === 'response.incomplete';
-        yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: cut ? 'length' : hasTools ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: u.input_tokens || 0, completion_tokens: u.output_tokens || 0 } };
-      }
+  for await (const ev of parsedDataEvents(upstream.body)) {
+    const type = ev.type || '';
+    if (type === 'response.output_text.delta' && ev.delta) {
+      yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: ev.delta } }] };
+    } else if (type === 'response.output_item.added' && ev.item && ev.item.type === 'function_call') {
+      const idx = n++;
+      toolIdx.set(ev.item.id || ev.item.call_id, idx);
+      yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, id: ev.item.call_id || ev.item.id, type: 'function', function: { name: ev.item.name, arguments: '' } }] } }] };
+    } else if (type === 'response.function_call_arguments.delta') {
+      const idx = toolIdx.get(ev.item_id) != null ? toolIdx.get(ev.item_id) : 0;
+      yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, function: { arguments: ev.delta || '' } }] } }] };
+    } else if (type === 'response.completed' || type === 'response.incomplete') {
+      const u = (ev.response && ev.response.usage) || {};
+      const hasTools = n > 0;
+      const cut = type === 'response.incomplete';
+      yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: cut ? 'length' : hasTools ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: u.input_tokens || 0, completion_tokens: u.output_tokens || 0 } };
     }
   }
   yield DONE;
@@ -386,38 +370,27 @@ function buildGeminiBody(body) {
 }
 
 async function* geminiChunks(upstream, model) {
-  const dec = new TextDecoder();
-  let buf = '';
   let n = 0;
-  for await (const chunk of withFlush(upstream.body)) {
-    buf += dec.decode(chunk, { stream: true });
-    let i;
-    while ((i = buf.indexOf('\n')) >= 0) {
-      const line = buf.slice(0, i).trim(); buf = buf.slice(i + 1);
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (!payload || payload === '[DONE]') continue;
-      let ev; try { ev = JSON.parse(payload); } catch { continue; }
-      const cand = (ev.candidates || [])[0];
-      if (!cand) {
-        if (ev.usageMetadata) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [], usage: { prompt_tokens: ev.usageMetadata.promptTokenCount || 0, completion_tokens: ev.usageMetadata.candidatesTokenCount || 0 } };
-        continue;
+  for await (const ev of parsedDataEvents(upstream.body)) {
+    const cand = (ev.candidates || [])[0];
+    if (!cand) {
+      if (ev.usageMetadata) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [], usage: { prompt_tokens: ev.usageMetadata.promptTokenCount || 0, completion_tokens: ev.usageMetadata.candidatesTokenCount || 0 } };
+      continue;
+    }
+    const parts = (cand.content && cand.content.parts) || [];
+    for (const p of parts) {
+      if (p.text) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: p.text } }] };
+      if (p.functionCall) {
+        const idx = n++;
+        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, id: 'call_' + idx + '_' + Date.now(), type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } }] } }] };
       }
-      const parts = (cand.content && cand.content.parts) || [];
-      for (const p of parts) {
-        if (p.text) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: p.text } }] };
-        if (p.functionCall) {
-          const idx = n++;
-          yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, id: 'call_' + idx + '_' + Date.now(), type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } }] } }] };
-        }
+    }
+    if (cand.finishReason) {
+      if (cand.finishReason !== 'STOP' && cand.finishReason !== 'MAX_TOKENS') {
+        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: '\n\n[response stopped by provider: ' + cand.finishReason + ']' } }] };
       }
-      if (cand.finishReason) {
-        if (cand.finishReason !== 'STOP' && cand.finishReason !== 'MAX_TOKENS') {
-          yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: '\n\n[response stopped by provider: ' + cand.finishReason + ']' } }] };
-        }
-        const fr = cand.finishReason === 'MAX_TOKENS' ? 'length' : (n > 0 ? 'tool_calls' : 'stop');
-        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: fr }] };
-      }
+      const fr = cand.finishReason === 'MAX_TOKENS' ? 'length' : (n > 0 ? 'tool_calls' : 'stop');
+      yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: fr }] };
     }
   }
   yield DONE;

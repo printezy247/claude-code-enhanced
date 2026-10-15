@@ -7,6 +7,7 @@ const http = require('http');
 const crypto = require('crypto');
 const adapters = require('./adapters');
 const { openaiBase } = adapters;
+const { sseLines } = require('./sse');
 
 // Port 0 = ask the OS for a free port. A fixed 8199 collides with any other
 // listener and, before #8, exposed provider keys to that process.
@@ -192,8 +193,6 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   };
   sse('message_start', { type: 'message_start', message: { id: 'msg_proxy', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: inTokens(body), output_tokens: 0 } } });
 
-  const decoder = new TextDecoder();
-  let buf = '';
   let reasonBuf = '';
   let reasonAll = '';      // everything the model reasoned, for the empty-answer fallback
   // Providers that report usage mid-stream (OpenAI include_usage) overwrite
@@ -375,17 +374,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
           if (j.usage.completion_tokens) outTokens = j.usage.completion_tokens;
         }
     };
-    for await (const chunk of upstream.body) {
-      buf += decoder.decode(chunk, { stream: true });
-      let idx;
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx);
-        buf = buf.slice(idx + 1);
-        handleLine(line);
-      }
-    }
-    // Last SSE line may arrive without a trailing newline.
-    if (buf.trim()) handleLine(buf);
+    for await (const line of sseLines(upstream.body)) handleLine(line);
   } catch (err) {
     // Client hung up (turn interrupted) or the socket died: stop paying for
     // tokens nobody will read. #10
@@ -396,7 +385,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   if (failed) {
     // Say so and stop. Finishing the message as if it had completed hid the
     // failure behind an empty or half-written reply.
-    if (!res.writableEnded) {
+    if (!res.writableEnded && !res.destroyed) {
       const out = mapError(Number(failed.upstream && (failed.upstream.status || failed.upstream.code)) || 502, String(failed.message || failed));
       try { sse('error', { type: 'error', error: { type: out.type, message: out.message } }); } catch { /* socket gone */ }
       try { res.end(); } catch { /* socket gone */ }
@@ -426,7 +415,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   closeBlock();
   sse('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { input_tokens: promptTokens, output_tokens: outTokens } });
   sse('message_stop', { type: 'message_stop' });
-  res.end();
+  if (!res.writableEnded && !res.destroyed) { try { res.end(); } catch { /* socket gone */ } }
 }
 
 const { THINK_CLOSE_RE } = require('../shared/think.js');
@@ -584,8 +573,6 @@ async function passthroughAnthropic(body, prov, res, inHeaders) {
     return;
   }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-  const dec = new TextDecoder();
-  let buf = '';
   const fix = (line) => {
     if (!line.startsWith('data:')) return line;
     let j;
@@ -596,14 +583,9 @@ async function passthroughAnthropic(body, prov, res, inHeaders) {
     return 'data: ' + JSON.stringify(j);
   };
   try {
-    for await (const chunk of up.body) {
-      buf += dec.decode(chunk, { stream: true });
-      let i;
-      while ((i = buf.indexOf('\n')) >= 0) { res.write(fix(buf.slice(0, i).replace(/\r$/, '')) + '\n'); buf = buf.slice(i + 1); }
-    }
-    if (buf) res.write(fix(buf) + '\n');
+    for await (const line of sseLines(up.body)) res.write(fix(line) + '\n');
   } catch { /* client gone or upstream cut: just end */ }
-  res.end();
+  if (!res.writableEnded && !res.destroyed) { try { res.end(); } catch { /* socket gone */ } }
 }
 
 function isTokenValid(req, token) {

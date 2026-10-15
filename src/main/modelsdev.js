@@ -8,6 +8,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { atomicWriteJson } = require('./atomic');
 
 const MODELSDEV_URL = 'https://models.dev/api.json';
 const SEED = require('./models-dev.seed.json');
@@ -56,7 +57,7 @@ async function refresh() {
   const slim = compact(raw);
   if (cacheFile) {
     fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
-    fs.writeFileSync(cacheFile, JSON.stringify(slim));
+    atomicWriteJson(cacheFile, slim, { compact: true });   // never leave a half-written cache that load() would silently reset
   }
   cache = slim;
   return { ...stat(), source: 'live', updated: Date.now() };

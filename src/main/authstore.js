@@ -5,6 +5,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
+const { atomicWriteJson, readJsonSafe } = require('./atomic');
 
 const FILE_VERSION = 1;
 
@@ -32,12 +33,12 @@ class AuthStore {
   init(dir) {
     if (dir) this.file = path.join(dir, 'auth.json');
     if (!this.file) return;
-    try {
-      fs.mkdirSync(path.dirname(this.file), { recursive: true });
-      const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      if (parsed && typeof parsed === 'object') this.data = { version: FILE_VERSION, providers: {}, ...parsed };
-      this.data.providers ??= {};
-    } catch { /* first run or corrupt -> empty */ }
+    try { fs.mkdirSync(path.dirname(this.file), { recursive: true }); } catch { /* exists */ }
+    // Corrupt-but-present auth.json is preserved as *.corrupt-<ts> first: this
+    // file holds every provider secret and must never vanish silently.
+    const parsed = readJsonSafe(this.file);
+    if (parsed && typeof parsed === 'object') this.data = { version: FILE_VERSION, providers: {}, ...parsed };
+    this.data.providers ??= {};
   }
 
   get encryptionAvailable() {
@@ -46,7 +47,7 @@ class AuthStore {
 
   save() {
     if (!this.file) return;
-    try { fs.writeFileSync(this.file, JSON.stringify(this.data, null, 2), { mode: 0o600 }); }
+    try { atomicWriteJson(this.file, this.data); }
     catch (err) { console.error('[auth] save failed:', String((err && err.message) || err)); }
   }
 

@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { atomicWriteJson } = require('./atomic');
 
 // ---- PKCE helpers -----------------------------------------------------------
 const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
@@ -135,18 +136,43 @@ function begin(providerId, cfg, opts = {}) {
 
   // PKCE with a localhost callback.
   const wantPort = parseRedirectPort(redirectUri);
+  const cbPath = (() => { try { return new URL(redirectUri).pathname; } catch { return '/callback'; } })();
   let resolveCb, rejectCb;
+  let settled = false;
   const done = new Promise((res, rej) => { resolveCb = res; rejectCb = rej; });
+  // A callback that fails before the UI calls wait() must not surface as an
+  // unhandled rejection; chains built off `done` (via wait) still reject.
+  done.catch(() => {});
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const page = (res2, status, msg) => {
+    res2.writeHead(status, { 'content-type': 'text/html; charset=utf-8' });
+    res2.end('<html><body style="font-family:sans-serif;background:#14141a;color:#eee;padding:40px">'
+      + msg + '</body></html>');
+  };
   const server = http.createServer((req, res) => {
     const u = new URL(req.url, 'http://127.0.0.1');
+    if (u.pathname !== cbPath) { page(res, 404, 'Not found.'); return; }
     const code = u.searchParams.get('code');
     const err = u.searchParams.get('error');
-    res.writeHead(200, { 'content-type': 'text/html' });
-    res.end('<html><body style="font-family:sans-serif;background:#14141a;color:#eee;padding:40px">'
-      + (err ? 'Authorization failed: ' + err : 'Signed in. You can close this tab and return to Claude Code Enhanced.')
-      + '</body></html>');
-    if (err) rejectCb(new Error(err));
-    else if (code) exchange(code).then(resolveCb, rejectCb);
+    const retState = u.searchParams.get('state');
+    if (err) {
+      page(res, 200, 'Authorization failed: ' + esc(err));
+      if (!settled) { settled = true; rejectCb(new Error(err)); }
+      return;
+    }
+    if (!code) { page(res, 400, 'No authorization code received.'); return; }
+    // CSRF guard: the browser must bring back the exact state we generated.
+    // A forged or substituted callback (someone else's `code`) must never be
+    // exchanged — reject the whole flow rather than accept a foreign code.
+    if (retState !== state) {
+      page(res, 400, 'OAuth state mismatch — please restart the sign-in.');
+      if (!settled) { settled = true; rejectCb(new Error('OAuth state mismatch — start the flow again')); }
+      return;
+    }
+    page(res, 200, 'Signed in. You can close this tab and return to Claude Code Enhanced.');
+    if (settled) return;
+    settled = true;
+    exchange(code).then(resolveCb, rejectCb);
   });
   const listen = new Promise((resolve, reject) => {
     server.once('error', reject);
@@ -159,6 +185,8 @@ function begin(providerId, cfg, opts = {}) {
     method: 'auto',
     url: authorizeUrl(pkce.challenge),
     instructions: 'Your browser will open; approve access. This window finishes automatically.',
+    // Resolves with the port the callback server actually bound (0 = ephemeral).
+    port: listen,
     wait: () => done.finally(() => setTimeout(cancel, 500)),
     exchange,
     cancel,
@@ -264,7 +292,7 @@ function writeClaudeCredentials(tokens) {
       scopes: String(tokens.meta && tokens.meta.scope || '').split(/\s+/).filter(Boolean),
       subscriptionType: (tokens.meta && tokens.meta.subscriptionType) || 'pro',
     };
-    fs.writeFileSync(file, JSON.stringify(existing, null, 2), { mode: 0o600 });
+    atomicWriteJson(file, existing);
     return true;
   } catch (err) {
     console.error('[oauth] could not write claude credentials:', String((err && err.message) || err));
