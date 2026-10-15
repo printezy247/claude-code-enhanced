@@ -232,7 +232,31 @@ function migrateModels(store) {
   return changed;
 }
 
+/**
+ * A key that cannot work at this base URL, explained. Xiaomi MiMo issues two
+ * kinds of key: pay-as-you-go `sk-` keys for api.xiaomimimo.com and Token Plan
+ * `tp-` keys for the token-plan-<region> hosts; each is a 401 on the other.
+ * @returns {string} what to change, or '' when nothing is known to be wrong
+ */
+function keyUrlMismatch(baseUrl, key) {
+  const base = String(baseUrl || '');
+  const k = String(key || '').trim();
+  if (!/xiaomimimo\.com/i.test(base) || !k) return '';
+  const tokenPlanHost = /token-plan-/i.test(base);
+  if (/^tp-/i.test(k) && !tokenPlanHost) {
+    return 'This is a Xiaomi Token Plan key (tp-…), but the base URL is the pay-as-you-go one. '
+      + 'In Edit, set the URL to the Token Plan base URL shown on your Token Plan page, '
+      + 'e.g. https://token-plan-cn.xiaomimimo.com/v1 (other regions: token-plan-sgp, token-plan-ams).';
+  }
+  if (/^sk-/i.test(k) && tokenPlanHost) {
+    return 'This is a Xiaomi pay-as-you-go key (sk-…), but the base URL is a Token Plan one. '
+      + 'In Edit, set the URL to https://api.xiaomimimo.com/v1, or paste your tp-… Token Plan key instead.';
+  }
+  return '';
+}
+
 module.exports = {
+  keyUrlMismatch,
   PRESETS, ensureDefaults, envFor, publicInstance, newUid,
   useAuth, catalogEntries, makeInstance, entryFor,
   migrateUrls, migrateModels,
