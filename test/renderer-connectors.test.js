@@ -102,6 +102,41 @@ describe('your connectors list', () => {
   });
 });
 
+describe('plugin services that only need a sign-in', () => {
+  const many = [
+    { name: 'github', target: 'g (HTTP)', state: 'connected', detail: 'Connected', kind: 'own' },
+    { name: 'plugin:sb:shopify', target: 's (HTTP)', state: 'connected', detail: 'Connected', kind: 'managed' },
+    { name: 'plugin:data:definite', target: 'd (HTTP)', state: 'failed', detail: 'MCP endpoint not found', kind: 'managed' },
+    ...['paypal', 'stripe', 'zapier'].map(n => ({ name: 'plugin:sb:' + n, target: n + ' (HTTP)', state: 'auth', detail: 'Needs authentication', kind: 'managed' })),
+  ];
+  const openMany = () => open({ 'connectors:status': { ok: true, servers: many, output: '' } });
+
+  it('fold into one closed group, below the connected and failing ones', async () => {
+    const h = await openMany();
+    const d = h.window.document.querySelector('#mcp-list details.mcp-managed');
+    expect(d.querySelector(':scope > summary').textContent).toMatch(/1 connected, 1 failing, 3 need sign-in/);
+    const direct = [...d.querySelectorAll(':scope > .mcp-row b')].map(b => b.textContent);
+    expect(direct).toEqual(['plugin:sb:shopify', 'plugin:data:definite']);
+    const g = d.querySelector('details.mcp-signins');
+    expect(g.open).toBe(false);
+    expect(g.querySelector('summary').textContent).toMatch(/^3 services need a sign-in/);
+    expect([...g.querySelectorAll('.mcp-row b')].map(b => b.textContent)).toEqual(['plugin:sb:paypal', 'plugin:sb:stripe', 'plugin:sb:zapier']);
+    // The how-to is said once, in the summary, not on every row.
+    expect(g.querySelectorAll('.mcp-why')).toHaveLength(0);
+  });
+
+  it('stay open after a refresh if the user opened them', async () => {
+    const h = await openMany();
+    const doc = h.window.document;
+    doc.querySelector('details.mcp-managed').open = true;
+    doc.querySelector('details.mcp-signins').open = true;
+    doc.querySelector('#btn-mcp-refresh').click();
+    await flush(6);
+    expect(doc.querySelector('details.mcp-managed').open).toBe(true);
+    expect(doc.querySelector('details.mcp-signins').open).toBe(true);
+  });
+});
+
 describe('GitHub — another account', () => {
   const ghCard = (h) => card(h, 'another account');
   const fill = (h, name, token) => {
