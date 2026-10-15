@@ -1431,7 +1431,7 @@ function applyConnectorStatus() {
   });
 }
 
-function mcpRow(s, removable) {
+function mcpRow(s, removable, { quiet = false } = {}) {
   const row = el('div', 'mcp-row');
   const [txt, cls] = connectorChip(s);
   const chip = el('span', 'chip ' + cls, txt);
@@ -1440,7 +1440,8 @@ function mcpRow(s, removable) {
   row.appendChild(el('b', '', s.name));
   row.appendChild(el('span', 'meta', s.target));
   if ((s.state === 'failed' || s.state === 'degraded') && s.detail) row.appendChild(el('span', 'meta mcp-why', s.detail));
-  if (s.state === 'auth') row.appendChild(el('span', 'meta mcp-why', 'run /mcp in a session → Authenticate'));
+  // In the sign-in group the summary already says how; one line per row was noise.
+  if (s.state === 'auth' && !quiet) row.appendChild(el('span', 'meta mcp-why', 'run /mcp in a session → Authenticate'));
   if (removable) {
     const rm = el('button', 'btn small danger', 'Remove');
     rm.addEventListener('click', async () => {
@@ -1454,17 +1455,46 @@ function mcpRow(s, removable) {
   return row;
 }
 
+// Groups the user opened on the Connectors list; a refresh redraws the list
+// (and shows "Checking…" in between), which used to snap them shut.
+let mcpOpenGroups = new Set();
+function rememberMcpOpen() {
+  const shown = [...$('#mcp-list').querySelectorAll('details')];
+  if (shown.length) mcpOpenGroups = new Set(shown.filter(d => d.open).map(d => d.className));
+}
+
 function renderMcpRows(servers) {
   const box = $('#mcp-list');
+  rememberMcpOpen();
+  const wasOpen = mcpOpenGroups;
   box.innerHTML = '';
   const own = servers.filter(s => s.kind === 'own');
   const managed = servers.filter(s => s.kind === 'managed' && s.state !== 'off');
   if (!own.length) box.appendChild(el('div', 'meta', 'No connectors added yet — pick one above.'));
   own.forEach(s => box.appendChild(mcpRow(s, true)));
   if (managed.length) {
+    // Plugins bring dozens of services that only need a sign-in to be used.
+    // They are not faults, so they fold into one line under the ones that are
+    // connected or failing.
+    const signIn = managed.filter(s => s.state === 'auth');
+    const rest = managed.filter(s => s.state !== 'auth');
+    const counts = [];
+    const n = (st) => rest.filter(s => s.state === st).length;
+    if (n('connected')) counts.push(n('connected') + ' connected');
+    if (n('failed') + n('degraded')) counts.push((n('failed') + n('degraded')) + ' failing');
+    if (signIn.length) counts.push(signIn.length + ' need sign-in');
     const d = el('details', 'mcp-managed');
-    d.appendChild(el('summary', '', `Plugin and claude.ai servers (${managed.length}) — managed by their plugins, not removable here`));
-    managed.forEach(s => d.appendChild(mcpRow(s, false)));
+    d.appendChild(el('summary', '', 'Plugin and claude.ai servers — ' + counts.join(', ') + '. Managed by their plugins, not removable here.'));
+    rest.forEach(s => d.appendChild(mcpRow(s, false)));
+    if (signIn.length) {
+      const g = el('details', 'mcp-signins');
+      g.appendChild(el('summary', '', signIn.length + (signIn.length === 1 ? ' service needs' : ' services need')
+        + ' a sign-in before use — only sign in to the ones you want: run /mcp in a session → pick it → Authenticate'));
+      signIn.forEach(s => g.appendChild(mcpRow(s, false, { quiet: true })));
+      if (wasOpen.has('mcp-signins')) g.open = true;
+      d.appendChild(g);
+    }
+    if (wasOpen.has('mcp-managed')) d.open = true;
     box.appendChild(d);
   }
 }
@@ -1600,6 +1630,7 @@ async function refreshMcpList() {
   const box = $('#mcp-list');
   const btn = $('#btn-mcp-refresh');
   btn.disabled = true; btn.textContent = '↻ Checking…';
+  rememberMcpOpen();
   box.textContent = 'Checking every server — a health check can take up to a minute…';
   connectorCards.forEach(ref => { ref.stat.textContent = 'checking…'; ref.stat.className = 'chip mcp-off'; });
   let r;
