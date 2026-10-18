@@ -131,6 +131,7 @@ const Chat = (() => {
           <select class="chat-model-foot" title="Model"></select>
           <select class="chat-mode-foot" title="Permission mode"></select>
           <button class="chat-effort" title="Reasoning effort">effort: auto</button>
+          <select class="chat-style-foot hidden" title="Output style"></select>
           <span class="foot-spacer"></span>
           <span class="foot-hint">⏎ send · ⇧⏎ newline · esc stop</span>
         </div>
@@ -154,6 +155,7 @@ const Chat = (() => {
       projEl: pane.querySelector('.chat-project'),
       modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
+      styleSel: pane.querySelector('.chat-style-foot'),
       queued: pane.querySelector('.chat-queued'),
       permSlot: pane.querySelector('.chat-perm-slot'), slash: pane.querySelector('.chat-slash'),
       todosEl: pane.querySelector('.chat-todos'), todosList: pane.querySelector('.chat-todos ol'),
@@ -192,6 +194,11 @@ const Chat = (() => {
 
     // project folder + linked GitHub repo, like the desktop header
     renderProjectInfo(chat);
+    if (res.worktree) {   // isolated git worktree for this chat #feat-worktree
+      const chip = el('span', 'proj-chip sandbox', '⌥ ' + res.worktree.branch);
+      chip.title = 'This chat edits git worktree ' + res.worktree.path;
+      chat.projEl.appendChild(chip);
+    }
     if (chat.provider && chat.provider.baseUrl) {
       const mgr = pane.querySelector('.chat-mgr-btn');
       if (mgr) mgr.classList.remove('hidden');
@@ -208,6 +215,13 @@ const Chat = (() => {
     fillModelSelector(chat);
     fillModeSelect(chat.modeSel, chat.provider);
     chat.modeSel.value = chat.mode;
+    // Output style picker (desktop parity). The list comes from the engine, so
+    // it fills at init; hidden when the machine defines no styles. #feat-output-styles
+    chat.styleSel.addEventListener('change', async () => {
+      const v = chat.styleSel.value;
+      const r = await ccx.invoke('chat:flags', { id, patch: { outputStyle: v || null } });
+      toast(r && r.ok ? ('style: ' + (v || 'auto')) : 'style change failed', r && r.ok ? 'ok' : 'err');
+    });
     chat.modelSel.addEventListener('change', async () => {
       const v = chat.modelSel.value;
       if (v.startsWith('__prov:')) { await switchProvider(chat, v.slice(7)); return; }
@@ -724,6 +738,7 @@ const Chat = (() => {
     if (window.rekeyTab) window.rekeyTab(oldId, r.id);
     chat.provider = r.provider;
     chat.model = r.model || '';
+    chat.stylesFilled = false;   // new engine, new style list
     chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider);
     // The old session's exit event can land during the swap and mark the tab
     // dead — the chat is alive again on the new engine.
@@ -1976,6 +1991,9 @@ const Chat = (() => {
     if (kind === 'message') handleMessage(chat, evt.msg);
     else if (kind === 'status') setBusy(chat, evt.busy);
     else if (kind === 'permission') showPermission(chat, evt);
+    else if (kind === 'elicitation') showElicitation(chat, evt);   // #feat-elicitation
+    else if (kind === 'elicitation-cleared') clearElicitation(chat, evt.requestId,
+      evt.reason === 'timeout' ? 'Connector request timed out — declined' : null);
     else if (kind === 'permission-timeout') clearPermission(chat, evt.requestId, 'Permission request timed out — auto-denied');
     // Interrupt / tab close: drop the card instead of leaving it clickable. #11
     else if (kind === 'permission-cleared') {
@@ -2352,11 +2370,37 @@ const Chat = (() => {
     if (msg.subtype === 'permission_denied') return onPermissionDenied(chat, msg);
     if (msg.subtype === 'commands_changed') return onCommandsChanged(chat, msg);
     if (msg.subtype === 'session_state_changed') return onSessionState(chat, msg);
+    if (msg.subtype === 'elicitation_complete') {   // connector finished its OAuth round-trip
+      const card = chat.permSlot.querySelector('.elic[data-elid="' + (msg.elicitation_id || msg.elicitationId || '') + '"]');
+      if (card) {
+        ccx.invoke('chat:elicit-answer', { id: chat.id, requestId: card.dataset.rid, action: 'accept', content: {} });
+        card.remove();
+        toast('Connector authorized', 'ok');
+      }
+      return;
+    }
     if (msg.subtype === 'compact_boundary') return;   // already handled
+  }
+
+  /* ---------------- output styles (#feat-output-styles) ---------------- */
+
+  async function fillStyles(chat) {
+    if (chat.stylesFilled || !chat.alive) return;
+    chat.stylesFilled = true;
+    let r = null;
+    try { r = await ccx.invoke('chat:styles', { id: chat.id }); } catch { return; }
+    const list = (r && r.ok && r.styles) || [];
+    if (!list.length) return;
+    chat.styleSel.innerHTML = '';
+    const auto = el('option', '', 'style: auto'); auto.value = '';
+    chat.styleSel.appendChild(auto);
+    for (const s of list) { const o = el('option', '', 'style: ' + s); o.value = s; chat.styleSel.appendChild(o); }
+    chat.styleSel.classList.remove('hidden');
   }
 
   function onInit(chat) {
     chat.msgs.querySelector('.chat-empty')?.remove();
+    fillStyles(chat);
     // A plugin that failed to load is simply absent from the tool list, which
     // used to look like "that connector does not exist". Say which ones broke.
     for (const e of (chat.init.plugin_errors || [])) {
@@ -3318,6 +3362,169 @@ const Chat = (() => {
     card.scrollIntoView({ block: 'nearest' });
   }
 
+  /* ---------------- MCP elicitation cards (#feat-elicitation) ----------------
+     Connectors ask for input mid-call: 'url' mode = open this URL and
+     authorize; 'form' mode = structured fields from the server's JSON schema.
+     The main process parks the SDK callback until the card is answered. */
+
+  function clearElicitation(chat, requestId, note) {
+    for (const card of chat.permSlot.querySelectorAll('.elic')) {
+      if (card.dataset.rid !== requestId) continue;
+      card.remove();
+      if (note) {
+        const n = el('div', 'sys-note', note);
+        chat.msgs.appendChild(n);
+        scrollDownSoft(chat);
+      }
+      return;
+    }
+  }
+
+  function showElicitation(chat, evt) {
+    const card = el('div', 'perm-card elic');
+    card.dataset.rid = evt.requestId;
+    card.dataset.elid = evt.elicitationId || '';
+    const head = el('div', 'perm-head');
+    head.appendChild(elIcon('span', 'tool-ico', toolIcon('mcp__connector')));
+    const t = el('span', '');
+    t.innerHTML = '<b>' + esc(evt.displayName || evt.serverName || 'connector') + '</b> wants to connect';
+    head.appendChild(t);
+    card.appendChild(head);
+    if (evt.message) card.appendChild(el('div', 'elic-msg', evt.message));
+    if (evt.description) card.appendChild(el('div', 'hint', evt.description));
+
+    const collect = () => {   // form-mode: read inputs into the accept payload
+      const out = {};
+      for (const inp of card.querySelectorAll('[data-key]')) {
+        const key = inp.dataset.key;
+        if (inp.type === 'checkbox') out[key] = inp.checked;
+        else if (inp.value !== '') out[key] = inp.type === 'number' ? Number(inp.value) : inp.value;
+      }
+      return out;
+    };
+
+    const answer = async (action) => {
+      card.remove();
+      await ccx.invoke('chat:elicit-answer', {
+        id: chat.id, requestId: evt.requestId, action,
+        content: action === 'accept' ? collect() : undefined,
+      });
+    };
+
+    if (evt.mode === 'url') {
+      // OAuth handshake: open the URL in the real browser; the connector
+      // resolves once the user finishes there.
+      const row = el('div', 'perm-actions');
+      const open = el('button', 'btn primary', 'Open authorization page');
+      open.addEventListener('click', () => ccx.invoke('shell:openExternal', { url: evt.url }));
+      if (evt.url) open.title = evt.url;
+      const done = el('button', 'btn', 'I have authorized');
+      done.addEventListener('click', () => answer('accept'));
+      const no = el('button', 'btn danger', 'Decline');
+      no.addEventListener('click', () => answer('decline'));
+      row.appendChild(open); row.appendChild(done); row.appendChild(no);
+      card.appendChild(row);
+      if (evt.url) {
+        const u = el('div', 'elic-url mono', evt.url.slice(0, 160));
+        u.title = evt.url;
+        card.appendChild(u);
+      }
+    } else {
+      // form mode: render the requestedSchema (MCP input schema: object with
+      // typed properties) as inputs; only primitive fields are supported.
+      const props = (evt.requestedSchema && evt.requestedSchema.properties) || {};
+      const required = new Set(Array.isArray(evt.requestedSchema && evt.requestedSchema.required) ? evt.requestedSchema.required : []);
+      const fill = el('div', 'elic-form');
+      for (const key of Object.keys(props)) {
+        const spec = props[key] || {};
+        const lab = el('label', 'elic-field');
+        lab.appendChild(el('span', 'elic-key', (spec.title || key) + (required.has(key) ? ' *' : '')));
+        let inp;
+        if (Array.isArray(spec.enum) && spec.enum.length) {
+          inp = document.createElement('select');
+          inp.appendChild(el('option', '', ''));
+          for (const e of spec.enum) { const o = el('option', '', String(e)); o.value = String(e); inp.appendChild(o); }
+        } else if (spec.type === 'boolean') {
+          inp = el('input'); inp.type = 'checkbox';
+        } else if (spec.type === 'number' || spec.type === 'integer') {
+          inp = el('input'); inp.type = 'number';
+        } else {
+          inp = el('input'); inp.type = 'text';
+        }
+        if (spec.description) inp.placeholder = String(spec.description).slice(0, 80);
+        inp.dataset.key = key;
+        lab.appendChild(inp);
+        fill.appendChild(lab);
+      }
+      card.appendChild(fill);
+      const row = el('div', 'perm-actions');
+      const send = el('button', 'btn primary', 'Submit');
+      send.disabled = [...card.querySelectorAll('[data-key]')].some(i =>
+        required.has(i.dataset.key) && i.type !== 'checkbox' && !i.value);
+      send.addEventListener('click', () => answer('accept'));
+      const no = el('button', 'btn danger', 'Decline');
+      no.addEventListener('click', () => answer('decline'));
+      row.appendChild(send); row.appendChild(no);
+      card.appendChild(row);
+      fill.addEventListener('input', () => {
+        send.disabled = [...fill.querySelectorAll('[data-key]')].some(i =>
+          required.has(i.dataset.key) && i.type !== 'checkbox' && !i.value);
+      });
+    }
+    chat.permSlot.appendChild(card);
+    card.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* ---------------- find in transcript (#feat-find) ----------------
+     Uses the engine's native window.find (Chromium find-in-page) so matches
+     highlight across the whole rendered transcript, plus a naive occurrence
+     count from the text. */
+  function showFind(chat) {
+    let bar = chat.pane.querySelector('.chat-find');
+    if (!bar) {
+      bar = el('div', 'chat-find');
+      const inp = el('input');
+      inp.type = 'text';
+      inp.placeholder = 'find in transcript';
+      inp.setAttribute('aria-label', 'Find in transcript');
+      const prev = el('button', 'btn small', '◀');
+      prev.setAttribute('aria-label', 'Previous match');
+      const next = el('button', 'btn small', '▶');
+      next.setAttribute('aria-label', 'Next match');
+      const count = el('span', 'hint chat-find-count', '');
+      const close = el('button', 'btn small', '✕');
+      close.setAttribute('aria-label', 'Close find bar');
+      const step = (back) => {
+        const q = inp.value;
+        if (!q) return;
+        try { window.find(q, !!back, false, true); } catch { /* empty */ }
+        paintCount();
+      };
+      const paintCount = () => {
+        const q = inp.value;
+        if (!q) { count.textContent = ''; return; }
+        const esc = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        let n = 0;
+        try { n = (chat.msgs.textContent.match(new RegExp(esc, 'gi')) || []).length; } catch { /* bad regex */ }
+        count.textContent = n ? n + ' match' + (n === 1 ? '' : 'es') : 'no matches';
+      };
+      const hide = () => { bar.classList.add('hidden'); inp.value = ''; paintCount(); };
+      inp.addEventListener('input', () => { try { window.find(inp.value, false, false, false); } catch { /* empty */ } paintCount(); });
+      inp.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { step(e.shiftKey); e.preventDefault(); }
+        else if (e.key === 'Escape') { hide(); chat.composer.focus(); e.preventDefault(); }
+      });
+      [prev, next].forEach((b, i) => b.addEventListener('click', () => step(i === 0)));
+      close.addEventListener('click', hide);
+      bar.appendChild(inp); bar.appendChild(prev); bar.appendChild(next); bar.appendChild(count); bar.appendChild(close);
+      chat.pane.appendChild(bar);
+    }
+    bar.classList.remove('hidden');
+    const inp = bar.querySelector('input');
+    inp.focus();
+    inp.select();
+  }
+
   function appendError(chat, text) {
     const m = String(text || '');
     const ctx = m.match(/exceeds the available context size \((\d+)\s*tokens\)/i);
@@ -3467,5 +3674,5 @@ const Chat = (() => {
     }
   });
 
-  return { createSession, handleEvent, chats, closeChat, activateChat };
+  return { createSession, handleEvent, chats, closeChat, activateChat, showFind };
 })();

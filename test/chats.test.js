@@ -241,6 +241,55 @@ describe('permission requests', () => {
   });
 });
 
+describe('mcp elicitation (#feat-elicitation)', () => {
+  it('emits the url mode, and accept resolves the SDK callback', async () => {
+    const { id } = await openChat();
+    expect(typeof lastOptions.onElicitation).toBe('function');
+    const p = lastOptions.onElicitation(
+      { serverName: 'github', message: 'Authorize', mode: 'url', url: 'https://gh/authorize', elicitationId: 'el-1' },
+      { signal: new AbortController().signal, requestId: 'ctrl-1' },
+    );
+    await until(() => events.some(e => e.kind === 'elicitation'));
+    const evt = events.find(e => e.kind === 'elicitation');
+    expect(evt.mode).toBe('url');
+    expect(evt.url).toBe('https://gh/authorize');
+    expect(mgr.pendingElicits.size).toBe(1);
+    mgr.answerElicitation(id, evt.requestId, 'accept', {});
+    await expect(p).resolves.toEqual({ action: 'accept', content: {} });
+    expect(mgr.pendingElicits.size).toBe(0);
+  });
+
+  it('resolves form answers as the content object', async () => {
+    const { id } = await openChat();
+    const p = lastOptions.onElicitation(
+      { serverName: 's', mode: 'form', requestedSchema: { properties: { user: { type: 'string' } } } },
+      { signal: new AbortController().signal, requestId: 'c' },
+    );
+    await until(() => events.some(e => e.kind === 'elicitation'));
+    const evt = events.filter(e => e.kind === 'elicitation').pop();
+    mgr.answerElicitation(id, evt.requestId, 'accept', { user: 'ada' });
+    await expect(p).resolves.toEqual({ action: 'accept', content: { user: 'ada' } });
+  });
+
+  it('declines on cancel and rejects an unknown request id', async () => {
+    const { id } = await openChat();
+    const ac = new AbortController();
+    const p = lastOptions.onElicitation({ serverName: 's', mode: 'form' }, { signal: ac.signal, requestId: 'c' });
+    await until(() => events.some(e => e.kind === 'elicitation'));
+    ac.abort();
+    await expect(p).resolves.toEqual({ action: 'cancel' });
+    expect(mgr.answerElicitation(id, 'nope', 'accept', {})).toEqual({ ok: false, error: 'no pending elicitation' });
+  });
+
+  it('drops pending elicitations when the chat closes', async () => {
+    const { id } = await openChat();
+    const p = lastOptions.onElicitation({ serverName: 's', mode: 'form' }, { signal: new AbortController().signal, requestId: 'c' });
+    await until(() => events.some(e => e.kind === 'elicitation'));
+    mgr.close(id);
+    await expect(p).resolves.toEqual({ action: 'cancel' });
+  });
+});
+
 describe('session options', () => {
   it('loads the local settings source so CLI allow-rules apply (#12)', async () => {
     await openChat();

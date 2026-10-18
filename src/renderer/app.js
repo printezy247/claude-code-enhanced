@@ -622,6 +622,7 @@ function renderSplit() {
     return;
   }
   body.innerHTML = '';
+  body.classList.remove('preview-body');
   const cwd2 = activeCwd();
   if (kind === 'changes') {
     ccx.invoke('git:info', { cwd: cwd2 }).then((r) => {
@@ -643,6 +644,38 @@ function renderSplit() {
       }
       renderTasks(body, activeCwd());
     }, 4000);
+    return;
+  }
+  if (kind === 'preview') {
+    // Dev-server / artifact preview: sandboxed iframe with a URL bar. The
+    // frame is an isolated origin — it cannot reach ccx. #feat-preview-pane
+    body.classList.add('preview-body');
+    const bar = el('div', 'preview-bar');
+    const url = el('input', 'preview-url'); url.type = 'url';
+    url.placeholder = 'http://localhost:3000 — dev server or file URL';
+    url.setAttribute('aria-label', 'Preview URL');
+    const go = el('button', 'btn small', 'load');
+    const ext = el('button', 'btn small', '↗ open');
+    ext.title = 'Open in the system browser';
+    const frame = document.createElement('iframe');
+    frame.className = 'preview-frame';
+    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-same-origin');
+    try { const saved = localStorage.getItem('cce.previewUrl'); if (saved) url.value = saved; } catch { /* private mode */ }
+    const nav = () => {
+      let u = (url.value || '').trim();
+      if (!u) return;
+      if (!/^(https?|file):\/\//.test(u)) u = 'http://' + u;
+      url.value = u;
+      frame.src = u;
+      try { localStorage.setItem('cce.previewUrl', u); } catch { /* private mode */ }
+    };
+    go.addEventListener('click', nav);
+    url.addEventListener('keydown', (e) => { if (e.key === 'Enter') nav(); });
+    ext.addEventListener('click', () => { if (/^https?:\/\//.test(url.value)) ccx.invoke('shell:openExternal', { url: url.value }); });
+    bar.appendChild(url); bar.appendChild(go); bar.appendChild(ext);
+    body.appendChild(bar);
+    body.appendChild(frame);
+    if (url.value) frame.src = url.value;
     return;
   }
   const chat = Chat.chats.get(state.activeId);
@@ -1059,6 +1092,12 @@ function openNewSessionModal() {
   resumeLabel.appendChild(el('span', '', 'Chat: resume this folder\u2019s previous conversation'));
   optRow.appendChild(resumeLabel);
 
+  const wtCheck = el('input'); wtCheck.type = 'checkbox'; wtCheck.id = 'opt-worktree';
+  const wtLabel = el('label', 'check');
+  wtLabel.appendChild(wtCheck);
+  wtLabel.appendChild(el('span', '', 'Chat: isolated git worktree (new branch under .claude/worktrees)'));
+  optRow.appendChild(wtLabel);
+
   const yoloCheck = el('input'); yoloCheck.type = 'checkbox'; yoloCheck.id = 'opt-yolo';
   const yoloLabel = el('label', 'check');
   yoloLabel.appendChild(yoloCheck);
@@ -1094,6 +1133,7 @@ function openNewSessionModal() {
         ...opts,
         permissionMode: modeSel.value,
         resume: resumeCheck.checked ? 'last' : null,
+        worktree: wtCheck.checked,
       });
     } else {
       createSession({
@@ -2219,6 +2259,13 @@ function wireChrome() {
     if (e.ctrlKey && e.key === '\\') {   // hide/show the left sidebar #feat-desktop-layout
       e.preventDefault();
       toggleSidebar();
+    }
+    if (e.ctrlKey && !e.shiftKey && String(e.key).toLowerCase() === 'f') {   // find in transcript #feat-find
+      const m = tabRegistry.get(state.activeId);
+      if (m && m.kind === 'chat' && window.Chat) {
+        const c = Chat.chats.get(state.activeId);
+        if (c) { e.preventDefault(); Chat.showFind(c); }
+      }
     }
   });
 
