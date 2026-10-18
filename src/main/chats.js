@@ -4,6 +4,7 @@
 // streaming text+thinking deltas, tool_use/tool_result, permission requests,
 // and result frames with cost/usage.
 'use strict';
+const { classifyUserText } = require('../shared/usertext.js');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -35,6 +36,37 @@ function loadSdk() {
 }
 
 const PERM_TIMEOUT_MS = 6 * 60_000;
+const PERM_TIMEOUT_MESSAGE = 'The user did not answer this permission request within 6 minutes (they may be away). '
+  + 'Do not retry this call or a variant of it. Finish anything that needs no permission, then stop and tell '
+  + 'the user exactly which action is waiting for their approval.';
+
+/** Chat models are assumed to have this window unless told otherwise. */
+const ENGINE_DEFAULT_WINDOW = 200_000;
+
+/**
+ * Engine settings that shrink every request on a translated provider, where
+ * there is no prompt caching and each call pays for the whole prompt again.
+ *
+ * - Tool search: MCP tools are announced by name and loaded when the model asks
+ *   for one, instead of sending every schema (~75k tokens with a dozen MCP
+ *   servers) on every request. The engine turns it off for non-Anthropic base
+ *   URLs because most proxies drop its `tool_reference` results; this proxy
+ *   translates them.
+ * - Context window: a model with a smaller window than the engine assumes is
+ *   compacted in time instead of failing with "prompt is too long".
+ *
+ * Values the user set themselves are left alone.
+ */
+function leanEngineEnv({ env = {}, provider, model, settings = {}, contextOf } = {}) {
+  const out = {};
+  if (!provider || (provider.protocol || 'openai') === 'anthropic') return out;
+  if (settings.toolSearch !== false && env.ENABLE_TOOL_SEARCH == null) out.ENABLE_TOOL_SEARCH = 'true';
+  if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS == null && typeof contextOf === 'function') {
+    const ctx = Number(contextOf(provider, model)) || 0;
+    if (ctx > 0 && ctx < ENGINE_DEFAULT_WINDOW) out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(ctx);
+  }
+  return out;
+}
 
 // Session files are uuid-v4 jsonl names; also the path-traversal guard.
 function isSessionId(id) {
@@ -89,14 +121,18 @@ function transcriptItems(records) {
       const c = msg.content;
       // Keep the uuid: it is what forkSession({ upToMessageId }) needs, so the
       // transcript can branch from any message rather than only the latest.
+      const pushText = (raw) => {
+        const k = classifyUserText(raw, j);
+        if (k.kind === 'skip' || !k.text) return;
+        if (k.kind === 'prompt') items.push({ t: 'user', text: k.text.replace(/<[^>]+>/g, '').trim(), uuid: j.uuid || null });
+        else items.push({ t: k.kind, text: k.text });
+      };
       if (typeof c === 'string') {
-        const t = c.replace(/<[^>]+>/g, '').trim();
-        if (t) items.push({ t: 'user', text: t, uuid: j.uuid || null });
+        pushText(c);
       } else if (Array.isArray(c)) {
         for (const b of c) {
           if (b.type === 'text') {
-            const t = b.text.replace(/<[^>]+>/g, '').trim();
-            if (t) items.push({ t: 'user', text: t, uuid: j.uuid || null });
+            pushText(b.text);
           } else if (b.type === 'tool_result') {
             const it = tools.get(b.tool_use_id);
             if (it) {
@@ -137,9 +173,11 @@ function cwdOf(full) {
 }
 
 class ChatManager extends EventEmitter {
-  constructor({ proxyToken = null, sdk = null } = {}) {
+  constructor({ proxyToken = null, sdk = null, contextOf = null } = {}) {
     super();
     this.proxyToken = proxyToken;
+    // (provider, model) -> context window in tokens, or 0 when unknown.
+    this.contextOf = contextOf;
     // Per instance, not module-global: a global leaked one instance's fake SDK
     // into every later ChatManager, so the session helpers silently fell back
     // to the disk scan in tests and in any second manager.
@@ -283,6 +321,9 @@ class ChatManager extends EventEmitter {
         options.env.ANTHROPIC_SMALL_FAST_MODEL = own;
         options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = own;
       }
+      Object.assign(options.env, leanEngineEnv({
+        env: options.env, provider: providerInstance, model: own, settings, contextOf: this.contextOf,
+      }));
     }
 
     // Each request keeps its own entry; several tools can be pending at once
@@ -304,7 +345,9 @@ class ChatManager extends EventEmitter {
           timer: setTimeout(() => {
             this._dropPerm(requestId);
             this.emit('event', id, { kind: 'permission-timeout', requestId });
-            resolve({ behavior: 'deny', message: 'Permission request timed out (no answer in 6 minutes)' });
+            // Worded for the model: "timed out" alone read as a glitch to retry,
+            // and one chat asked for the same write six times.
+            resolve({ behavior: 'deny', message: PERM_TIMEOUT_MESSAGE });
           }, PERM_TIMEOUT_MS),
         };
         this.pendingPerms.set(requestId, entry);
@@ -908,3 +951,5 @@ module.exports.normalizeMode = normalizeMode;
 module.exports.MODES = MODES;
 module.exports.TASK_SUBTYPES = TASK_SUBTYPES;
 module.exports.transcriptItems = transcriptItems;
+module.exports.leanEngineEnv = leanEngineEnv;
+module.exports.PERM_TIMEOUT_MESSAGE = PERM_TIMEOUT_MESSAGE;

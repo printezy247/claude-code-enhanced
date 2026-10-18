@@ -80,7 +80,7 @@ function loadRenderer(opts = {}) {
   // the tail re-publishes the names tests need onto window.
   // src/shared/*.js are real <script> tags in index.html (stripped above), so
   // load them here too: chat.js reads window.CCEIcons/CCEThink, providers.js CCETpl.
-  for (const f of ['icons.js', 'think.js', 'tpl.js']) {
+  for (const f of ['icons.js', 'think.js', 'tpl.js', 'usertext.js']) {
     const s = fs.readFileSync(path.join(ROOT, 'src', 'shared', f), 'utf8');
     window.eval(s + '\n//# sourceURL=shared/' + f);
   }

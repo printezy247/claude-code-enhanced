@@ -466,6 +466,11 @@ function mapError(status, message) {
     return { status: 400, type: 'invalid_request_error', message: /prompt is too long/i.test(msg) ? msg : 'prompt is too long: ' + msg };
   }
   if (isModelMissing({ message: msg })) return { status: 404, type: 'not_found_error', message: msg };
+  // Used-up free tier, no balance, unpaid plan. Not a login problem (403 read as
+  // "authentication failed") and not worth retrying (429 read as "try later").
+  if (status !== 429 && /quota (has been |is )?(exhausted|exceeded|used up)|insufficient (balance|quota|credit)|out of credits?|payment (information|method|required)|billing/i.test(msg)) {
+    return { status: 402, type: 'billing_error', message: 'The provider says this account has no usage left: ' + msg };
+  }
   switch (status) {
     case 400: case 422: return { status: 400, type: 'invalid_request_error', message: msg };
     case 401: return { status: 401, type: 'authentication_error', message: msg };

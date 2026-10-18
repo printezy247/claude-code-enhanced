@@ -169,7 +169,15 @@ function buildOpenAIBody(body, wantStream) {
 function toolResultText(b) {
   let content = b.content;
   if (Array.isArray(content)) {
-    content = content.map(x => (x && x.type === 'image' ? '[image]' : (x && x.text) || '')).filter(Boolean).join('\n');
+    content = content.map((x) => {
+      if (!x) return '';
+      if (x.type === 'image') return '[image]';
+      // ToolSearch answers with references, which the engine expands into real
+      // tool definitions on the next request. Read as text they were empty, and
+      // the model thought the load had failed.
+      if (x.type === 'tool_reference') return 'Loaded tool ' + (x.tool_name || x.name || '') + ' — you can call it now.';
+      return x.text || '';
+    }).filter(Boolean).join('\n');
   }
   content = String(content == null ? '' : content);
   if (!content.trim()) content = b.is_error ? '(the tool failed with no output)' : '(no output)';
