@@ -209,8 +209,10 @@ const Chat = (() => {
     fillModeSelect(chat.modeSel, chat.provider);
     chat.modeSel.value = chat.mode;
     chat.modelSel.addEventListener('change', async () => {
-      if (chat.modelSel.value === '__custom') { openCustomModel(chat); return; }
-      await switchModel(chat, chat.modelSel.value);
+      const v = chat.modelSel.value;
+      if (v.startsWith('__prov:')) { await switchProvider(chat, v.slice(7)); return; }
+      if (v === '__custom') { openCustomModel(chat); return; }
+      await switchModel(chat, v);
     });
     chat.modeSel.addEventListener('change', async () => {
       const want = chat.modeSel.value;
@@ -616,6 +618,20 @@ const Chat = (() => {
     const sel = chat.modelSel;
     sel.innerHTML = '';
     const add = (value, label) => { const o = el('option', '', label); o.value = value; sel.appendChild(o); };
+    // Provider switcher: every saved provider is a choice in the same dropdown;
+    // picking one recreates the session on that provider. #feat-provider-toggle
+    const provs = (state && state.providers && state.providers.instances) || [];
+    if (provs.length > 1) {
+      const pg = document.createElement('optgroup');
+      pg.label = 'switch provider';
+      for (const p of provs) {
+        const cur = chat.provider && p.uid === chat.provider.uid;
+        const o = el('option', '', (cur ? '✓ ' : '') + (p.name || p.uid));
+        o.value = '__prov:' + p.uid;
+        pg.appendChild(o);
+      }
+      sel.appendChild(pg);
+    }
     add('', 'provider default');
     if (chat.provider && chat.provider.model) add(chat.provider.model, chat.provider.model + ' (' + basename(chat.provider.name) + ')');
     add('opus', 'Opus');
@@ -668,6 +684,47 @@ const Chat = (() => {
       toast(String(e.message || e), 'err');
       chat.modelSel.value = prev || '';
     }
+  }
+
+  // Switch this chat to another saved provider. The main process recreates the
+  // engine session on the target provider and resumes the conversation, which
+  // means a NEW chat id — this tab re-keys itself onto it so nothing else in
+  // the app (tab registry, statusbar, event routing) notices. #feat-provider-toggle
+  async function switchProvider(chat, uid) {
+    if (chat.provider && chat.provider.uid === uid) { fillModelSelector(chat); return; }
+    const name = ((state.providers.instances || []).find(p => p.uid === uid) || {}).name || uid;
+    toast('switching provider → ' + name + '…');
+    let r = null;
+    try { r = await ccx.invoke('chat:set-provider', { id: chat.id, uid }); }
+    catch (e) { r = { ok: false, error: String(e.message || e) }; }
+    if (!r || !r.ok) {
+      toast((r && r.error) || 'provider switch failed', 'err');
+      fillModelSelector(chat);
+      return;
+    }
+    // Re-key: the old engine session is gone; this pane now IS the new chat.
+    const oldId = chat.id;
+    chats.delete(oldId);
+    chat.id = r.id;
+    chats.set(r.id, chat);
+    if (window.rekeyTab) window.rekeyTab(oldId, r.id);
+    chat.provider = r.provider;
+    chat.model = r.model || '';
+    chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider);
+    // The old session's exit event can land during the swap and mark the tab
+    // dead — the chat is alive again on the new engine.
+    chat.alive = true;
+    chat.tabEl.classList.remove('dead');
+    chat.providerEl.textContent = basename(chat.provider.name);
+    const mgr = chat.pane.querySelector('.chat-mgr-btn');
+    if (mgr) mgr.classList.toggle('hidden', !(chat.provider && chat.provider.baseUrl));
+    fillModelSelector(chat);
+    fillModeSelect(chat.modeSel, chat.provider);
+    chat.modeSel.value = chat.mode;
+    chat.modelSel.value = [...chat.modelSel.options].some(o => o.value === chat.model) ? chat.model : '';
+    setStatusLine(chat);
+    discoverModels(chat);
+    toast('Provider → ' + chat.provider.name, 'ok');
   }
 
   // Ask the provider what models it actually serves (OpenCode-style discovery)
@@ -3310,9 +3367,11 @@ const Chat = (() => {
   }
   function hideSlash(chat) { chat.slash.classList.add('hidden'); chat.slashIdx = -1; }
 
+  // The composer stays ONE line tall; long requests scroll inside the box
+  // instead of growing it over the transcript. #feat-one-line-composer
   function autosize(ta) {
     ta.style.height = 'auto';
-    ta.style.height = Math.min(160, ta.scrollHeight) + 'px';
+    ta.style.height = Math.min(42, ta.scrollHeight) + 'px';
   }
 
   /* ---------------- global event wiring ---------------- */

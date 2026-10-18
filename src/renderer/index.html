@@ -33,9 +33,11 @@
     <main id="main">
       <section id="view-conversations" class="view active">
         <div id="tabbar">
+          <button id="btn-sidebar" title="Show / hide the left sidebar (Ctrl+\)" aria-label="Toggle sidebar">☰</button>
           <button id="btn-convo-drop" title="Conversations — past and open chats (Ctrl+B)">
             <span class="ico" data-icon="layers"></span><span>Conversations</span><span class="caret" data-icon="chevron"></span>
           </button>
+          <button id="btn-tasks" title="Tasks panel — environment, context, todos, changes (Alt+V)">◫ tasks</button>
           <div id="tabs"></div>
         </div>
         <!-- Quick actions: the three things you actually do between chats. -->
@@ -109,6 +111,7 @@
     <section id="splitpane">
       <div class="split-head">
         <select id="split-kind" class="skills-search" style="max-width:180px">
+          <option value="tasks">Tasks</option>
           <option value="terminal">Terminal</option>
           <option value="changes">Working tree changes</option>
           <option value="diff">Last edit diff</option>

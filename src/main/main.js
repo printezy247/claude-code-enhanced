@@ -1255,6 +1255,41 @@ function registerIpc() {
     const r = await chats.setModel(id, model);
     return { ...(r && typeof r === 'object' ? r : null), model };
   });
+  // Switch a live chat to another saved provider. The engine reads its env at
+  // spawn, so the session cannot be re-pointed mid-chat — recreate on the
+  // target provider and resume the same conversation. #feat-provider-toggle
+  handle('chat:set-provider', async ({ id, uid }) => {
+    const chat = chats.chats.get(id);
+    if (!chat) return { ok: false, error: 'chat not found' };
+    if (chat.busy) return { ok: false, error: 'a turn is running — stop it before switching provider' };
+    const next = store.providers.find(p => p.uid === uid);
+    if (!next) return { ok: false, error: 'unknown provider ' + uid };
+    await ensureFreshAuth(next);
+    const resume = chat.sessionId || null;
+    const created = await chats.create({
+      cwd: chat.cwd,
+      providerInstance: next,
+      // A provider's own lean tool list overrides the global setting. #41
+      settings: {
+        ...store.settings,
+        ...(Array.isArray(next.leanTools) && next.leanTools.length ? { leanTools: next.leanTools } : {}),
+      },
+      model: next.model || '',
+      permissionMode: chat.permissionMode,
+      resume,
+      claudePath: (store.settings.claudePath || '').trim() || undefined,
+      anthropicBaseUrl: usesProxy(next) ? proxyBaseUrl(next) : undefined,
+    });
+    // Close the old engine AFTER the new one exists so an abort frame from the
+    // old session cannot race the recreate.
+    try { chats.close(id); } catch { /* already gone */ }
+    return {
+      ok: true, id: created.id,
+      provider: providers.publicInstance(next),
+      model: created.model || next.model || '',
+      permissionMode: created.permissionMode || chat.permissionMode,
+    };
+  });
   handle('chat:set-mode', async ({ id, mode }) => chats.setMode(id, mode));
   // Per-chat reasoning effort and thinking budget. The settings existed in
   // chats.create but had no runtime control and no UI at all. #38
@@ -1586,7 +1621,10 @@ function registerIpc() {
     const m = remote && remote.match(/github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/);
     if (m) repo = m[1];
     const dirtyCount = dirty ? dirty.split('\n').filter(Boolean).length : 0;
-    return { remote, branch, repo, dirty: dirtyCount };
+    // Porcelain lines: "XY path" — the file list feeds the right-hand
+    // tasks panel's Changes section.
+    const files = dirty ? dirty.split('\n').filter(Boolean).slice(0, 60).map(l => l.slice(3)) : [];
+    return { remote, branch, repo, dirty: dirtyCount, files };
   });
 
   // package.json scripts / Makefile targets for the ▶ run menu

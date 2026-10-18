@@ -22,7 +22,7 @@ const INVOKE_CHANNELS = new Set([
   'settings:get', 'settings:set', 'env:refresh', 'tools:check', 'usage:scan',
   'chat:create', 'chat:send', 'chat:interrupt', 'chat:close', 'chat:history',
   'chat:transcript', 'chat:delete', 'chat:deleteFolder', 'chat:fork', 'chat:last',
-  'chat:set-model', 'chat:set-mode', 'chat:effort', 'chat:context', 'chat:flags',
+  'chat:set-model', 'chat:set-provider', 'chat:set-mode', 'chat:effort', 'chat:context', 'chat:flags',
   'chat:mcp', 'chat:agents', 'chat:skills', 'chat:commands', 'chat:checkpoints',
   'chat:rewind', 'chat:export', 'chat:permission-answer', 'chat:stopTask',
   'chat:supported-models', 'chats:index',
