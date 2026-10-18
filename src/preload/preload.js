@@ -65,4 +65,9 @@ contextBridge.exposeInMainWorld('ccx', {
     ipcRenderer.on('chat:event', listener);
     return () => ipcRenderer.removeListener('chat:event', listener);
   },
+  onClaudeDetected: (cb) => {
+    const listener = (_e, payload) => cb(payload);
+    ipcRenderer.on('claude:detected', listener);
+    return () => ipcRenderer.removeListener('claude:detected', listener);
+  },
 });

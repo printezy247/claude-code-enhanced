@@ -2135,6 +2135,17 @@ function renderClaudeBanner() {
       window.createSession({ cwd: '~', type: 'shell', initText: 'curl -fsSL https://claude.ai/install.sh | bash\r' });
     });
     banner.appendChild(b);
+    const re = el('button', 'btn small', 're-check');
+    re.title = 'Probe for the claude CLI again (e.g. right after installing or updating it)';
+    re.addEventListener('click', async () => {
+      const r = await ccx.invoke('app:info');
+      if (r && r.ok) {
+        state.info = { ...state.info, claude: r.claude };
+        renderClaudeBanner();
+        if (r.claude && r.claude.found) toast('claude found: ' + r.claude.version, 'ok');
+      }
+    });
+    banner.appendChild(re);
     banner.appendChild(el('span', '', ' (or set the path in Settings)'));
   } else banner.classList.add('hidden');
 }
@@ -2363,6 +2374,15 @@ function fmtTokShort(n) {
     : `CCE v${state.info.appVersion} · Electron ${state.info.electron}`;
 
   renderClaudeBanner();
+  // Main re-probes the CLI when the window regains focus (a startup race with a
+  // claude self-update used to stick the "not found" banner until restart).
+  if (ccx.onClaudeDetected) ccx.onClaudeDetected((c) => {
+    state.info = { ...state.info, claude: c };
+    $('#foot-info').textContent = (c && c.found)
+      ? `claude ${c.version}\nCCE v${state.info.appVersion} · Electron ${state.info.electron}`
+      : `CCE v${state.info.appVersion} · Electron ${state.info.electron}`;
+    renderClaudeBanner();
+  });
   if (window.__CCE_SMOKE) {
     setTimeout(() => console.log('[monaco]', !!(window.monaco && window.monaco.editor)), 3000);
   }
