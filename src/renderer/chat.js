@@ -329,9 +329,11 @@ const Chat = (() => {
     });
 
     // @-mentions of project files
-    chat.composer.addEventListener('input', () => {
+    chat.composer.addEventListener('input', async () => {
       autosize(chat.composer);
-      if (!maybeAt(chat)) maybeSlash(chat);
+      // maybeAt is async: un-awaited, its Promise was always truthy and the "/"
+      // menu never opened.
+      if (!(await maybeAt(chat))) maybeSlash(chat);
     });
     chat.sendBtn.addEventListener('click', () => {
       if (chat.busy) ccx.invoke('chat:interrupt', { id });   // button turns into stop
@@ -391,6 +393,8 @@ const Chat = (() => {
     const items = r.items.slice(-150);
     for (const it of items) {
       if (it.t === 'user') appendUser(chat, it.text);
+      else if (it.t === 'note') appendCommandNote(chat, it.text);
+      else if (it.t === 'summary') appendSummary(chat, it.text);
       else if (it.t === 'assistant') {
         const cut = splitThink(it.text);
         if (cut.thinking) chat.msgs.appendChild(thoughtNode(cut.thinking));
@@ -1814,6 +1818,28 @@ const Chat = (() => {
 
   /* ---------------- message rendering ---------------- */
 
+  /** Output of a command the user ran (e.g. /model), shown as a quiet note. */
+  function appendCommandNote(chat, text, uuid) {
+    chat.msgs.querySelector('.chat-empty')?.remove();
+    const n = el('div', 'sys-note cmd-note', '↳ ' + text);
+    if (uuid) n.dataset.uuid = uuid;
+    chat.msgs.appendChild(n);
+    scrollDownSoft(chat);
+  }
+
+  /** The engine's compaction summary: folded, since it can run to pages. */
+  function appendSummary(chat, text, uuid) {
+    chat.msgs.querySelector('.chat-empty')?.remove();
+    const d = el('details', 'compact-summary');
+    if (uuid) d.dataset.uuid = uuid;
+    d.appendChild(el('summary', '', 'Summary of the earlier conversation — what the model now remembers. Click to read.'));
+    const body = el('div', 'md');
+    body.innerHTML = md(String(text || '').replace(/^This session is being continued[^\n]*\n+/, ''));
+    d.appendChild(body);
+    chat.msgs.appendChild(d);
+    scrollDownSoft(chat);
+  }
+
   function appendUser(chat, text, uuid) {
     chat.msgs.querySelector('.chat-empty')?.remove();
     const wrap = el('div', 'msg user-msg');
@@ -1935,7 +1961,10 @@ const Chat = (() => {
     chat.statusLine.textContent = parts.join('  ·  ');
     if (chat.init) {
       const auth = chat.init.apiKeySource;
-      const keyProvider = !!(chat.provider && (chat.provider.hasApiKey || chat.provider.hasAuthToken));
+      // The key lives in cce's own store now (authType/authHint), so the old
+      // flags were false and a working provider read "no auth — /login".
+      const keyProvider = !!(chat.provider && (chat.provider.hasApiKey || chat.provider.hasAuthToken
+        || chat.provider.authType || chat.provider.authHint || chat.provider.baseUrl));
       const mAuth = auth === 'none'
         ? (keyProvider ? 'provider key' : 'no auth — /login in a terminal tab')
         : auth;
@@ -1988,15 +2017,21 @@ const Chat = (() => {
             // Already drawn under this exact uuid (the engine replays a turn
             // after a reconnect). Drop it rather than draw the prompt twice —
             // matching by uuid, not by text, so two identical prompts are safe.
-            const drawn = [...chat.msgs.querySelectorAll('.msg.user-msg')]
+            const drawn = [...chat.msgs.querySelectorAll('[data-uuid]')]
               .some(n => n.dataset.uuid === msg.uuid);
-            if (!drawn && String(t || '').trim()) {
+            // Command output, the caveat note and the compaction summary are
+            // recorded as user messages too; they are not prompts.
+            const kind = window.CCEUserText ? CCEUserText.classifyUserText(t, msg) : { kind: 'prompt', text: t };
+            if (kind.kind === 'skip') { /* nothing to show */ }
+            else if (kind.kind === 'note') { if (!drawn) appendCommandNote(chat, kind.text, msg.uuid); }
+            else if (kind.kind === 'summary') { if (!drawn) appendSummary(chat, kind.text, msg.uuid); }
+            else if (!drawn && String(kind.text || '').trim()) {
               // The composer already showed this message when it was sent; the
               // engine's replay only adds the uuid. Swap it in place instead of
               // drawing the message twice.
               const sent = [...chat.msgs.querySelectorAll('.msg.user-msg')]
-                .find(n => !n.dataset.uuid && n.dataset.text === String(t).trim());
-              const fresh = appendUser(chat, t, msg.uuid);
+                .find(n => !n.dataset.uuid && (n.dataset.text === String(t).trim() || n.dataset.text === kind.text));
+              const fresh = appendUser(chat, kind.text, msg.uuid);
               if (sent) sent.replaceWith(fresh);
             }
           }
@@ -2177,6 +2212,7 @@ const Chat = (() => {
   // commands_changed: the slash-command list changed (a plugin installed, a file
   // appeared). Refresh so the palette is not stale.
   function onCommandsChanged(chat, msg) {
+    chat.slashCatalog = null;   // re-read on the next "/"
     const list = msg.commands || msg.slash_commands;
     if (Array.isArray(list)) {
       chat.commands = list.map(c => (typeof c === 'string' ? c : c.name)).filter(Boolean);
@@ -3202,20 +3238,61 @@ const Chat = (() => {
 
   /* ---------------- slash palette ---------------- */
 
-  function maybeSlash(chat) {
+  // Handled by cce itself, so they work before the engine has said anything.
+  const OWN_SLASH = [
+    { name: 'compact', description: 'Summarise the conversation and carry on in a fresh session' },
+    { name: 'clear', description: 'Start a fresh session in this folder' },
+    { name: 'cost', description: 'Tokens and cost so far' },
+    { name: 'model', description: 'Switch model' },
+    { name: 'help', description: 'What cce can do here' },
+  ];
+
+  /**
+   * Every command the session offers, with descriptions. The engine only lists
+   * them in its first reply, so a fresh chat showed nothing for "/": ask the
+   * session directly instead, once.
+   */
+  async function loadSlashCommands(chat) {
+    if (chat.slashCatalog) return chat.slashCatalog;
+    if (!chat.slashLoading) {
+      chat.slashLoading = (async () => {
+        let live = [];
+        try {
+          const r = await ccx.invoke('chat:commands', { id: chat.id });
+          if (r && r.ok) live = (r.commands || []).map(c => (typeof c === 'string' ? { name: c } : c));
+        } catch { /* fall back to the init list */ }
+        if (!live.length) live = (chat.commands || []).map(name => ({ name }));
+        const seen = new Set();
+        chat.slashCatalog = OWN_SLASH.concat(live).filter(c => c && c.name && !seen.has(c.name) && seen.add(c.name));
+        chat.slashLoading = null;
+        return chat.slashCatalog;
+      })();
+    }
+    return chat.slashLoading;
+  }
+
+  async function maybeSlash(chat) {
     const v = chat.composer.value;
-    if (v.startsWith('/') && !v.includes(' ')) {
-      const q = v.slice(1).toLowerCase();
-      chat.slashItems = (chat.commands || []).filter(c => c.toLowerCase().startsWith(q)).slice(0, 12);
-      if (!chat.slashItems.length) return hideSlash(chat);
-      renderSlash(chat);
-    } else hideSlash(chat);
+    if (!(v.startsWith('/') && !v.includes(' '))) return hideSlash(chat);
+    const all = await loadSlashCommands(chat);
+    // The user may have typed on while the list loaded.
+    const now = chat.composer.value;
+    if (!(now.startsWith('/') && !now.includes(' '))) return hideSlash(chat);
+    const q = now.slice(1).toLowerCase();
+    const starts = all.filter(c => c.name.toLowerCase().startsWith(q));
+    const contains = q ? all.filter(c => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q)) : [];
+    chat.slashItems = starts.concat(contains).slice(0, 14);
+    if (!chat.slashItems.length) return hideSlash(chat);
+    if (chat.slashIdx < 0 || chat.slashIdx >= chat.slashItems.length) chat.slashIdx = 0;
+    renderSlash(chat);
   }
 
   function renderSlash(chat) {
     chat.slash.innerHTML = '';
     chat.slashItems.forEach((c, i) => {
-      const item = el('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''), '/' + c);
+      const item = el('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''));
+      item.appendChild(el('span', 'slash-name', '/' + c.name + (c.argumentHint ? ' ' + c.argumentHint : '')));
+      if (c.description) item.appendChild(el('span', 'slash-desc', c.description));
       item.addEventListener('mousedown', (e) => { e.preventDefault(); chat.slashIdx = i; applySlash(chat); });
       chat.slash.appendChild(item);
     });
@@ -3228,7 +3305,7 @@ const Chat = (() => {
   }
   function applySlash(chat) {
     const c = chat.slashItems[chat.slashIdx >= 0 ? chat.slashIdx : 0];
-    if (c) { chat.composer.value = '/' + c + ' '; chat.composer.focus(); }
+    if (c) { chat.composer.value = '/' + c.name + ' '; chat.composer.focus(); }
     hideSlash(chat);
   }
   function hideSlash(chat) { chat.slash.classList.add('hidden'); chat.slashIdx = -1; }
