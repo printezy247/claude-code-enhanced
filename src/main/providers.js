@@ -255,7 +255,37 @@ function keyUrlMismatch(baseUrl, key) {
   return '';
 }
 
+/**
+ * Clean the model fields of a provider save, touching only the ones sent.
+ * Partial saves (the enable/disable toggle, the Models and Advanced tabs) used
+ * to blank both models, so a provider lost its default and its chats fell back
+ * to whatever ~/.claude/settings.json pins (e.g. "sonnet"), which a
+ * third-party provider does not serve.
+ */
+function normalizeModelFields(instance) {
+  const one = (m) => String(m || '').split(',')[0].trim();
+  if ('model' in instance) instance.model = one(instance.model);
+  if ('smallFastModel' in instance) instance.smallFastModel = one(instance.smallFastModel);
+  return instance;
+}
+
+/**
+ * The model a chat asks for when none was picked. A provider with no default
+ * would otherwise inherit the engine's own default (the "model" in
+ * ~/.claude/settings.json), a Claude name a third-party provider does not
+ * serve; its first listed model is the better guess.
+ */
+function chatModelFor(instance, picked) {
+  if (picked) return picked;
+  if (!instance) return '';
+  if (instance.model) return instance.model;
+  const thirdParty = !!instance.baseUrl && !/(^|\.)anthropic\.com/i.test(String(instance.baseUrl));
+  if (!thirdParty) return '';
+  return (instance.whitelist && instance.whitelist[0]) || (instance.models && instance.models[0]) || '';
+}
+
 module.exports = {
+  normalizeModelFields, chatModelFor,
   keyUrlMismatch,
   PRESETS, ensureDefaults, envFor, publicInstance, newUid,
   useAuth, catalogEntries, makeInstance, entryFor,

@@ -255,6 +255,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .mcp-signins { margin-top: 8px; }
 .mcp-signins summary { cursor: pointer; color: var(--muted); }
 .conn-hint { color: var(--warn); font-size: 11.5px; margin-top: 4px; overflow-wrap: anywhere; }
+.provider-card .meta.warn-text { color: var(--warn); }
 .conn-hint:empty { display: none; }
 
 /* ---------- settings ---------- */
