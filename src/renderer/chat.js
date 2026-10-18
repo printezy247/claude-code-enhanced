@@ -131,6 +131,7 @@ const Chat = (() => {
           <select class="chat-model-foot" title="Model"></select>
           <select class="chat-mode-foot" title="Permission mode"></select>
           <button class="chat-effort" title="Reasoning effort">effort: auto</button>
+          <select class="chat-style-foot hidden" title="Output style"></select>
           <span class="foot-spacer"></span>
           <span class="foot-hint">⏎ send · ⇧⏎ newline · esc stop</span>
         </div>
@@ -154,6 +155,7 @@ const Chat = (() => {
       projEl: pane.querySelector('.chat-project'),
       modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
+      styleSel: pane.querySelector('.chat-style-foot'),
       queued: pane.querySelector('.chat-queued'),
       permSlot: pane.querySelector('.chat-perm-slot'), slash: pane.querySelector('.chat-slash'),
       todosEl: pane.querySelector('.chat-todos'), todosList: pane.querySelector('.chat-todos ol'),
@@ -208,6 +210,13 @@ const Chat = (() => {
     fillModelSelector(chat);
     fillModeSelect(chat.modeSel, chat.provider);
     chat.modeSel.value = chat.mode;
+    // Output style picker (desktop parity). The list comes from the engine, so
+    // it fills at init; hidden when the machine defines no styles. #feat-output-styles
+    chat.styleSel.addEventListener('change', async () => {
+      const v = chat.styleSel.value;
+      const r = await ccx.invoke('chat:flags', { id, patch: { outputStyle: v || null } });
+      toast(r && r.ok ? ('style: ' + (v || 'auto')) : 'style change failed', r && r.ok ? 'ok' : 'err');
+    });
     chat.modelSel.addEventListener('change', async () => {
       const v = chat.modelSel.value;
       if (v.startsWith('__prov:')) { await switchProvider(chat, v.slice(7)); return; }
@@ -724,6 +733,7 @@ const Chat = (() => {
     if (window.rekeyTab) window.rekeyTab(oldId, r.id);
     chat.provider = r.provider;
     chat.model = r.model || '';
+    chat.stylesFilled = false;   // new engine, new style list
     chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider);
     // The old session's exit event can land during the swap and mark the tab
     // dead — the chat is alive again on the new engine.
@@ -2367,8 +2377,25 @@ const Chat = (() => {
     if (msg.subtype === 'compact_boundary') return;   // already handled
   }
 
+  /* ---------------- output styles (#feat-output-styles) ---------------- */
+
+  async function fillStyles(chat) {
+    if (chat.stylesFilled || !chat.alive) return;
+    chat.stylesFilled = true;
+    let r = null;
+    try { r = await ccx.invoke('chat:styles', { id: chat.id }); } catch { return; }
+    const list = (r && r.ok && r.styles) || [];
+    if (!list.length) return;
+    chat.styleSel.innerHTML = '';
+    const auto = el('option', '', 'style: auto'); auto.value = '';
+    chat.styleSel.appendChild(auto);
+    for (const s of list) { const o = el('option', '', 'style: ' + s); o.value = s; chat.styleSel.appendChild(o); }
+    chat.styleSel.classList.remove('hidden');
+  }
+
   function onInit(chat) {
     chat.msgs.querySelector('.chat-empty')?.remove();
+    fillStyles(chat);
     // A plugin that failed to load is simply absent from the tool list, which
     // used to look like "that connector does not exist". Say which ones broke.
     for (const e of (chat.init.plugin_errors || [])) {

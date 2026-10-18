@@ -950,6 +950,7 @@ body.split-open #splitpane { display: flex; }
 }
 .chat-model-foot { flex: 0 1 220px; max-width: 220px; min-width: 120px; }
 .chat-mode-foot { flex: 0 0 auto; width: 130px; }
+.chat-style-foot { flex: 0 0 auto; width: 120px; }
 .chat-footbar .chat-effort { flex: 0 0 auto; white-space: nowrap;
   background: var(--bg3); border: 1px solid var(--border); color: var(--muted);
   border-radius: 7px; padding: 4px 9px; font-size: 12px; cursor: pointer;

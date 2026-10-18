@@ -1340,6 +1340,7 @@ function registerIpc() {
     throw new Error('unknown mcp op: ' + op);
   });
   handle('chat:agents', async ({ id }) => ({ agents: await chats.agents(id) }));
+  handle('chat:styles', async ({ id }) => ({ styles: await chats.styles(id) }));
   handle('chat:flags', async ({ id, patch }) => ({ applied: await chats.applyFlags(id, patch) }));
   handle('chat:stopTask', async ({ id, taskId }) => await chats.stopTask(id, taskId));
   // Runtime tools skills rely on (bun/uv run skill scripts, git imports skills).
