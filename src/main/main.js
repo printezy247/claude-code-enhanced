@@ -1850,6 +1850,9 @@ if (!gotLock) {
   app.on('second-instance', () => {
     if (win && !win.isDestroyed()) {
       if (win.isMinimized()) win.restore();
+      // Closed-to-tray leaves the window hidden; focus() on a hidden window is
+      // a no-op, so clicking the desktop icon looked like "the app won't open".
+      if (!win.isVisible()) win.show();
       win.focus();
     }
   });
@@ -1899,6 +1902,19 @@ if (!gotLock) {
       claudeInfo = info;
       if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
       if (win && !win.isDestroyed()) win.webContents.send('claude:detected', claudeInfo);
+    });
+    // Startup can race a claude self-update (the ~/.local/bin/claude symlink is
+    // briefly dangling), which stuck the "CLI not found" banner until restart.
+    // Re-probe whenever the window regains focus while we still think it's absent.
+    let lastClaudeProbe = Date.now();
+    win.on('focus', () => {
+      if (claudeInfo.found || Date.now() - lastClaudeProbe < 10_000) return;
+      lastClaudeProbe = Date.now();
+      detectClaude().then((info) => {
+        if (!info.found) return;
+        claudeInfo = info;
+        if (win && !win.isDestroyed()) win.webContents.send('claude:detected', info);
+      });
     });
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   }).catch((err) => {
