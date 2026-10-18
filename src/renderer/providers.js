@@ -87,6 +87,8 @@ const ProvidersUI = (() => {
     if (p.baseUrl) card.appendChild(el('div', 'meta', 'URL  ' + p.baseUrl));
     else if (p.protocol === 'anthropic') card.appendChild(el('div', 'meta', 'official Anthropic API'));
     if (p.model) card.appendChild(el('div', 'meta', 'model  ' + p.model + (p.smallFastModel ? '  /  ' + p.smallFastModel : '')));
+    // Visible, so a default that went missing is noticed before a chat fails.
+    else if (p.baseUrl && !p.local) card.appendChild(el('div', 'meta warn-text', 'model  not set — Edit → Options or Models'));
     if (p.authHint) card.appendChild(el('div', 'meta', (p.authType === 'oauth' ? 'oauth  ' : 'key  ') + p.authHint
       + (p.authExpired ? '  (expired — reconnect)' : '')));
     else if (p.local) card.appendChild(el('div', 'meta', 'local runtime — no key needed'));
@@ -670,7 +672,9 @@ const ProvidersUI = (() => {
     if (!entry.derived && entry.protocol && entry.protocol !== 'anthropic') protocol.appendChild(el('div', 'hint', 'Preset default: ' + entry.protocol));
 
     const base = mk('Base URL (empty = official Anthropic API)', p.baseUrl, 'text', entry.editableBaseUrl ? 'Editable for this provider.' : '');
-    const model = mk('Default model (one slug)', p.model, 'text', 'Used for new chats unless the chat switches model.');
+    const model = mk('Default model (one slug)', p.model, 'text', p.baseUrl
+      ? 'Used for new chats unless the chat switches model. Empty: the first model on the Models tab.'
+      : 'Used for new chats unless the chat switches model. Empty: the "model" set in ~/.claude/settings.json, if any.');
     const small = mk('Small / background model', p.smallFastModel, 'text', 'Title generation and lightweight tasks.');
     const keyHeader = el('label', 'fld wide');
     keyHeader.appendChild(el('span', '', 'Auth header'));
