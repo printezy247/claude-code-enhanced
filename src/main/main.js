@@ -30,6 +30,7 @@ const bedrock = require('./bedrock');
 const connectors = require('./connectors');
 const tools = require('./tools');
 const localmodels = require('./localmodels');
+const worktrees = require('./worktrees');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
 const { startProxy } = require('./proxy');
@@ -1190,7 +1191,16 @@ function registerIpc() {
   }
 
   // Local-model pre-warm helpers live in ./localmodels (tested by scripts/check.js).
-  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt }) => {
+  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree }) => {
+    // Isolated git worktree per chat (desktop scratch-workspace parity). The
+    // session then runs inside the worktree, not the shared checkout. #feat-worktree
+    let worktree = null;
+    if (wantWorktree && cwd) {
+      worktree = worktrees.add(cwd);
+      if (worktree.error) return { ok: false, error: worktree.error };
+      cwd = worktree.path;
+      resume = null;   // the fresh tree has no conversation of its own
+    }
     const provider = store.providers.find(p => p.uid === providerUid)
       || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
     if (provider) await ensureFreshAuth(provider);
@@ -1235,7 +1245,7 @@ function registerIpc() {
     });
     // Report back the model actually in force (auto-picked or typo-corrected)
     // so the renderer's dropdown doesn't keep showing 'provider default'.
-    return { ...created, model: model || '' };
+    return { ...created, model: model || '', worktree };
   });
   handle('chat:last', async ({ cwd }) => ({ sessionId: chats.lastChatFor(cwd) }));
   handle('chat:send', async ({ id, text, blocks }) => chats.send(id, text, blocks));
