@@ -284,7 +284,11 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 
 /* ================= chat (Claude-Desktop-style) ================= */
 
-.chat-pane { display: none; flex-direction: column; background: var(--bg); position: relative; }
+/* NOTE: .chat-pane must NOT set `position` — .term-pane above (position:absolute,
+   inset:0) is what makes the pane fill #terminals; a later same-specificity
+   `position: relative` here silently collapses the chat to content height. The
+   find bar inside the pane anchors to the absolute pane just fine. */
+.chat-pane { display: none; flex-direction: column; background: var(--bg); }
 .chat-pane.active { display: flex; }
 
 .chat-header {
