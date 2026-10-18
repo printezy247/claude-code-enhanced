@@ -2813,7 +2813,42 @@ const Chat = (() => {
 
   /** Fill the todo drawer from a TodoWrite tool input. #5 */
   function renderTodos(chat, input) {
-    const items = Array.isArray(input.todos) ? input.todos : [];
+    renderTodoItems(chat, Array.isArray(input.todos) ? input.todos : []);
+  }
+
+  /**
+   * Newer engines track work with TaskCreate / TaskUpdate / TaskList instead of
+   * TodoWrite, so the drawer (and the side panel that mirrors it) stayed empty.
+   * Keep a per-chat board keyed by task id and render it the same way.
+   */
+  function applyTaskTool(chat, name, input, output) {
+    const board = chat.taskBoard || (chat.taskBoard = new Map());
+    const text = String(output || '');
+    if (name === 'TaskCreate') {
+      const m = text.match(/#\s*(\d+)/) || text.match(/\b(?:task|id)\D{0,3}(\d+)/i);
+      const id = m ? m[1] : String(board.size + 1);
+      board.set(id, { content: String(input.subject || ''), status: 'pending' });
+    } else if (name === 'TaskUpdate') {
+      const id = String(input.taskId || '').replace(/^#/, '');
+      const t = board.get(id) || { content: '', status: 'pending' };
+      if (input.status === 'deleted') { board.delete(id); }
+      else {
+        if (input.subject) t.content = String(input.subject);
+        if (input.status) t.status = input.status;
+        if (!t.content) t.content = 'task ' + id;
+        board.set(id, t);
+      }
+    } else if (name === 'TaskList') {
+      const rows = [...text.matchAll(/#\s*(\d+)\s*\[(pending|in_progress|completed)\]\s*(.+)/g)];
+      if (rows.length) {
+        board.clear();
+        for (const r of rows) board.set(r[1], { content: r[3].trim(), status: r[2] });
+      }
+    } else return;
+    renderTodoItems(chat, [...board.values()]);
+  }
+
+  function renderTodoItems(chat, items) {
     if (!items.length) {
       chat.todosEl.classList.add('hidden');
       return;
@@ -2960,6 +2995,7 @@ const Chat = (() => {
     // A streaming card is tracked per thread, not in chat.tools, so look there
     // too or the live card would never resolve.
     if (ctx.name === 'TodoWrite') renderTodos(chat, ctx.input);
+    else if (!block.is_error && /^Task(Create|Update|List)$/.test(ctx.name)) applyTaskTool(chat, ctx.name, ctx.input || {}, resultText(block.content));
     ctx.output = resultText(block.content);
     ctx.isError = !!block.is_error;
     ctx.setStatus(block.is_error ? 'err' : 'done');
