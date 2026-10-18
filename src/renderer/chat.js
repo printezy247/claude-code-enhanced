@@ -616,8 +616,22 @@ const Chat = (() => {
     const sel = chat.modelSel;
     sel.innerHTML = '';
     const add = (value, label) => { const o = el('option', '', label); o.value = value; sel.appendChild(o); };
+    const p = chat.provider;
+    // A third-party provider does not serve Claude model names. Offering
+    // Opus/Sonnet/Haiku there sent a name it lacks; the proxy then substituted
+    // another model, so the pick looked ignored. List the provider's own models.
+    const thirdParty = !!(p && p.baseUrl && !/(^|\.)anthropic\.com/i.test(String(p.baseUrl)));
+    if (thirdParty) {
+      const own = [...new Set([p.model, ...(p.whitelist && p.whitelist.length ? p.whitelist : (p.models || [])), chat.model]
+        .filter(Boolean))];
+      add('', p.model ? 'provider default · ' + p.model : 'provider default (none set)');
+      own.forEach(m => add(m, m));
+      add('__custom', 'Custom…');
+      if (chat.model && own.includes(chat.model)) sel.value = chat.model;
+      return;
+    }
     add('', 'provider default');
-    if (chat.provider && chat.provider.model) add(chat.provider.model, chat.provider.model + ' (' + basename(chat.provider.name) + ')');
+    if (p && p.model) add(p.model, p.model + ' (' + basename(p.name) + ')');
     add('opus', 'Opus');
     add('sonnet', 'Sonnet');
     add('haiku', 'Haiku');
@@ -2205,6 +2219,12 @@ const Chat = (() => {
     }
     if (s.model && s.model !== chat.model) {
       chat.model = s.model;
+      // The menu kept showing the old pick while the engine used another.
+      if (![...chat.modelSel.options].some(o => o.value === s.model)) {
+        const o = el('option', '', s.model); o.value = s.model;
+        chat.modelSel.insertBefore(o, chat.modelSel.querySelector('[value="__custom"]'));
+      }
+      chat.modelSel.value = s.model;
       setStatusLine(chat);
     }
   }

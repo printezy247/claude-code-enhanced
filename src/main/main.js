@@ -688,9 +688,7 @@ function registerIpc() {
 
   handle('providers:save', async ({ instance }) => {
     if (!instance || !instance.name) throw new Error('provider name required');
-    const sanitizeModelField = (m) => String(m || '').split(',')[0].trim();
-    instance.model = sanitizeModelField(instance.model);
-    instance.smallFastModel = sanitizeModelField(instance.smallFastModel);
+    providers.normalizeModelFields(instance);
     // Lean tool allowlist per provider (#41). The renderer sends a preset id; the
     // raw tool array is also accepted but validated against the known names so
     // a typo cannot silently disable a tool.
@@ -1200,6 +1198,12 @@ function registerIpc() {
     // Local Ollama providers: pre-warm the model at a context size that fits the
     // claude engine's base prompt (Ollama's default 4-16K ctx 400s instantly).
     let effModel = sanitizeModel(model || (provider && provider.model) || '');
+    // No default on a remote third-party provider: use one of its own models,
+    // not the engine's default from ~/.claude/settings.json ("sonnet").
+    if (!effModel && provider && provider.baseUrl && !isLocalBase(provider.baseUrl)) {
+      const own = sanitizeModel(providers.chatModelFor(provider, ''));
+      if (own) { effModel = own; model = own; }
+    }
     if (provider && provider.baseUrl && isLocalBase(provider.baseUrl) && !effModel) {
       const picked = await pickLocalDefault(provider.baseUrl);
       if (picked) { effModel = picked; model = picked; }
