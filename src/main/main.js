@@ -1325,6 +1325,7 @@ function registerIpc() {
     catch (err) { return { models: [], error: String(err.message || err) }; }
   });
   handle('chat:permission-answer', async ({ id, requestId, decision, answers, message }) => chats.answer(id, requestId, decision, answers, message));
+  handle('chat:elicit-answer', async ({ id, requestId, action, content }) => chats.answerElicitation(id, requestId, action, content));
   handle('chat:close', async ({ id }) => { chats.close(id); return {}; });
   handle('chat:skills', async ({ cwd }) => ({ skills: chats.scanSkills(cwd) }));
   handle('chat:commands', async ({ id }) => ({ commands: await chats.commands(id) }));

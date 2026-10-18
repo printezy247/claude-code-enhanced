@@ -1976,6 +1976,9 @@ const Chat = (() => {
     if (kind === 'message') handleMessage(chat, evt.msg);
     else if (kind === 'status') setBusy(chat, evt.busy);
     else if (kind === 'permission') showPermission(chat, evt);
+    else if (kind === 'elicitation') showElicitation(chat, evt);   // #feat-elicitation
+    else if (kind === 'elicitation-cleared') clearElicitation(chat, evt.requestId,
+      evt.reason === 'timeout' ? 'Connector request timed out — declined' : null);
     else if (kind === 'permission-timeout') clearPermission(chat, evt.requestId, 'Permission request timed out — auto-denied');
     // Interrupt / tab close: drop the card instead of leaving it clickable. #11
     else if (kind === 'permission-cleared') {
@@ -2352,6 +2355,15 @@ const Chat = (() => {
     if (msg.subtype === 'permission_denied') return onPermissionDenied(chat, msg);
     if (msg.subtype === 'commands_changed') return onCommandsChanged(chat, msg);
     if (msg.subtype === 'session_state_changed') return onSessionState(chat, msg);
+    if (msg.subtype === 'elicitation_complete') {   // connector finished its OAuth round-trip
+      const card = chat.permSlot.querySelector('.elic[data-elid="' + (msg.elicitation_id || msg.elicitationId || '') + '"]');
+      if (card) {
+        ccx.invoke('chat:elicit-answer', { id: chat.id, requestId: card.dataset.rid, action: 'accept', content: {} });
+        card.remove();
+        toast('Connector authorized', 'ok');
+      }
+      return;
+    }
     if (msg.subtype === 'compact_boundary') return;   // already handled
   }
 
@@ -3278,6 +3290,119 @@ const Chat = (() => {
     actions.appendChild(skip);
     card.appendChild(actions);
     sync();
+    chat.permSlot.appendChild(card);
+    card.scrollIntoView({ block: 'nearest' });
+  }
+
+  /* ---------------- MCP elicitation cards (#feat-elicitation) ----------------
+     Connectors ask for input mid-call: 'url' mode = open this URL and
+     authorize; 'form' mode = structured fields from the server's JSON schema.
+     The main process parks the SDK callback until the card is answered. */
+
+  function clearElicitation(chat, requestId, note) {
+    for (const card of chat.permSlot.querySelectorAll('.elic')) {
+      if (card.dataset.rid !== requestId) continue;
+      card.remove();
+      if (note) {
+        const n = el('div', 'sys-note', note);
+        chat.msgs.appendChild(n);
+        scrollDownSoft(chat);
+      }
+      return;
+    }
+  }
+
+  function showElicitation(chat, evt) {
+    const card = el('div', 'perm-card elic');
+    card.dataset.rid = evt.requestId;
+    card.dataset.elid = evt.elicitationId || '';
+    const head = el('div', 'perm-head');
+    head.appendChild(elIcon('span', 'tool-ico', toolIcon('mcp__connector')));
+    const t = el('span', '');
+    t.innerHTML = '<b>' + esc(evt.displayName || evt.serverName || 'connector') + '</b> wants to connect';
+    head.appendChild(t);
+    card.appendChild(head);
+    if (evt.message) card.appendChild(el('div', 'elic-msg', evt.message));
+    if (evt.description) card.appendChild(el('div', 'hint', evt.description));
+
+    const collect = () => {   // form-mode: read inputs into the accept payload
+      const out = {};
+      for (const inp of card.querySelectorAll('[data-key]')) {
+        const key = inp.dataset.key;
+        if (inp.type === 'checkbox') out[key] = inp.checked;
+        else if (inp.value !== '') out[key] = inp.type === 'number' ? Number(inp.value) : inp.value;
+      }
+      return out;
+    };
+
+    const answer = async (action) => {
+      card.remove();
+      await ccx.invoke('chat:elicit-answer', {
+        id: chat.id, requestId: evt.requestId, action,
+        content: action === 'accept' ? collect() : undefined,
+      });
+    };
+
+    if (evt.mode === 'url') {
+      // OAuth handshake: open the URL in the real browser; the connector
+      // resolves once the user finishes there.
+      const row = el('div', 'perm-actions');
+      const open = el('button', 'btn primary', 'Open authorization page');
+      open.addEventListener('click', () => ccx.invoke('shell:openExternal', { url: evt.url }));
+      if (evt.url) open.title = evt.url;
+      const done = el('button', 'btn', 'I have authorized');
+      done.addEventListener('click', () => answer('accept'));
+      const no = el('button', 'btn danger', 'Decline');
+      no.addEventListener('click', () => answer('decline'));
+      row.appendChild(open); row.appendChild(done); row.appendChild(no);
+      card.appendChild(row);
+      if (evt.url) {
+        const u = el('div', 'elic-url mono', evt.url.slice(0, 160));
+        u.title = evt.url;
+        card.appendChild(u);
+      }
+    } else {
+      // form mode: render the requestedSchema (MCP input schema: object with
+      // typed properties) as inputs; only primitive fields are supported.
+      const props = (evt.requestedSchema && evt.requestedSchema.properties) || {};
+      const required = new Set(Array.isArray(evt.requestedSchema && evt.requestedSchema.required) ? evt.requestedSchema.required : []);
+      const fill = el('div', 'elic-form');
+      for (const key of Object.keys(props)) {
+        const spec = props[key] || {};
+        const lab = el('label', 'elic-field');
+        lab.appendChild(el('span', 'elic-key', (spec.title || key) + (required.has(key) ? ' *' : '')));
+        let inp;
+        if (Array.isArray(spec.enum) && spec.enum.length) {
+          inp = document.createElement('select');
+          inp.appendChild(el('option', '', ''));
+          for (const e of spec.enum) { const o = el('option', '', String(e)); o.value = String(e); inp.appendChild(o); }
+        } else if (spec.type === 'boolean') {
+          inp = el('input'); inp.type = 'checkbox';
+        } else if (spec.type === 'number' || spec.type === 'integer') {
+          inp = el('input'); inp.type = 'number';
+        } else {
+          inp = el('input'); inp.type = 'text';
+        }
+        if (spec.description) inp.placeholder = String(spec.description).slice(0, 80);
+        inp.dataset.key = key;
+        lab.appendChild(inp);
+        fill.appendChild(lab);
+      }
+      card.appendChild(fill);
+      const row = el('div', 'perm-actions');
+      const send = el('button', 'btn primary', 'Submit');
+      send.disabled = [...card.querySelectorAll('[data-key]')].some(i =>
+        required.has(i.dataset.key) && i.type !== 'checkbox' && !i.value);
+      send.addEventListener('click', () => answer('accept'));
+      const no = el('button', 'btn danger', 'Decline');
+      no.addEventListener('click', () => answer('decline'));
+      row.appendChild(send); row.appendChild(no);
+      card.appendChild(row);
+      fill.addEventListener('input', () => {
+        send.disabled = [...fill.querySelectorAll('[data-key]')].some(i =>
+          required.has(i.dataset.key) && i.type !== 'checkbox' && !i.value);
+      });
+    }
     chat.permSlot.appendChild(card);
     card.scrollIntoView({ block: 'nearest' });
   }

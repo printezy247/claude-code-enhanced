@@ -184,6 +184,7 @@ class ChatManager extends EventEmitter {
     this.sdkOverride = sdk || null;
     this.chats = new Map();      // id -> chat
     this.pendingPerms = new Map(); // requestId -> {resolve, timer, toolName}
+    this.pendingElicits = new Map(); // requestId -> {resolve, timer} for MCP elicitations #feat-elicitation
     this.nextId = 1;
     this.permSeq = 1;
     this.lastCreatedId = null;
@@ -195,6 +196,24 @@ class ChatManager extends EventEmitter {
   }
 
   /** Remove a pending permission entry. Returns false if it was already gone. */
+  _dropElicit(requestId) {
+    const entry = this.pendingElicits.get(requestId);
+    if (!entry) return false;
+    clearTimeout(entry.timer);
+    this.pendingElicits.delete(requestId);
+    return true;
+  }
+
+  /** Answer a pending MCP elicitation from the renderer card. #feat-elicitation */
+  answerElicitation(id, requestId, action, content) {
+    const entry = this.pendingElicits.get(requestId);
+    if (!entry || entry.chatId !== id) return { ok: false, error: 'no pending elicitation' };
+    this._dropElicit(requestId);
+    const a = (action === 'accept' || action === 'decline' || action === 'cancel') ? action : 'decline';
+    entry.resolve({ action: a, content: a === 'accept' ? (content && typeof content === 'object' ? content : {}) : undefined });
+    return { ok: true };
+  }
+
   _dropPerm(requestId) {
     const entry = this.pendingPerms.get(requestId);
     if (!entry) return false;
@@ -364,6 +383,41 @@ class ChatManager extends EventEmitter {
           title: entry.title, description: entry.description,
           decisionReason: entry.decisionReason, blockedPath: entry.blockedPath,
           displayName: entry.displayName, toolUseID: entry.toolUseID,
+          expiresAt: Date.now() + PERM_TIMEOUT_MS,
+        });
+      });
+    };
+
+    // MCP connectors ask the user for input mid-call. 'url' mode is the OAuth
+    // dance (open this URL, authorize, the server completes via the MCP server);
+    // 'form' mode asks for structured input. Without a handler the SDK declines
+    // everything, which is why auth-gated connectors silently never connected.
+    // Mirrors the permission card plumbing above. #feat-elicitation
+    options.onElicitation = async (req, ctx = {}) => {
+      const requestId = 'e' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
+      return await new Promise((resolve) => {
+        const entry = {
+          chatId: id, requestId, resolve,
+          timer: setTimeout(() => {
+            this._dropElicit(requestId);
+            this.emit('event', id, { kind: 'elicitation-cleared', requestId, reason: 'timeout' });
+            resolve({ action: 'decline' });
+          }, PERM_TIMEOUT_MS),
+        };
+        this.pendingElicits.set(requestId, entry);
+        ctx.signal && ctx.signal.addEventListener && ctx.signal.addEventListener('abort', () => {
+          if (!this._dropElicit(requestId)) return;
+          this.emit('event', id, { kind: 'elicitation-cleared', requestId, reason: 'interrupted' });
+          resolve({ action: 'cancel' });
+        }, { once: true });
+        this.emit('event', id, {
+          kind: 'elicitation', requestId,
+          serverName: String(req.serverName || ''), message: String(req.message || ''),
+          mode: req.mode === 'url' ? 'url' : 'form',
+          url: String(req.url || ''), elicitationId: String(req.elicitationId || ''),
+          requestedSchema: req.requestedSchema || null,
+          title: String(req.title || ''), displayName: String(req.displayName || ''),
+          description: String(req.description || ''),
           expiresAt: Date.now() + PERM_TIMEOUT_MS,
         });
       });
@@ -885,6 +939,13 @@ class ChatManager extends EventEmitter {
       if (this._dropPerm(entry.requestId)) {
         this.emit('event', id, { kind: 'permission-cleared', requestId: entry.requestId, reason: 'closed' });
         try { entry.resolve({ behavior: 'deny', message: 'Session closed' }); } catch { /* resolved already */ }
+      }
+    }
+    for (const [rid, entry] of [...this.pendingElicits]) {
+      if (entry.chatId !== id) continue;
+      if (this._dropElicit(rid)) {
+        this.emit('event', id, { kind: 'elicitation-cleared', requestId: rid, reason: 'closed' });
+        try { entry.resolve({ action: 'cancel' }); } catch { /* resolved already */ }
       }
     }
     if (!chat) return;

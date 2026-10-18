@@ -24,7 +24,7 @@ const INVOKE_CHANNELS = new Set([
   'chat:transcript', 'chat:delete', 'chat:deleteFolder', 'chat:fork', 'chat:last',
   'chat:set-model', 'chat:set-provider', 'chat:set-mode', 'chat:effort', 'chat:context', 'chat:flags',
   'chat:mcp', 'chat:agents', 'chat:skills', 'chat:commands', 'chat:checkpoints',
-  'chat:rewind', 'chat:export', 'chat:permission-answer', 'chat:stopTask',
+  'chat:rewind', 'chat:export', 'chat:permission-answer', 'chat:elicit-answer', 'chat:stopTask',
   'chat:supported-models', 'chats:index',
   'session:create', 'session:list', 'session:resize', 'session:kill',
   'session:fork', 'session:rename', 'session:tag',
