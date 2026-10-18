@@ -81,6 +81,8 @@ body {
   color: var(--warn); border-radius: 8px; padding: 8px 10px;
 }
 .hidden { display: none !important; }
+/* Left sidebar collapse (toggle in the tab bar, Ctrl+\). #feat-desktop-layout */
+body.sb-hidden #sidebar { display: none; }
 .sidebar-foot {
   margin-top: auto; font-size: 11px; color: var(--muted);
   padding: 8px 10px; line-height: 1.6; border-top: 1px solid var(--border);
@@ -485,8 +487,10 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .slash-desc { font-family: var(--sans, inherit); font-size: 12px; opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-input-row { display: flex; gap: 10px; align-items: flex-end; }
 .chat-input {
-  flex: 1; resize: none; max-height: 160px; border-radius: 12px;
+  flex: 1; resize: none; max-height: 42px; border-radius: 12px;
   background: var(--bg2); font-size: 13.5px; line-height: 1.5; padding: 10px 14px;
+  /* One-line composer: long requests scroll INSIDE the box. #feat-one-line-composer */
+  overflow-y: auto;
 }
 .chat-send {
   flex: none; width: 42px; height: 42px; border-radius: 12px;
@@ -870,11 +874,34 @@ pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
   width: 0; min-width: 0; border-left: 1px solid var(--border); background: var(--bg2);
   display: none; flex-direction: column; overflow: hidden;
 }
-#main.split #splitpane { display: flex; }
+body.split-open #splitpane { display: flex; }
 #splitter { width: 5px; cursor: col-resize; background: transparent; flex: none; }
 #splitter:hover { background: var(--accent-soft); }
 .split-head { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-bottom: 1px solid var(--border); }
 .split-body { flex: 1; overflow: auto; padding: 10px; }
+
+/* ---------- tasks panel (right-hand coding-task column) #feat-desktop-layout ---------- */
+#btn-sidebar, #btn-tasks {
+  flex: none; align-self: center; margin-bottom: 6px;
+  background: var(--bg3); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 7px; padding: 5px 10px; font-size: 12px; cursor: pointer;
+  white-space: nowrap;
+}
+#btn-sidebar:hover, #btn-tasks:hover { color: var(--text); border-color: var(--accent); }
+.task-card {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+  padding: 10px 12px; margin-bottom: 10px;
+}
+.task-card h4 { font-size: 12px; margin-bottom: 6px; color: var(--text); }
+.task-row { font-size: 12px; line-height: 1.6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.task-row.mono { font-family: var(--mono); font-size: 11.5px; color: var(--muted); cursor: pointer; }
+.task-row.mono:hover { color: var(--accent); }
+.task-rows { display: flex; flex-direction: column; gap: 2px; max-height: 220px; overflow: auto; }
+.task-bar { height: 6px; border-radius: 4px; background: var(--bg4); margin-top: 6px; overflow: hidden; }
+.task-bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+.task-list { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
+.task-list li.done { color: var(--muted); text-decoration: line-through; }
+.task-list li.active { color: var(--text); }
 
 /* ---------- theme (#47) ---------- */
 :root[data-theme="light"] {

@@ -112,6 +112,15 @@ function switchView(view) {
   if (view === 'settings') renderSettings();
 }
 
+/* ================= sidebar toggle (#feat-desktop-layout) ================= */
+
+let sidebarHidden = false;
+function toggleSidebar(force) {
+  sidebarHidden = force !== undefined ? force : !sidebarHidden;
+  document.body.classList.toggle('sb-hidden', sidebarHidden);
+  try { localStorage.setItem('cce.sidebarHidden', sidebarHidden ? '1' : '0'); } catch { /* private mode */ }
+}
+
 /* ================= tabs & terminals ================= */
 
 // Unified tab registry so chat tabs (Agent SDK) and terminal tabs (PTY) coexist.
@@ -556,6 +565,14 @@ const basenameOf = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() 
 /* ================= split view (#44) ================= */
 
 let splitTerm = null;
+let tasksTimer = null;   // auto-refresh while the tasks panel is visible
+
+function activeCwd() {
+  const meta = tabRegistry.get(state.activeId);
+  if (meta && meta.cwd) return meta.cwd;
+  const s = state.sessions.get(state.activeId);
+  return (s && s.cwd) || (state.settings && state.settings.defaultCwd) || '';
+}
 
 function toggleSplit(force) {
   const main = document.querySelector('#main');
@@ -563,14 +580,20 @@ function toggleSplit(force) {
   if (!main || !pane) return;
   const open = force !== undefined ? force : !main.classList.contains('split');
   main.classList.toggle('split', open);
+  // #splitpane is a SIBLING of #main, so the old `#main.split #splitpane`
+  // selector never matched and the pane stayed display:none. #feat-desktop-layout
+  document.body.classList.toggle('split-open', open);
   pane.style.width = open ? '38%' : '0';
+  try { localStorage.setItem('cce.split', open ? (document.querySelector('#split-kind')?.value || 'tasks') : 'closed'); } catch { /* private mode */ }
   if (open) renderSplit();
+  else if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null; }
 }
 
 function renderSplit() {
-  const kind = document.querySelector('#split-kind')?.value || 'terminal';
+  const kind = document.querySelector('#split-kind')?.value || 'tasks';
   const body = document.querySelector('#split-body');
   if (!body) return;
+  if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null; }
   if (kind === 'terminal') {
     const active = state.sessions.get(state.activeId);
     const cwd = active ? active.cwd : (state.settings && state.settings.defaultCwd) || '';
@@ -590,10 +613,9 @@ function renderSplit() {
     return;
   }
   body.innerHTML = '';
-  const active = state.sessions.get(state.activeId);
-  const cwd = active ? active.cwd : (state.settings && state.settings.defaultCwd) || '';
+  const cwd2 = activeCwd();
   if (kind === 'changes') {
-    ccx.invoke('git:info', { cwd }).then((r) => {
+    ccx.invoke('git:info', { cwd: cwd2 }).then((r) => {
       const info = r.ok ? r : {};
       const line = el('div', 'hint',
         (info.repo ? '⎇ ' + info.repo : 'not a git repository')
@@ -602,6 +624,16 @@ function renderSplit() {
       body.appendChild(line);
       body.appendChild(el('div', 'hint', 'Open a chat and ask for a diff, or use ▶ run here.'));
     });
+    return;
+  }
+  if (kind === 'tasks') {
+    renderTasks(body, cwd2);
+    tasksTimer = setInterval(() => {
+      if (!document.body.contains(body) || !document.querySelector('#main.split')) {
+        clearInterval(tasksTimer); tasksTimer = null; return;
+      }
+      renderTasks(body, cwd2);
+    }, 4000);
     return;
   }
   const chat = Chat.chats.get(state.activeId);
@@ -617,6 +649,87 @@ function renderSplit() {
 }
 window.toggleSplit = toggleSplit;
 window.renderSplit = renderSplit;
+
+/**
+ * Right-hand tasks panel — the desktop layout's coding-task column:
+ * Environment (folder + git state), Context (active chat's window usage),
+ * Tasks (the agent's todo list), Changes (uncommitted files). #feat-desktop-layout
+ */
+function renderTasks(body, cwd) {
+  const chat = Chat.chats.get(state.activeId);
+  body.innerHTML = '';
+  const card = (title) => {
+    const c = el('div', 'task-card');
+    c.appendChild(el('h4', '', title));
+    body.appendChild(c);
+    return c;
+  };
+
+  // Environment + Changes share one git:info call.
+  const env = card('Environment');
+  const envRow = el('div', 'task-row hint', '⌂ ' + cwd);
+  envRow.title = cwd;
+  env.appendChild(envRow);
+  const ch = card('Changes');
+  const chList = el('div', 'task-rows');
+  ch.appendChild(chList);
+  ccx.invoke('git:info', { cwd }).then((r) => {
+    if (!body.contains(env) || !r.ok) return;
+    env.appendChild(el('div', 'task-row hint',
+      (r.branch ? '⎇ ' + r.branch : 'no branch') + (r.repo ? ' · ' + r.repo : '')
+      + (r.dirty ? ' · ' + r.dirty + ' changed' : ' · clean')));
+    if (!(r.files || []).length) { chList.appendChild(el('div', 'task-row hint', 'working tree clean')); return; }
+    for (const f of r.files) {
+      const row = el('div', 'task-row mono', f);
+      row.title = cwd + '/' + f;
+      row.addEventListener('click', () => ccx.invoke('shell:reveal', { path: cwd + '/' + f }));
+      chList.appendChild(row);
+    }
+  });
+
+  // Context: usage of the active chat.
+  const ctx = card('Context');
+  const ctxRow = el('div', 'task-row hint', chat ? '…' : 'start a chat to see usage');
+  ctx.appendChild(ctxRow);
+  const bar = el('div', 'task-bar');
+  bar.appendChild(el('i'));
+  ctx.appendChild(bar);
+  if (chat) ccx.invoke('chat:context', { id: chat.id }).then((r) => {
+    if (!body.contains(ctx) || !r.ok || !r.usage) return;
+    const u = r.usage;
+    const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
+    const fill = bar.querySelector('i');
+    fill.style.width = pct.toFixed(1) + '%';
+    fill.style.background = pct > 85 ? '#e5484d' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
+    ctxRow.textContent = (u.totalTokens || 0).toLocaleString() + ' / '
+      + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
+  });
+
+  // Tasks: the agent's todo list from the active chat.
+  const tasks = card('Tasks');
+  const items = chat && chat.todosList ? [...chat.todosList.children] : [];
+  if (items.length) {
+    const doneN = items.filter(li => li.classList.contains('done')).length;
+    tasks.querySelector('h4').textContent = 'Tasks ' + doneN + '/' + items.length;
+    const ol = el('ol', 'task-list');
+    for (const li of items) {
+      const text = li.querySelector('.todo-text');
+      ol.appendChild(el('li', li.classList.contains('done') ? 'done' : li.classList.contains('active') ? 'active' : '',
+        (li.classList.contains('done') ? '✓ ' : li.classList.contains('active') ? '▸ ' : '○ ') + (text ? text.textContent : li.textContent)));
+    }
+    tasks.appendChild(ol);
+  } else {
+    tasks.appendChild(el('div', 'task-row hint', 'no todos from the agent yet'));
+  }
+}
+
+/** A chat recreated on another provider gets a new engine session id: move the
+ *  tab registry entry and active pointer so nothing else notices. #feat-provider-toggle */
+window.rekeyTab = (oldId, newId) => {
+  const meta = tabRegistry.get(oldId);
+  if (meta) { tabRegistry.delete(oldId); tabRegistry.set(newId, meta); }
+  if (state.activeId === oldId) state.activeId = newId;
+};
 
 /** Chat.js calls this when a tab learns its engine session id. */
 window.onConvoSessionsChanged = () => {
@@ -1995,7 +2108,30 @@ function wireChrome() {
   // (The per-dropdown wiring — search/sort/filter/refresh/close — lives in
   // ensureConvoDrop, which builds that markup. Nothing to wire here.)
   $('#btn-split-close').addEventListener('click', () => toggleSplit(false));
-  $('#split-kind')?.addEventListener('change', renderSplit);
+  $('#split-kind')?.addEventListener('change', () => {
+    renderSplit();
+    try { localStorage.setItem('cce.split', $('#split-kind').value); } catch { /* private mode */ }
+  });
+
+  // Layout toggles: left sidebar (Ctrl+\) and the right tasks panel. #feat-desktop-layout
+  $('#btn-sidebar')?.addEventListener('click', () => toggleSidebar());
+  $('#btn-tasks')?.addEventListener('click', () => {
+    const main = document.querySelector('#main');
+    if (main && main.classList.contains('split')) toggleSplit(false);
+    else { const k = $('#split-kind'); if (k) k.value = 'tasks'; toggleSplit(true); }
+  });
+  // Restore the persisted layout; first run opens the tasks panel (desktop-like).
+  try {
+    if (localStorage.getItem('cce.sidebarHidden') === '1') toggleSidebar(true);
+    const sp = localStorage.getItem('cce.split');
+    if (sp === 'closed') { /* stay closed */ }
+    else {
+      const k = $('#split-kind');
+      if (k && sp && [...k.options].some(o => o.value === sp)) k.value = sp;
+      toggleSplit(true);
+    }
+  } catch { /* private mode */ }
+
 
   // Drag-resize the split pane.
   (() => {
@@ -2070,6 +2206,10 @@ function wireChrome() {
     if (e.altKey && String(e.key).toLowerCase() === 'v') {   // split view #44
       e.preventDefault();
       toggleSplit();
+    }
+    if (e.ctrlKey && e.key === '\\') {   // hide/show the left sidebar #feat-desktop-layout
+      e.preventDefault();
+      toggleSidebar();
     }
   });
 
