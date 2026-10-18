@@ -131,6 +131,12 @@ window.__activate = (id) => {
     meta.pane.classList.toggle('active', sid === id);
     meta.tabEl.classList.toggle('active', sid === id);
   }
+  // Chat tabs activate through here too, not activateSession, so this is the one
+  // place that knows the active tab. Without it the side panel kept showing the
+  // home folder and "start a chat" while a chat was open.
+  const changed = state.activeId !== id;
+  state.activeId = id;
+  if (changed && document.querySelector('#main.split')) renderSplit();
 };
 window.__activateNext = (closedId) => {
   tabRegistry.delete(closedId);
@@ -568,6 +574,9 @@ let splitTerm = null;
 let tasksTimer = null;   // auto-refresh while the tasks panel is visible
 
 function activeCwd() {
+  // A chat's folder can change after its tab was registered; ask the chat first.
+  const chat = window.Chat && Chat.chats.get(state.activeId);
+  if (chat && chat.cwd) return chat.cwd;
   const meta = tabRegistry.get(state.activeId);
   if (meta && meta.cwd) return meta.cwd;
   const s = state.sessions.get(state.activeId);
@@ -633,7 +642,7 @@ function renderSplit() {
       if (!document.body.contains(body) || !document.querySelector('#main.split')) {
         clearInterval(tasksTimer); tasksTimer = null; return;
       }
-      renderTasks(body, cwd2);
+      renderTasks(body, activeCwd());
     }, 4000);
     return;
   }
