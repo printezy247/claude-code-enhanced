@@ -109,16 +109,16 @@ const state = {
 };
 
 const TERM_THEME = {
-  background: '#0f0f15',
-  foreground: '#e9e9f0',
-  cursor: '#d97757',
-  cursorAccent: '#0f0f15',
-  selectionBackground: 'rgba(217,119,87,0.30)',
-  black: '#101017', red: '#d2626a', green: '#7dc98f', yellow: '#e0af68',
+  background: '#000000',
+  foreground: '#ffffff',
+  cursor: '#ff9a3c',
+  cursorAccent: '#000000',
+  selectionBackground: 'rgba(255,154,60,0.32)',
+  black: '#0b0b0b', red: '#d2626a', green: '#7dc98f', yellow: '#e0af68',
   blue: '#7aa2f7', magenta: '#bb9af7', cyan: '#7dcfff', white: '#c8c8d4',
   brightBlack: '#61627a', brightRed: '#e8878d', brightGreen: '#9ddba7',
   brightYellow: '#eecb8b', brightBlue: '#9cc2ff', brightMagenta: '#cdb4fc',
-  brightCyan: '#a8dcff', brightWhite: '#e9e9f0',
+  brightCyan: '#a8dcff', brightWhite: '#ffffff',
 };
 
 /* ================= view switching ================= */
@@ -170,7 +170,10 @@ window.__activate = (id) => {
   // home folder and "start a chat" while a chat was open.
   const changed = state.activeId !== id;
   state.activeId = id;
-  if (changed && document.querySelector('#main.split')) renderSplit();
+  // Preview and terminal do not depend on the tab; re-rendering them reloaded
+  // the iframe on every switch.
+  const kind = document.querySelector('#split-kind')?.value || 'tasks';
+  if (changed && document.querySelector('#main.split') && kind !== 'preview' && kind !== 'terminal') renderSplit();
 };
 window.__activateNext = (closedId) => {
   tabRegistry.delete(closedId);
@@ -680,8 +683,10 @@ function renderSplit() {
       if (!document.body.contains(body) || !document.querySelector('#main.split')) {
         clearInterval(tasksTimer); tasksTimer = null; return;
       }
+      // Hidden or minimized: no git spawn and no repaint for a panel nobody sees.
+      if (document.hidden) return;
       renderTasks(body, activeCwd());
-    }, 4000);
+    }, 6000);
     return;
   }
   if (kind === 'preview') {
@@ -780,7 +785,7 @@ function renderTasks(body, cwd) {
     const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
     const fill = bar.querySelector('i');
     fill.style.width = pct.toFixed(1) + '%';
-    fill.style.background = pct > 85 ? '#e5484d' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
+    fill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
     ctxRow.textContent = (u.totalTokens || 0).toLocaleString() + ' / '
       + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
   });
