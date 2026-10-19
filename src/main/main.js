@@ -1227,6 +1227,14 @@ function registerIpc() {
 
   // Local-model pre-warm helpers live in ./localmodels (tested by scripts/check.js).
   handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree }) => {
+    // A stale or renamed cwd otherwise reaches the engine, which dies with the
+    // misleading "CLI path wrong / auth expired" watchdog message.
+    if (cwd) {
+      const dir = path.resolve(String(cwd).replace(/^~(?=\/|$)/, os.homedir()));
+      try {
+        if (!fs.statSync(dir).isDirectory()) return { ok: false, error: 'not a directory: ' + dir };
+      } catch { return { ok: false, error: 'directory not found: ' + dir }; }
+    }
     // Isolated git worktree per chat (desktop scratch-workspace parity). The
     // session then runs inside the worktree, not the shared checkout. #feat-worktree
     let worktree = null;
@@ -1559,8 +1567,11 @@ function registerIpc() {
     if (cwd) {
       const primary = path.join(dir, 'CLAUDE.md');
       const alt = path.join(dir, '.claude', 'CLAUDE.md');
-      const content = read(primary) ?? read(alt);
-      project = { path: content === null ? primary : primary, altPath: alt, content, exists: content !== null };
+      const primaryContent = read(primary);
+      const altContent = primaryContent === null ? read(alt) : null;
+      const content = primaryContent ?? altContent;
+      // Report the file that actually yielded the content, not always primary.
+      project = { path: primaryContent === null && altContent !== null ? alt : primary, altPath: alt, content, exists: content !== null };
     }
     return { global: { path: globalPath, content: read(globalPath) }, project };
   });
@@ -1649,6 +1660,7 @@ function registerIpc() {
 
     addNew('global CLAUDE.md', path.join(home, '.claude', 'CLAUDE.md'));
     addNew('project CLAUDE.md', path.join(dir, 'CLAUDE.md'));
+    addNew('project CLAUDE.md (.claude)', path.join(dir, '.claude', 'CLAUDE.md'));
     const listMd = (root, label) => {
       try {
         for (const f of fs.readdirSync(root).filter(x => x.endsWith('.md')).slice(0, 30)) {

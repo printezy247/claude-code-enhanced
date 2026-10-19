@@ -181,7 +181,9 @@ const Chat = (() => {
       modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
       styleSel: pane.querySelector('.chat-style-foot'),
-      queued: pane.querySelector('.chat-queued'),
+      // Element ref and queue *counter* must not share a name: showQueued used
+      // to overwrite the element with a number and the next send threw.
+      queuedEl: pane.querySelector('.chat-queued'),
       permSlot: pane.querySelector('.chat-perm-slot'), slash: pane.querySelector('.chat-slash'),
       todosEl: pane.querySelector('.chat-todos'), todosList: pane.querySelector('.chat-todos ol'),
       moreBtn: pane.querySelector('.hdr-more'),
@@ -392,13 +394,15 @@ const Chat = (() => {
       if (e.dataTransfer && e.dataTransfer.files.length) attachFiles(chat, e.dataTransfer.files);
     }));
     chat.composer.addEventListener('keydown', (e) => {
+      // IME composition: Enter/arrows belong to the composition, not the app.
+      if (e.isComposing || e.keyCode === 229) return;
       if (!chat.slash.classList.contains('hidden')) {
         if (e.key === 'ArrowDown') { e.preventDefault(); moveSlash(chat, 1); return; }
         if (e.key === 'ArrowUp') { e.preventDefault(); moveSlash(chat, -1); return; }
         if (e.key === 'Tab' || (e.key === 'Enter' && chat.slashItems.length)) {
           e.preventDefault(); (chat.atMode ? applyAt(chat) : applySlash(chat)); return;
         }
-        if (e.key === 'Escape') { hideSlash(chat); return; }
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideSlash(chat); return; }
       }
       if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
     });
@@ -479,6 +483,8 @@ const Chat = (() => {
     const on = !state.settings || state.settings.autoNudge !== false;
     if (!on || !chat.alive || (chat.nudges || 0) >= 1) return false;
     if (!announcedNextStep(msg.result)) return false;
+    // Never overwrite a draft the user is already typing.
+    if (chat.composer.value.trim()) return false;
     chat.nudges = (chat.nudges || 0) + 1;
     chat.msgs.appendChild(el('div', 'sys-note warn', '↻ the model announced a next step but stopped — nudging it to continue (automatic, once)'));
     scrollDownSoft(chat);
@@ -600,11 +606,12 @@ const Chat = (() => {
 
 /** Messages sent while a turn is running, shown as pending chips. #32 */
   function renderQueued(chat) {
-    chat.queued.innerHTML = '';
-    chat.queued.classList.toggle('hidden', !chat.pendingMsgs.length);
+    if (!chat.queuedEl) return;
+    chat.queuedEl.innerHTML = '';
+    chat.queuedEl.classList.toggle('hidden', !chat.pendingMsgs.length);
     for (const t of chat.pendingMsgs) {
       const chip = el('span', 'queued-chip', t.length > 70 ? t.slice(0, 70) + '…' : t);
-      chat.queued.appendChild(chip);
+      chat.queuedEl.appendChild(chip);
     }
   }
 
@@ -643,7 +650,7 @@ const Chat = (() => {
       menu.style.right = '18px';
       menu.style.position = 'fixed';
       document.body.appendChild(menu);
-      const away = (e) => { if (!menu.contains(e.target)) { close(); document.removeEventListener('mousedown', away); } };
+      const away = (e) => { if (!menu || !menu.contains(e.target)) { close(); document.removeEventListener('mousedown', away); } };
       setTimeout(() => document.addEventListener('mousedown', away), 0);
     });
   }
@@ -902,7 +909,7 @@ const Chat = (() => {
       const r = await ccx.invoke('git:info', { cwd: chat.cwd });
       if (!r.ok || !chat.projEl) return;
       chat.projEl.innerHTML = '';
-      const folder = elIcon('span', 'proj-chip', CCEIcons.svg('folder', 13) + ' ' + basename(chat.cwd));
+      const folder = elIcon('span', 'proj-chip', CCEIcons.svg('folder', 13) + ' ' + esc(basename(chat.cwd)));
       folder.title = chat.cwd + (r.remote ? '\nremote: ' + r.remote : '') + (r.branch ? '\nbranch: ' + r.branch : '');
       chat.projEl.appendChild(folder);
       if (r.repo) {
@@ -996,7 +1003,7 @@ const Chat = (() => {
     add('panel', '⏪ rewind files', '', () => { close(); toggleRewindPanel(chat); });
     add('panel', 'memory & rules', '', () => { close(); toggleMemoryPanel(chat); });
     add('chat', '⑂ fork this conversation', '', () => { close(); chat.forkBtn.click(); });
-    add('chat', '⌨ terminal tab in this folder', '', () => { close(); chat.termBtn.click(); });
+    add('chat', '⌨ terminal tab in this folder', '', () => { close(); window.createSession({ cwd: chat.cwd, type: 'shell' }); });
     add('chat', 'summarize session into a handoff brief', '', () => { close(); prefilledSummary(chat); });
     add('chat', '■ stop / interrupt', '', () => { close(); chat.stopBtn.click(); });
 
@@ -1668,7 +1675,7 @@ const Chat = (() => {
     chat.slashIdx = 0;
     chat.slash.innerHTML = '';
     files.forEach((f, i) => {
-      const item = elIcon('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg('file', 14) + ' ' + f);
+      const item = elIcon('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg('file', 14) + ' ' + esc(f));
       item.addEventListener('mousedown', (e) => { e.preventDefault(); chat.slashIdx = i; applyAt(chat); });
       chat.slash.appendChild(item);
     });
@@ -2096,6 +2103,8 @@ const Chat = (() => {
         window.onConvoSessionsChanged && window.onConvoSessionsChanged();
       }
     }
+    // Track it on the chat too: fork / edit-and-resend pass chat.sessionId.
+    if (msg.session_id) chat.sessionId = msg.session_id;
     switch (msg.type) {
       case 'system':
         if (msg.subtype === 'init') { chat.init = msg; onInit(chat); }
@@ -2511,7 +2520,7 @@ const Chat = (() => {
     if (!servers.length) return;
     const row = el('div', 'chat-mcp-chips');
     for (const s of servers) {
-      const chip = elIcon('span', 'chip mcp-chip ' + (s.status === 'connected' ? 'mcp-ok' : ''), CCEIcons.svg('plug2', 13) + ' ' + s.name);
+      const chip = elIcon('span', 'chip mcp-chip ' + (s.status === 'connected' ? 'mcp-ok' : ''), CCEIcons.svg('plug2', 13) + ' ' + esc(s.name));
       chip.title = 'MCP server: ' + s.name + ' (' + s.status + ')';
       row.appendChild(chip);
     }
@@ -3220,7 +3229,8 @@ const Chat = (() => {
       if (tip) b.title = tip;
       b.addEventListener('click', async () => {
         finish();
-        await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision });
+        const r = await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision });
+        if (!r || !r.ok) { toast((r && r.error) || 'failed to send permission answer', 'err'); setBusy(chat, false); return; }
         if (afterMode) await setMode(afterMode);
         setBusy(chat, true);
       });
@@ -3240,10 +3250,11 @@ const Chat = (() => {
       keep.addEventListener('click', async () => {
         const why = feedback.value.trim();
         finish();
-        await ccx.invoke('chat:permission-answer', {
+        const r = await ccx.invoke('chat:permission-answer', {
           id: chat.id, requestId, decision: 'deny',
           message: why || 'Keep planning. Do not start implementing yet.',
         });
+        if (!r || !r.ok) { toast((r && r.error) || 'failed to send permission answer', 'err'); setBusy(chat, false); return; }
         setBusy(chat, true);
       });
       actions.appendChild(keep);
@@ -3311,6 +3322,10 @@ const Chat = (() => {
   // The engine reads them from updatedInput.answers, keyed by question text.
   function showAskQuestion(chat, evt) {
     const { requestId, input = {} } = evt;
+    // Counted like any other pending card so the badge and "N pending" chip
+    // stay truthful while a question is on screen.
+    chat.permCount = (chat.permCount || 0) + 1;
+    updatePermBadge(chat);
     const qs = Array.isArray(input.questions) ? input.questions : [];
     const answers = {};
     const card = el('div', 'perm-card ask');
@@ -3385,12 +3400,14 @@ const Chat = (() => {
     startPermCountdown(chat, card, head, evt);
     send.addEventListener('click', async () => {
       finish();
-      await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision: 'allow', answers });
+      const r = await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision: 'allow', answers });
+      if (!r || !r.ok) { toast((r && r.error) || 'failed to send answers', 'err'); setBusy(chat, false); return; }
       setBusy(chat, true);
     });
     skip.addEventListener('click', async () => {
       finish();
-      await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision: 'deny' });
+      const r = await ccx.invoke('chat:permission-answer', { id: chat.id, requestId, decision: 'deny' });
+      if (!r || !r.ok) { toast((r && r.error) || 'failed to send answers', 'err'); setBusy(chat, false); return; }
       setBusy(chat, true);
     });
     actions.appendChild(send);
@@ -3454,10 +3471,11 @@ const Chat = (() => {
 
     const answer = async (action) => {
       dropElicCard(chat, card);
-      await ccx.invoke('chat:elicit-answer', {
+      const r = await ccx.invoke('chat:elicit-answer', {
         id: chat.id, requestId: evt.requestId, action,
         content: action === 'accept' ? collect() : undefined,
-      });
+      }).catch(() => null);
+      if (!r || !r.ok) toast((r && r.error) || 'failed to answer connector prompt', 'err');
     };
 
     if (evt.mode === 'url') {
@@ -3563,7 +3581,7 @@ const Chat = (() => {
       inp.addEventListener('input', () => { try { window.find(inp.value, false, false, false); } catch { /* empty */ } paintCount(); });
       inp.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') { step(e.shiftKey); e.preventDefault(); }
-        else if (e.key === 'Escape') { hide(); chat.composer.focus(); e.preventDefault(); }
+        else if (e.key === 'Escape') { hide(); chat.composer.focus(); e.preventDefault(); e.stopPropagation(); }
       });
       [prev, next].forEach((b, i) => b.addEventListener('click', () => step(i === 0)));
       close.addEventListener('click', hide);
@@ -3710,6 +3728,9 @@ const Chat = (() => {
   }
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
+      // A palette, find bar or dialog that already handled Escape must not
+      // also interrupt the running turn.
+      if (e.defaultPrevented) return;
       // The Conversations dropdown outranks everything: close it, don't stop the turn.
       const drop = document.querySelector('#convo-drop');
       if (drop && !drop.classList.contains('hidden')) return;
