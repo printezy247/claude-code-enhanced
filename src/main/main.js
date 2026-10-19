@@ -1,6 +1,6 @@
 // Claude Code Enhanced — main process.
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -122,12 +122,32 @@ async function ensureFreshAuth(inst) {
   }
 }
 
+/**
+ * The app icon. build/ was not in the packaged files, so the installed app had
+ * no icon file: the tray item was an empty image nobody could see or click.
+ * Resolved from the app root, and a 22px copy for panels that do not scale.
+ */
+function appIcon(size) {
+  const file = path.join(app.getAppPath(), 'build', 'icon.png');
+  let img = nativeImage.createFromPath(file);
+  if (img.isEmpty()) img = nativeImage.createFromPath(path.join(__dirname, '..', '..', 'build', 'icon.png'));
+  return size && !img.isEmpty() ? img.resize({ width: size, height: size, quality: 'best' }) : img;
+}
+
+/** True only when a tray item exists with a real image to click. */
+function trayUsable() {
+  return !!(tray && !tray.isDestroyed() && trayHasIcon);
+}
+let trayHasIcon = false;
+
 /** Build the tray icon + menu (close-to-tray). #46 */
 function createTray() {
   if (tray && !tray.isDestroyed()) return tray;
-  const iconPath = path.join(__dirname, '..', '..', 'build', 'icon.png');
+  const icon = appIcon(22);
+  trayHasIcon = !icon.isEmpty();
+  if (!trayHasIcon) { console.error('[cce] tray icon missing; close will minimize instead'); return null; }
   try {
-    tray = new Tray(iconPath);
+    tray = new Tray(icon);
     tray.setToolTip('Claude Code Enhanced');
     const menu = Menu.buildFromTemplate([
       { label: 'Show', click: () => { if (win && !win.isDestroyed()) win.show(); } },
@@ -330,7 +350,7 @@ function createWindow() {
     minHeight: 600,
     backgroundColor: '#14141a',
     title: 'Claude Code Enhanced',
-    icon: path.join(__dirname, '..', '..', 'build', 'icon.png'),
+    icon: appIcon(),
     webPreferences: {
       preload: path.join(__dirname, '..', 'preload', 'preload.js'),
       contextIsolation: true,
@@ -369,11 +389,22 @@ function createWindow() {
   win.on('close', (e) => {
     if (!store.settings.closeToTray || app.isQuitting) return;
     e.preventDefault();
+    // Hiding with no clickable tray item stranded the app: no window, no icon,
+    // only pkill could end it. Without a tray, minimize instead.
+    if (!trayUsable()) { win.minimize(); return; }
     win.hide();
-    if (tray && !tray.isDestroyed()) tray.displayBalloon({
+    tray.displayBalloon({
       title: 'Claude Code Enhanced',
-      content: 'Still running in the tray — click the tray icon to reopen.',
+      content: 'Still running in the tray. Click the tray icon to reopen, or press Ctrl+Q in the window to quit.',
     });
+  });
+  // Ctrl+Q quits for real from the window, tray or no tray.
+  win.webContents.on('before-input-event', (e, input) => {
+    if (input.type === 'keyDown' && input.control && !input.shift && !input.alt && String(input.key).toLowerCase() === 'q') {
+      e.preventDefault();
+      app.isQuitting = true;
+      app.quit();
+    }
   });
 
   if (process.env.CCE_SMOKE) {
