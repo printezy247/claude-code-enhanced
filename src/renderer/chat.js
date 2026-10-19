@@ -68,8 +68,33 @@ const Chat = (() => {
       case 'ExitPlanMode': return 'plan ready for review';
       case 'Skill': return 'skill: ' + (input.skill || input.command || '');
       case 'AskUserQuestion': return 'asks: ' + ((input.questions && input.questions[0] && input.questions[0].question) || '').slice(0, 80);
-      default: return mcp ? `${mcp[0]} ▸ ${mcp.slice(1).join('.')}` : name;
+      case 'TaskCreate': return 'task: ' + (input.subject || '');
+      case 'TaskUpdate': return 'task #' + (input.taskId || '') + (input.status ? ' → ' + input.status : '');
+      default: {
+        if (!mcp) return name;
+        // Name the server's short tool plus what it was asked to do: a column of
+        // identical "server ▸ execute" rows hid what each call ran. #mcp-titles
+        const server = mcp[0].replace(/^plugin_[^_]+_/, '');
+        const what = mcpGist(input);
+        return server + ' ▸ ' + mcp.slice(1).join('.') + (what ? ' · ' + what : '');
+      }
     }
+  }
+  function mcpGist(input) {
+    if (!input || typeof input !== 'object') return '';
+    const first = (v) => String(v).split('\n').map(s => s.trim()).find(s => s && !s.startsWith('#') && !s.startsWith('//')) || '';
+    for (const k of ['command', 'query', 'url', 'path', 'file_path', 'pattern', 'name', 'title']) {
+      if (typeof input[k] === 'string' && input[k].trim()) return first(input[k]).slice(0, 90);
+    }
+    if (typeof input.code === 'string') return first(input.code).slice(0, 90);
+    for (const k of ['commands', 'queries', 'paths']) {
+      const a = input[k];
+      if (Array.isArray(a) && a.length) {
+        const v = typeof a[0] === 'string' ? a[0] : (a[0] && (a[0].label || a[0].command)) || '';
+        return first(v).slice(0, 80) + (a.length > 1 ? ' +' + (a.length - 1) : '');
+      }
+    }
+    return '';
   }
   function toolKind(name) {
     if (name.startsWith('mcp__')) return 'mcp';
@@ -422,10 +447,7 @@ const Chat = (() => {
         enhanceMarkdown(body, cut.text);
         chat.msgs.appendChild(w);
       } else if (it.t === 'thinking') {
-        const d = buildThinking('Thought — click to view');
-        d.open = false;
-        d.querySelector('.think-body').textContent = it.text;
-        chat.msgs.appendChild(d);
+        chat.msgs.appendChild(thoughtNode(it.text));
       } else if (it.t === 'tool') {
         const card = makeToolCard(chat, 'x' + Math.random().toString(36).slice(2), it.name, it.input || {});
         card.output = it.output || '';
@@ -484,7 +506,7 @@ const Chat = (() => {
     const meta = window.__tabs && window.__tabs.get(chat.id);
     if (!meta) return;
     const busy = !!chat.busy;
-    const needsYou = !!(chat.permCount > 0) || (!!chat.queued && chat.queued > 0);
+    const needsYou = !!(chat.permCount > 0) || !!(chat.elicCount > 0) || (!!chat.queued && chat.queued > 0);
     if (meta.busy === busy && meta.needsYou === needsYou) return;
     meta.busy = busy;
     meta.needsYou = needsYou;
@@ -1374,7 +1396,7 @@ const Chat = (() => {
     const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
     chat.ctxBar.classList.remove('hidden');
     chat.ctxFill.style.width = pct.toFixed(1) + '%';
-    chat.ctxFill.style.background = pct > 85 ? '#e5484d' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
+    chat.ctxFill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
     chat.ctxBar.title = 'context: ' + (u.totalTokens || 0).toLocaleString() + ' / '
       + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
   }
@@ -1960,8 +1982,8 @@ const Chat = (() => {
   }
 
   /** Branch the conversation from a message with an edited prompt. #30 */
-  function resendFrom(chat, uuid, originalText) {
-    const edited = window.prompt('Re-ask from this message (the conversation branches):', originalText);
+  async function resendFrom(chat, uuid, originalText) {
+    const edited = await window.askText('Re-ask from this message (the conversation branches)', originalText, { multiline: true, okLabel: 'Re-ask' });
     if (edited === null || !edited.trim() || edited === originalText) return;
     Chat.createSession({
       cwd: chat.cwd,
@@ -2374,7 +2396,7 @@ const Chat = (() => {
       const card = chat.permSlot.querySelector('.elic[data-elid="' + (msg.elicitation_id || msg.elicitationId || '') + '"]');
       if (card) {
         ccx.invoke('chat:elicit-answer', { id: chat.id, requestId: card.dataset.rid, action: 'accept', content: {} });
-        card.remove();
+        dropElicCard(chat, card);
         toast('Connector authorized', 'ok');
       }
       return;
@@ -2388,9 +2410,18 @@ const Chat = (() => {
     if (chat.stylesFilled || !chat.alive) return;
     chat.stylesFilled = true;
     let r = null;
-    try { r = await ccx.invoke('chat:styles', { id: chat.id }); } catch { return; }
+    try { r = await ccx.invoke('chat:styles', { id: chat.id }); } catch { r = null; }
     const list = (r && r.ok && r.styles) || [];
-    if (!list.length) return;
+    if (!list.length) {
+      // Right after init the engine may not answer yet: one retry, not a
+      // picker that stays hidden for the whole session.
+      if (!chat.stylesRetried) {
+        chat.stylesRetried = true;
+        chat.stylesFilled = false;
+        setTimeout(() => fillStyles(chat), 3000);
+      }
+      return;
+    }
     chat.styleSel.innerHTML = '';
     const auto = el('option', '', 'style: auto'); auto.value = '';
     chat.styleSel.appendChild(auto);
@@ -2598,7 +2629,7 @@ const Chat = (() => {
           blk.text += d.thinking || '';
           blk.body.textContent = blk.text;
           const pill = blk.node.querySelector('.think-pill');
-          if (pill) pill.textContent = CCEIcons.svg('thought', 13) + ' Thinking… ' + ((Date.now() - blk.t0) / 1000).toFixed(0) + 's';
+          if (pill) setPill(pill, 'Thinking… ' + ((Date.now() - blk.t0) / 1000).toFixed(0) + 's');
         } else if (d.type === 'input_json_delta') {
           blk.json += d.partial_json || '';
           const card = live.tools.get(blk.toolId);
@@ -2628,7 +2659,7 @@ const Chat = (() => {
         } else if (blk.type === 'thinking') {
           const secs = ((Date.now() - (blk.t0 || Date.now())) / 1000).toFixed(0);
           const pill = blk.node.querySelector('.think-pill');
-          if (pill) pill.textContent = CCEIcons.svg('thought', 13) + ' Thought for ' + secs + 's — click to view';
+          if (pill) setPill(pill, 'Thought for ' + secs + 's');
           blk.node.open = false;   // collapse into the desktop-style summary pill
         }
         break;
@@ -2638,19 +2669,30 @@ const Chat = (() => {
     }
   }
 
-  /** A collapsed, finished thought. */
+  /** A collapsed, finished thought, labelled with its opening line so a run of
+   *  them says something instead of repeating "click to view". */
   function thoughtNode(text) {
-    const d = buildThinking('Thought — click to view reasoning');
+    const gist = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 110);
+    const d = buildThinking(gist ? 'Thought · ' + gist + (String(text).length > 110 ? '…' : '') : 'Thought');
     d.querySelector('.think-body').textContent = text;
     d.open = false;
     return d;
+  }
+
+  // Icon markup, then the label as text: the label can carry model output, and
+  // assigning the SVG through textContent showed raw <svg …> in the pill.
+  function setPill(pill, label) {
+    pill.innerHTML = CCEIcons.svg('thought', 13);
+    pill.appendChild(document.createTextNode(' ' + label));
   }
 
   function buildThinking(label) {
     const d = el('details', 'thinking-block');
     d.open = true;
     const s = el('summary');
-    s.appendChild(elIcon('span', 'think-pill', CCEIcons.svg('thought', 13) + ' ' + label));
+    const pill = el('span', 'think-pill');
+    setPill(pill, label);
+    s.appendChild(pill);
     d.appendChild(s);
     d.appendChild(el('div', 'think-body'));
     return d;
@@ -2702,10 +2744,7 @@ const Chat = (() => {
       host.appendChild(w);
     } else if (block.type === 'thinking') {
       if (!block.thinking) return;
-      const d = buildThinking('Thought — click to view reasoning');
-      d.querySelector('.think-body').textContent = block.thinking;
-      d.open = false;
-      host.appendChild(d);
+      host.appendChild(thoughtNode(block.thinking));
     } else if (block.type === 'tool_use') {
       // Group long runs of read-only lookups into one collapsible row, the way
       // the desktop app does, so a 40-file sweep is 2 lines instead of 40. #27
@@ -3367,10 +3406,20 @@ const Chat = (() => {
      authorize; 'form' mode = structured fields from the server's JSON schema.
      The main process parks the SDK callback until the card is answered. */
 
+  // A connector prompt blocks the turn like a permission does, so it counts
+  // toward the tab's "needs you" state; a background chat used to time out on it
+  // unnoticed.
+  function dropElicCard(chat, card) {
+    if (!card.isConnected) return;
+    card.remove();
+    chat.elicCount = Math.max(0, (chat.elicCount || 1) - 1);
+    publishTabState(chat);
+  }
+
   function clearElicitation(chat, requestId, note) {
     for (const card of chat.permSlot.querySelectorAll('.elic')) {
       if (card.dataset.rid !== requestId) continue;
-      card.remove();
+      dropElicCard(chat, card);
       if (note) {
         const n = el('div', 'sys-note', note);
         chat.msgs.appendChild(n);
@@ -3404,7 +3453,7 @@ const Chat = (() => {
     };
 
     const answer = async (action) => {
-      card.remove();
+      dropElicCard(chat, card);
       await ccx.invoke('chat:elicit-answer', {
         id: chat.id, requestId: evt.requestId, action,
         content: action === 'accept' ? collect() : undefined,
@@ -3472,6 +3521,8 @@ const Chat = (() => {
       });
     }
     chat.permSlot.appendChild(card);
+    chat.elicCount = (chat.elicCount || 0) + 1;
+    publishTabState(chat);
     card.scrollIntoView({ block: 'nearest' });
   }
 
@@ -3666,7 +3717,7 @@ const Chat = (() => {
         if (chat.pane.classList.contains('active')) {
           const panel = chat.pane.querySelector('.chat-skills-panel');
           if (panel) { panel.remove(); return; }
-          if (!chat.permSlot.childElementCount && chat.busy && !e.shiftKey) {
+          if (!chat.permSlot.querySelector(".perm-card:not(.elic)") && chat.busy && !e.shiftKey) {
             ccx.invoke('chat:interrupt', { id: chat.id });
           }
         }

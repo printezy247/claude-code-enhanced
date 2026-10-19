@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Brushed metal: bright highlight, deep copper shadow, warm return. -->
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd9a8"/>
+      <stop offset="0.28" stop-color="#ff9a3c"/>
+      <stop offset="0.55" stop-color="#c8561a"/>
+      <stop offset="0.78" stop-color="#ff8f2e"/>
+      <stop offset="1" stop-color="#ffc178"/>
+    </linearGradient>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#141414"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="url(#tile)"/>
+  <rect x="8" y="8" width="496" height="496" rx="112" fill="none" stroke="url(#metal)" stroke-opacity="0.55" stroke-width="6"/>
+  <!-- Open ring: a "C" for Claude Code, gap facing the prompt. -->
+  <path d="M 362 168 A 136 136 0 1 0 362 344" fill="none" stroke="url(#metal)" stroke-width="56" stroke-linecap="round"/>
+  <!-- Prompt caret and cursor inside the ring. -->
+  <path d="M 214 206 L 270 256 L 214 306" fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="290" y="288" width="64" height="26" rx="8" fill="url(#metal)"/>
+</svg>

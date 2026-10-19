@@ -68,6 +68,21 @@ function leanEngineEnv({ env = {}, provider, model, settings = {}, contextOf } =
   return out;
 }
 
+/**
+ * Plugins that replace tool output with "indexed, search for it" stubs. Claude
+ * follows that up; most third-party models do not, re-run the same command
+ * and loop. Off by default on translated providers; `settings.contextMode`
+ * 'on' keeps them, 'off' drops them everywhere.
+ */
+const OUTPUT_HIDING_PLUGINS = ['context-mode@context-mode'];
+
+function pluginOverrides({ provider, settings = {} } = {}) {
+  const mode = settings.contextMode || 'auto';
+  const translated = !!provider && (provider.protocol || 'openai') !== 'anthropic';
+  if (mode === 'on' || (mode === 'auto' && !translated)) return null;
+  return { enabledPlugins: Object.fromEntries(OUTPUT_HIDING_PLUGINS.map((p) => [p, false])) };
+}
+
 // Session files are uuid-v4 jsonl names; also the path-traversal guard.
 function isSessionId(id) {
   return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(id || ''));
@@ -345,6 +360,9 @@ class ChatManager extends EventEmitter {
       }));
     }
 
+    const plug = pluginOverrides({ provider: providerInstance, settings: settings || {} });
+    if (plug) options.settings = plug;
+
     // Each request keeps its own entry; several tools can be pending at once
     // (parallel tool calls, subagents). The old single-slot UI dropped all but
     // the last card and left the rest to time out. #2
@@ -395,6 +413,8 @@ class ChatManager extends EventEmitter {
     // Mirrors the permission card plumbing above. #feat-elicitation
     options.onElicitation = async (req, ctx = {}) => {
       const requestId = 'e' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
+      // Already interrupted: the abort event will never fire, so do not wait out the timeout.
+      if (ctx.signal && ctx.signal.aborted) return { action: 'cancel' };
       return await new Promise((resolve) => {
         const entry = {
           chatId: id, requestId, resolve,
@@ -703,11 +723,39 @@ class ChatManager extends EventEmitter {
     };
   }
 
-  deleteSession(cwd, sessionId) {
+  // A live chat on this session would write the transcript straight back, so it
+  // is closed first. The file is found by id across every project folder (a
+  // guessed folder missed worktree and odd-path sessions, and `force` hid the
+  // miss), and the delete is checked: "deleted" now means gone.
+  async deleteSession(cwd, sessionId) {
     if (!isSessionId(sessionId)) throw new Error('invalid session id');
-    const { projDir } = this.projDirFor(cwd);
-    fs.rmSync(path.join(projDir, sessionId + '.jsonl'), { force: true });
-    return { deleted: true };
+    const closed = [];
+    for (const [id, chat] of this.chats) {
+      if (chat.sessionId === sessionId) { this.close(id); closed.push(id); }
+    }
+    if (closed.length) await new Promise((r) => setTimeout(r, 300));
+    const files = this.sessionFiles(cwd, sessionId);
+    if (!files.length) throw new Error('This conversation is no longer on disk.');
+    for (const f of files) {
+      fs.rmSync(f, { force: true });
+      fs.rmSync(f.replace(/\.jsonl$/, ''), { recursive: true, force: true });
+    }
+    const left = files.filter((f) => fs.existsSync(f));
+    if (left.length) throw new Error('Could not delete ' + left[0]);
+    return { deleted: true, closed };
+  }
+
+  sessionFiles(cwd, sessionId) {
+    const name = sessionId + '.jsonl';
+    const out = new Set();
+    try { const { projDir } = this.projDirFor(cwd); if (fs.existsSync(path.join(projDir, name))) out.add(path.join(projDir, name)); } catch { /* no cwd */ }
+    const root = path.join(process.env.HOME || os.homedir(), '.claude', 'projects');
+    try {
+      for (const d of fs.readdirSync(root, { withFileTypes: true })) {
+        if (d.isDirectory() && fs.existsSync(path.join(root, d.name, name))) out.add(path.join(root, d.name, name));
+      }
+    } catch { /* no projects dir */ }
+    return [...out];
   }
 
   deleteFolder(cwd) {
@@ -1020,4 +1068,5 @@ module.exports.MODES = MODES;
 module.exports.TASK_SUBTYPES = TASK_SUBTYPES;
 module.exports.transcriptItems = transcriptItems;
 module.exports.leanEngineEnv = leanEngineEnv;
+module.exports.pluginOverrides = pluginOverrides;
 module.exports.PERM_TIMEOUT_MESSAGE = PERM_TIMEOUT_MESSAGE;

@@ -126,7 +126,8 @@ describe('declared icons are actually painted (#54)', () => {
     const h = await boot();
     expect(h.window.document.querySelector('#btn-convo-drop .ico svg')).toBeTruthy();
     expect(h.window.document.querySelector('#btn-convo-drop .caret svg')).toBeTruthy();
-    expect(h.window.document.querySelector('.logo-mark svg')).toBeTruthy();
+    // The logo is the app's own mark (inline SVG), not an icon in a span.
+    expect(h.window.document.querySelector('svg.logo-mark')).toBeTruthy();
   });
 
   it('a tool card renders an SVG icon, not an emoji', async () => {

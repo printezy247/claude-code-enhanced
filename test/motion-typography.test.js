@@ -113,11 +113,14 @@ describe('deliberate deviations from the skill defaults (#55)', () => {
     expect(css()).toMatch(/body \{[\s\S]*?font-size:\s*14px/);
   });
 
-  it('the categorical chip palette is NOT tokenised', () => {
-    // Deliberate: those chips are theme-independent by design (dark chip, light
-    // label) and measure 5.88-11.56:1 text-on-chip.
-    expect(css()).toContain('#7dcfff');
-    expect(css()).toContain('#bb9af7');
+  it('chips follow the black / white / metallic-orange palette in both themes', () => {
+    // The old purple and blue chip colours were fixed for the dark theme only;
+    // they now come from tokens so the light theme swaps them too.
+    const src = css();
+    for (const old of ['#7dcfff', '#bb9af7', '#a99cf9', '#7aa2f7', '#9cc2ff']) expect(src).not.toContain(old);
+    expect(src).toMatch(/\.chip\.cap-oauth \{[^}]*var\(--accent/);
+    expect(src).toMatch(/:root \{[\s\S]*?--bg: #000000;[\s\S]*?--text: #ffffff;/);
+    expect(src).toMatch(/:root\[data-theme="light"\] \{[\s\S]*?--bg: #ffffff;[\s\S]*?--text: #000000;/);
   });
 });
 

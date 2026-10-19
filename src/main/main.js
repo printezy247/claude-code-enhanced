@@ -623,12 +623,16 @@ function handle(channel, fn) {
 }
 
 function registerIpc() {
-  handle('app:info', async () => ({
+  handle('app:info', async (args) => {
+    // The banner's re-check asks for a fresh look; everything else gets the cache.
+    if (args && args.refresh) claudeInfo = await detectClaude();
+    return {
     appVersion: app.getVersion(),
     electron: process.versions.electron,
     claude: claudeInfo,
     home: os.homedir(),
-  }));
+    };
+  });
 
   // Release ping (#47): compares the packaged version with the GitHub release.
   // 404 = repo has no releases yet (expected before the first push).
@@ -1201,6 +1205,9 @@ function registerIpc() {
       cwd = worktree.path;
       resume = null;   // the fresh tree has no conversation of its own
     }
+    // A worktree made for a chat that then fails to start is removed again,
+    // branch and all, instead of piling up under .claude/worktrees.
+    try {
     const provider = store.providers.find(p => p.uid === providerUid)
       || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
     if (provider) await ensureFreshAuth(provider);
@@ -1225,7 +1232,7 @@ function registerIpc() {
     // prompt can't fit. warmOllamaModel self-skips non-Ollama servers.
     if (provider && provider.baseUrl && effModel && (isLocalBase(provider.baseUrl) || !useProxy)) {
       const warm = await warmOllamaModel(provider.baseUrl, effModel, Number(store.settings.localNumCtx || localmodels.CCE_DEFAULT_CTX), { forceCtx: forcedCtxFor(store.settings, effModel), local: isLocalBase(provider.baseUrl) });
-      if (!warm.ok) return { ok: false, error: warm.error };
+      if (!warm.ok) { worktrees.remove(worktree); return { ok: false, error: warm.error }; }
       if (warm.corrected) model = warm.corrected;   // typo/alias fixed against the server's real tags
     }
     const created = await chats.create({
@@ -1246,6 +1253,10 @@ function registerIpc() {
     // Report back the model actually in force (auto-picked or typo-corrected)
     // so the renderer's dropdown doesn't keep showing 'provider default'.
     return { ...created, model: model || '', worktree };
+    } catch (err) {
+      worktrees.remove(worktree);
+      throw err;
+    }
   });
   handle('chat:last', async ({ cwd }) => ({ sessionId: chats.lastChatFor(cwd) }));
   handle('chat:send', async ({ id, text, blocks }) => chats.send(id, text, blocks));

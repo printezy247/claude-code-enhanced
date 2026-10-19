@@ -7,7 +7,7 @@
        width (the skill's Priority 5 check) instead of relying on the default. -->
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta http-equiv="Content-Security-Policy"
-        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'" />
+        content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; frame-src http://localhost:* http://127.0.0.1:* http://[::1]:* https:" />
   <title>Claude Code Enhanced</title>
   <link rel="stylesheet" href="../../node_modules/@xterm/xterm/css/xterm.css" />
   <link rel="stylesheet" href="styles.css" />
@@ -16,7 +16,21 @@
   <div id="app">
     <aside id="sidebar">
       <div class="logo">
-        <span class="logo-mark" data-icon="terminal"></span>
+        <!-- Same mark as build/icon.svg (the app icon). -->
+        <svg class="logo-mark" viewBox="0 0 512 512" aria-hidden="true" focusable="false">
+          <defs>
+            <linearGradient id="logo-metal" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="#ffd9a8"/><stop offset="0.28" stop-color="#ff9a3c"/>
+              <stop offset="0.55" stop-color="#c8561a"/><stop offset="0.78" stop-color="#ff8f2e"/>
+              <stop offset="1" stop-color="#ffc178"/>
+            </linearGradient>
+          </defs>
+          <rect x="8" y="8" width="496" height="496" rx="112" fill="#000"/>
+          <rect x="8" y="8" width="496" height="496" rx="112" fill="none" stroke="url(#logo-metal)" stroke-opacity="0.55" stroke-width="10"/>
+          <path d="M 362 168 A 136 136 0 1 0 362 344" fill="none" stroke="url(#logo-metal)" stroke-width="56" stroke-linecap="round"/>
+          <path d="M 214 206 L 270 256 L 214 306" fill="none" stroke="#fff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round"/>
+          <rect x="290" y="288" width="64" height="26" rx="8" fill="url(#logo-metal)"/>
+        </svg>
         <span class="logo-text">Claude Code<br /><em>Enhanced</em></span>
       </div>
       <nav id="nav" aria-label="Sections">
