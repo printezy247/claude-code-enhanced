@@ -16,7 +16,7 @@
   --accent-soft: rgba(255, 154, 60, 0.13);
   --accent-line: rgba(255, 154, 60, 0.38);
   /* Brushed metal for filled controls: highlight, copper shadow, warm return. */
-  --metal: linear-gradient(135deg, #ffd9a8 0%, #ff9a3c 32%, #e06f22 58%, #ff9a3c 82%, #ffc178 100%);
+  --metal: #ff9a3c;
   --on-accent: #000000;
   --ok: #7dc98f;
   --warn: #f2c94c;
@@ -940,7 +940,7 @@ body.split-open #splitpane { display: flex; }
   --accent-lo: #7a3200;
   --accent-soft: rgba(194, 90, 16, 0.10);
   --accent-line: rgba(154, 63, 0, 0.35);
-  --metal: linear-gradient(135deg, #c8601a 0%, #9a3f00 40%, #7a3200 62%, #a84a08 100%);
+  --metal: #c8601a;
   --on-accent: #ffffff;
   --ok: #1f6b35;
   --warn: #7a5600;

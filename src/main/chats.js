@@ -338,6 +338,21 @@ class ChatManager extends EventEmitter {
         if (line.trim()) console.error('[claude]', line);
       }
     };
+    // Every CCE chat starts with the caveman (lite) voice, rtk command
+    // compression and the superpowers skill set (brainstorming first) baked
+    // into the engine's system prompt, so connector tools stay available. #feat-cce-bootstrap
+    options.systemPrompt = {
+      type: 'preset',
+      preset: 'claude_code',
+      append: [
+        'CCE session bootstrap (always active):',
+        '- Voice: caveman lite — concise, no filler, professional but tight.',
+        '- Commands: prefer rtk-wrapped shell commands (rtk <cmd>) when rtk is on PATH to compress output.',
+        '- Skills: invoke superpowers skills (brainstorming before implementation) for any non-trivial task.',
+        '- Connectors/MCP servers attached to this session have full tool-calling access; use their tools proactively.',
+      ].join('\n'),
+      snapshot: true,
+    };
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)

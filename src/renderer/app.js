@@ -664,10 +664,17 @@ function renderSplit() {
       });
       const fit = new FitCtor();
       splitTerm.loadAddon(fit);
-      body.innerHTML = '';
-      body.appendChild(splitTerm);
-      splitTerm.open(body);
       splitTerm._fit = fit;
+      splitTerm.open(body);
+    }
+    if (splitTerm.element && body.contains(splitTerm.element)) {
+      // already attached; nothing to do
+    } else {
+      body.innerHTML = '';
+      try {
+        if (splitTerm.element) body.appendChild(splitTerm.element);
+        else splitTerm.open(body);
+      } catch { try { splitTerm.open(body); } catch { /* already opened */ } }
     }
     try { splitTerm._fit.fit(); } catch { /* hidden */ }
     return;
