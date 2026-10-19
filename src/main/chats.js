@@ -94,10 +94,11 @@ function previewOf(full) {
   let text = '';
   try {
     const fd = fs.openSync(full, 'r');
-    const b = Buffer.alloc(65536);
-    const n = fs.readSync(fd, b, 0, 65536, 0);
-    fs.closeSync(fd);
-    text = b.slice(0, n).toString('utf8');
+    try {
+      const b = Buffer.alloc(65536);
+      const n = fs.readSync(fd, b, 0, 65536, 0);
+      text = b.slice(0, n).toString('utf8');
+    } finally { try { fs.closeSync(fd); } catch { /* already closed */ } }
   } catch { return '(empty session)'; }
   let preview = '', summary = '';
   for (const line of text.split('\n')) {
@@ -178,11 +179,12 @@ function transcriptItems(records) {
 function cwdOf(full) {
   try {
     const fd = fs.openSync(full, 'r');
-    const b = Buffer.alloc(8192);
-    const n = fs.readSync(fd, b, 0, 8192, 0);
-    fs.closeSync(fd);
-    const m = b.slice(0, n).toString('utf8').match(/"cwd":"((?:[^"\\]|\\.)*)"/);
-    if (m) return JSON.parse('"' + m[1] + '"');
+    try {
+      const b = Buffer.alloc(8192);
+      const n = fs.readSync(fd, b, 0, 8192, 0);
+      const m = b.slice(0, n).toString('utf8').match(/"cwd":"((?:[^"\\]|\\.)*)"/);
+      if (m) return JSON.parse('"' + m[1] + '"');
+    } finally { try { fs.closeSync(fd); } catch { /* already closed */ } }
   } catch { /* skip */ }
   return null;
 }
@@ -983,7 +985,13 @@ class ChatManager extends EventEmitter {
         // blanket rule. Safer default than the old behaviour.
         entry.resolve({ behavior: 'allow' });
       }
-    } else entry.resolve({ behavior: 'allow' });
+    } else if (decision === 'allow') {
+      entry.resolve({ behavior: 'allow' });
+    } else {
+      // Fail closed: anything that is not a recognised decision (a typo, a
+      // corrupted payload) must deny the tool call, never allow it.
+      entry.resolve({ behavior: 'deny', message: 'Unrecognised permission decision — tool call denied.' });
+    }
     return { ok: true };
   }
 

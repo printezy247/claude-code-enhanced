@@ -178,7 +178,12 @@ function begin(providerId, cfg, opts = {}) {
     server.once('error', reject);
     server.listen(wantPort, '127.0.0.1', () => resolve(server.address().port));
   });
-  const cancel = () => { try { server.close(); } catch { /* already closed */ } };
+  const cancel = () => {
+    try { server.close(); } catch { /* already closed */ }
+    // Settle the pending promise too, or a wait() already in flight (or the
+    // 10-minute reaper firing while the dialog is open) hangs forever.
+    if (!settled) { settled = true; rejectCb(new Error('sign-in cancelled')); }
+  };
   listen.catch((e) => rejectCb(e));
 
   return {
@@ -225,9 +230,13 @@ function beginDevice(providerId, cfg, opts = {}) {
         }
         return normalizeTokens(body);
       }
-      throw new Error('device authorization timed out');
+      throw new Error(stopped ? 'sign-in cancelled' : 'device authorization timed out');
     };
-    return { url, userCode, tokens: poll() };
+    const tokens = poll();
+    // Created eagerly, so a cancel with nobody awaiting wait() must not surface
+    // as an unhandled rejection. wait() still sees the same rejection.
+    tokens.catch(() => {});
+    return { url, userCode, tokens };
   };
 
   const started = run();
