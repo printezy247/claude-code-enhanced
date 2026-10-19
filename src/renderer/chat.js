@@ -68,8 +68,31 @@ const Chat = (() => {
       case 'ExitPlanMode': return 'plan ready for review';
       case 'Skill': return 'skill: ' + (input.skill || input.command || '');
       case 'AskUserQuestion': return 'asks: ' + ((input.questions && input.questions[0] && input.questions[0].question) || '').slice(0, 80);
-      default: return mcp ? `${mcp[0]} ▸ ${mcp.slice(1).join('.')}` : name;
+      default: {
+        if (!mcp) return name;
+        // Name the server's short tool plus what it was asked to do: a column of
+        // identical "server ▸ execute" rows hid what each call ran. #mcp-titles
+        const server = mcp[0].replace(/^plugin_[^_]+_/, '');
+        const what = mcpGist(input);
+        return server + ' ▸ ' + mcp.slice(1).join('.') + (what ? ' · ' + what : '');
+      }
     }
+  }
+  function mcpGist(input) {
+    if (!input || typeof input !== 'object') return '';
+    const first = (v) => String(v).split('\n').map(s => s.trim()).find(s => s && !s.startsWith('#') && !s.startsWith('//')) || '';
+    for (const k of ['command', 'query', 'url', 'path', 'file_path', 'pattern', 'name', 'title']) {
+      if (typeof input[k] === 'string' && input[k].trim()) return first(input[k]).slice(0, 90);
+    }
+    if (typeof input.code === 'string') return first(input.code).slice(0, 90);
+    for (const k of ['commands', 'queries', 'paths']) {
+      const a = input[k];
+      if (Array.isArray(a) && a.length) {
+        const v = typeof a[0] === 'string' ? a[0] : (a[0] && (a[0].label || a[0].command)) || '';
+        return first(v).slice(0, 80) + (a.length > 1 ? ' +' + (a.length - 1) : '');
+      }
+    }
+    return '';
   }
   function toolKind(name) {
     if (name.startsWith('mcp__')) return 'mcp';
