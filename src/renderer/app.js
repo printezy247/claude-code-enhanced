@@ -36,6 +36,40 @@ function toast(msg, kind = '') {
   setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 3600);
   setTimeout(() => t.remove(), 4000);
 }
+/**
+ * Text input dialog. Electron does not implement window.prompt (it throws), so
+ * Rename and re-ask silently did nothing. Resolves to the text, or null.
+ */
+window.askText = function askText(title, value = '', { multiline = false, okLabel = 'Save' } = {}) {
+  return new Promise((resolve) => {
+    const overlay = el('div', 'modal-overlay');
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    const modal = el('div', 'modal');
+    modal.appendChild(el('h3', '', title));
+    const field = el(multiline ? 'textarea' : 'input', 'ask-field');
+    if (multiline) field.rows = 6; else field.type = 'text';
+    field.value = value;
+    field.setAttribute('aria-label', title);
+    modal.appendChild(field);
+    const row = el('div', 'modal-actions');
+    const cancel = el('button', 'btn', 'Cancel');
+    const ok = el('button', 'btn primary', okLabel);
+    row.appendChild(cancel); row.appendChild(ok);
+    modal.appendChild(row);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    const done = (v) => { overlay.remove(); resolve(v); };
+    cancel.addEventListener('click', () => done(null));
+    ok.addEventListener('click', () => done(field.value));
+    overlay.addEventListener('mousedown', (e) => { if (e.target === overlay) done(null); });
+    field.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); done(null); }
+      else if (e.key === 'Enter' && (!multiline || e.ctrlKey)) { e.preventDefault(); done(field.value); }
+    });
+    setTimeout(() => { field.focus(); field.select(); }, 0);
+  });
+};
 // Real HTML escaping: several call sites interpolate provider- and
 // server-supplied strings into innerHTML, and MCP server names are untrusted. #7
 /**
@@ -349,7 +383,7 @@ function openConvoMenu(anchor, s, cwd) {
     switchView('conversations');
   });
   add('Rename…', 'name it yourself', async () => {
-    const title = window.prompt('Name this conversation', s.preview || '');
+    const title = await window.askText('Name this conversation', s.preview || '', { okLabel: 'Rename' });
     if (!title || !title.trim()) return;
     const r = await ccx.invoke('session:rename', { sessionId: s.sessionId, title: title.trim(), cwd });
     if (!r.ok) return toast(r.error || 'rename failed', 'err');
@@ -385,7 +419,11 @@ function openConvoMenu(anchor, s, cwd) {
     switchView('conversations');
   });
   const del = add('Delete', 'removes from disk', async () => {
-    const r = await ccx.invoke('chat:delete', { cwd, sessionId: s.sessionId });
+    // An open tab keeps writing this transcript; close it so the delete sticks.
+    for (const [id, meta] of [...tabRegistry]) {
+      if (meta.sessionId === s.sessionId && meta.kind === 'chat') await Chat.closeChat(id);
+    }
+    const r = await ccx.invoke('chat:delete', { cwd: s.cwd || cwd, sessionId: s.sessionId });
     if (!r.ok) return toast(r.error, 'err');
     convoSessions = convoSessions.filter((x) => x.sessionId !== s.sessionId);
     renderConversationList();
@@ -1902,6 +1940,18 @@ function renderSettings() {
   nudgeLabel.appendChild(el('span', '', 'Auto-continue when a model stops after saying what it will do next'));
   c3b.appendChild(nudgeLabel);
   c3b.appendChild(el('div', 'hint', 'Some models end a turn on “Let me …” without making the tool call, so the chat just goes quiet. When this is on, cce sends one automatic reminder per prompt; the ▶ continue button is always available.'));
+  const cmRow = el('label', 'check');
+  cmRow.appendChild(el('span', '', 'context-mode plugin in chats'));
+  const cmSel = el('select', 'skills-search');
+  cmSel.id = 'opt-contextmode';
+  for (const [v, t] of [['auto', 'Claude models only'], ['on', 'Every model'], ['off', 'Never']]) {
+    const o = el('option', '', t); o.value = v; cmSel.appendChild(o);
+  }
+  cmSel.value = s.contextMode || 'auto';
+  cmSel.addEventListener('change', () => saveSettings({ contextMode: cmSel.value }));
+  cmRow.appendChild(cmSel);
+  c3b.appendChild(cmRow);
+  c3b.appendChild(el('div', 'hint', 'context-mode hides command output behind a search index. Claude searches it; other models usually re-run the same command over and over. Applies to new chats.'));
   body.appendChild(c3b);
 
   // sandbox
@@ -2138,7 +2188,7 @@ function renderClaudeBanner() {
     const re = el('button', 'btn small', 're-check');
     re.title = 'Probe for the claude CLI again (e.g. right after installing or updating it)';
     re.addEventListener('click', async () => {
-      const r = await ccx.invoke('app:info');
+      const r = await ccx.invoke('app:info', { refresh: true });
       if (r && r.ok) {
         state.info = { ...state.info, claude: r.claude };
         renderClaudeBanner();

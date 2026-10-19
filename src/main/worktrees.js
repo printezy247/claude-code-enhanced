@@ -4,20 +4,24 @@
 'use strict';
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+
+const gitRunner = (deps) => deps.run || ((args, opts) =>
+  execFileSync('git', args, { timeout: 30000, stdio: 'pipe', ...opts }).toString());
 
 /**
  * Create a new worktree of the repo containing `dir`.
  * @param {string} dir
- * @param {{run?: Function, stamp?: string}} [deps] injectable for tests
- * @returns {{path: string, branch: string} | {error: string}}
+ * @param {{run?: Function, stamp?: string, fs?: object}} [deps] injectable for tests
+ * @returns {{path: string, root: string, branch: string, top: string} | {error: string}}
  */
 function add(dir, deps = {}) {
-  const run = deps.run || ((args, opts) =>
-    execFileSync('git', args, { timeout: 30000, stdio: 'pipe', ...opts }).toString());
+  const run = gitRunner(deps);
   const fss = deps.fs || fs;
   if (!dir) return { error: 'no folder' };
+  dir = String(dir).replace(/^~(?=\/|$)/, os.homedir());
   let top = '';
   try {
     top = String(run(['rev-parse', '--show-toplevel'], { cwd: dir })).trim();
@@ -25,7 +29,9 @@ function add(dir, deps = {}) {
     return { error: 'not a git repository: ' + dir };
   }
   if (!top) return { error: 'not a git repository: ' + dir };
-  const stamp = deps.stamp || new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
+  // Seconds alone collided when two worktree chats started in the same second.
+  const stamp = deps.stamp || new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14)
+    + '-' + Math.random().toString(36).slice(2, 6);
   const branch = 'cce/' + stamp;
   const p = path.join(top, '.claude', 'worktrees', 'cce-' + stamp);
   try {
@@ -35,7 +41,28 @@ function add(dir, deps = {}) {
     const detail = String((e && e.stderr) || (e && e.message) || e).trim().slice(0, 200);
     return { error: 'git worktree add failed: ' + detail };
   }
-  return { path: p, branch };
+  // Keep the worktrees folder out of the user's own `git status`.
+  try {
+    const exclude = String(run(['rev-parse', '--git-path', 'info/exclude'], { cwd: top })).trim();
+    const file = path.isAbsolute(exclude) ? exclude : path.join(top, exclude);
+    const cur = fss.existsSync(file) ? fss.readFileSync(file, 'utf8') : '';
+    if (!/^\/?\.claude\/worktrees\/?$/m.test(cur)) {
+      fss.mkdirSync(path.dirname(file), { recursive: true });
+      fss.appendFileSync(file, (cur && !cur.endsWith('\n') ? '\n' : '') + '/.claude/worktrees/\n');
+    }
+  } catch { /* the exclude is a nicety */ }
+  // A chat started in repo/sub keeps working in the same subfolder.
+  const rel = path.relative(top, dir);
+  const sub = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? path.join(p, rel) : p;
+  return { path: fss.existsSync(sub) ? sub : p, root: p, branch, top };
 }
 
-module.exports = { add };
+/** Undo add() when the chat that wanted the worktree never started. */
+function remove(wt, deps = {}) {
+  const run = gitRunner(deps);
+  if (!wt || !wt.root || !wt.top) return;
+  try { run(['worktree', 'remove', '--force', wt.root], { cwd: wt.top }); } catch { /* already gone */ }
+  try { run(['branch', '-D', wt.branch], { cwd: wt.top }); } catch { /* already gone */ }
+}
+
+module.exports = { add, remove };

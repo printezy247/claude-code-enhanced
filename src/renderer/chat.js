@@ -68,8 +68,33 @@ const Chat = (() => {
       case 'ExitPlanMode': return 'plan ready for review';
       case 'Skill': return 'skill: ' + (input.skill || input.command || '');
       case 'AskUserQuestion': return 'asks: ' + ((input.questions && input.questions[0] && input.questions[0].question) || '').slice(0, 80);
-      default: return mcp ? `${mcp[0]} ▸ ${mcp.slice(1).join('.')}` : name;
+      case 'TaskCreate': return 'task: ' + (input.subject || '');
+      case 'TaskUpdate': return 'task #' + (input.taskId || '') + (input.status ? ' → ' + input.status : '');
+      default: {
+        if (!mcp) return name;
+        // Name the server's short tool plus what it was asked to do: a column of
+        // identical "server ▸ execute" rows hid what each call ran. #mcp-titles
+        const server = mcp[0].replace(/^plugin_[^_]+_/, '');
+        const what = mcpGist(input);
+        return server + ' ▸ ' + mcp.slice(1).join('.') + (what ? ' · ' + what : '');
+      }
     }
+  }
+  function mcpGist(input) {
+    if (!input || typeof input !== 'object') return '';
+    const first = (v) => String(v).split('\n').map(s => s.trim()).find(s => s && !s.startsWith('#') && !s.startsWith('//')) || '';
+    for (const k of ['command', 'query', 'url', 'path', 'file_path', 'pattern', 'name', 'title']) {
+      if (typeof input[k] === 'string' && input[k].trim()) return first(input[k]).slice(0, 90);
+    }
+    if (typeof input.code === 'string') return first(input.code).slice(0, 90);
+    for (const k of ['commands', 'queries', 'paths']) {
+      const a = input[k];
+      if (Array.isArray(a) && a.length) {
+        const v = typeof a[0] === 'string' ? a[0] : (a[0] && (a[0].label || a[0].command)) || '';
+        return first(v).slice(0, 80) + (a.length > 1 ? ' +' + (a.length - 1) : '');
+      }
+    }
+    return '';
   }
   function toolKind(name) {
     if (name.startsWith('mcp__')) return 'mcp';
@@ -484,7 +509,7 @@ const Chat = (() => {
     const meta = window.__tabs && window.__tabs.get(chat.id);
     if (!meta) return;
     const busy = !!chat.busy;
-    const needsYou = !!(chat.permCount > 0) || (!!chat.queued && chat.queued > 0);
+    const needsYou = !!(chat.permCount > 0) || !!(chat.elicCount > 0) || (!!chat.queued && chat.queued > 0);
     if (meta.busy === busy && meta.needsYou === needsYou) return;
     meta.busy = busy;
     meta.needsYou = needsYou;
@@ -1960,8 +1985,8 @@ const Chat = (() => {
   }
 
   /** Branch the conversation from a message with an edited prompt. #30 */
-  function resendFrom(chat, uuid, originalText) {
-    const edited = window.prompt('Re-ask from this message (the conversation branches):', originalText);
+  async function resendFrom(chat, uuid, originalText) {
+    const edited = await window.askText('Re-ask from this message (the conversation branches)', originalText, { multiline: true, okLabel: 'Re-ask' });
     if (edited === null || !edited.trim() || edited === originalText) return;
     Chat.createSession({
       cwd: chat.cwd,
@@ -2374,7 +2399,7 @@ const Chat = (() => {
       const card = chat.permSlot.querySelector('.elic[data-elid="' + (msg.elicitation_id || msg.elicitationId || '') + '"]');
       if (card) {
         ccx.invoke('chat:elicit-answer', { id: chat.id, requestId: card.dataset.rid, action: 'accept', content: {} });
-        card.remove();
+        dropElicCard(chat, card);
         toast('Connector authorized', 'ok');
       }
       return;
@@ -2388,9 +2413,18 @@ const Chat = (() => {
     if (chat.stylesFilled || !chat.alive) return;
     chat.stylesFilled = true;
     let r = null;
-    try { r = await ccx.invoke('chat:styles', { id: chat.id }); } catch { return; }
+    try { r = await ccx.invoke('chat:styles', { id: chat.id }); } catch { r = null; }
     const list = (r && r.ok && r.styles) || [];
-    if (!list.length) return;
+    if (!list.length) {
+      // Right after init the engine may not answer yet: one retry, not a
+      // picker that stays hidden for the whole session.
+      if (!chat.stylesRetried) {
+        chat.stylesRetried = true;
+        chat.stylesFilled = false;
+        setTimeout(() => fillStyles(chat), 3000);
+      }
+      return;
+    }
     chat.styleSel.innerHTML = '';
     const auto = el('option', '', 'style: auto'); auto.value = '';
     chat.styleSel.appendChild(auto);
@@ -3367,10 +3401,20 @@ const Chat = (() => {
      authorize; 'form' mode = structured fields from the server's JSON schema.
      The main process parks the SDK callback until the card is answered. */
 
+  // A connector prompt blocks the turn like a permission does, so it counts
+  // toward the tab's "needs you" state; a background chat used to time out on it
+  // unnoticed.
+  function dropElicCard(chat, card) {
+    if (!card.isConnected) return;
+    card.remove();
+    chat.elicCount = Math.max(0, (chat.elicCount || 1) - 1);
+    publishTabState(chat);
+  }
+
   function clearElicitation(chat, requestId, note) {
     for (const card of chat.permSlot.querySelectorAll('.elic')) {
       if (card.dataset.rid !== requestId) continue;
-      card.remove();
+      dropElicCard(chat, card);
       if (note) {
         const n = el('div', 'sys-note', note);
         chat.msgs.appendChild(n);
@@ -3404,7 +3448,7 @@ const Chat = (() => {
     };
 
     const answer = async (action) => {
-      card.remove();
+      dropElicCard(chat, card);
       await ccx.invoke('chat:elicit-answer', {
         id: chat.id, requestId: evt.requestId, action,
         content: action === 'accept' ? collect() : undefined,
@@ -3472,6 +3516,8 @@ const Chat = (() => {
       });
     }
     chat.permSlot.appendChild(card);
+    chat.elicCount = (chat.elicCount || 0) + 1;
+    publishTabState(chat);
     card.scrollIntoView({ block: 'nearest' });
   }
 
@@ -3666,7 +3712,7 @@ const Chat = (() => {
         if (chat.pane.classList.contains('active')) {
           const panel = chat.pane.querySelector('.chat-skills-panel');
           if (panel) { panel.remove(); return; }
-          if (!chat.permSlot.childElementCount && chat.busy && !e.shiftKey) {
+          if (!chat.permSlot.querySelector(".perm-card:not(.elic)") && chat.busy && !e.shiftKey) {
             ccx.invoke('chat:interrupt', { id: chat.id });
           }
         }

@@ -66,12 +66,18 @@ const rowFor = (h, text) => rows(h).find((r) => r.textContent.includes(text));
 describe('rename a conversation (#52)', () => {
   it('sends the new title and repaints the row in place', async () => {
     const h = await boot();
-    h.window.prompt = () => 'my new name';
+
     const more = rowFor(h, 'newest alpha').querySelector('.convo-more');
     click(h, more);
     const item = [...h.window.document.querySelectorAll('.convo-menu-item')]
       .find((b) => b.textContent.includes('Rename'));
     click(h, item);
+    await flush();
+    // Electron has no window.prompt; the app's own dialog takes the name.
+    const field = h.window.document.querySelector('.modal .ask-field');
+    expect(field.value).toBe('newest alpha');
+    field.value = 'my new name';
+    click(h, h.window.document.querySelector('.modal .btn.primary'));
     await flush();
     const call = h.calls.filter((c) => c.channel === 'session:rename').pop();
     expect(call.payload.sessionId).toBe('a1');
@@ -81,10 +87,13 @@ describe('rename a conversation (#52)', () => {
 
   it('a cancelled prompt changes nothing', async () => {
     const h = await boot();
-    h.window.prompt = () => null;
+
     click(h, rowFor(h, 'newest alpha').querySelector('.convo-more'));
     click(h, [...h.window.document.querySelectorAll('.convo-menu-item')].find((b) => b.textContent.includes('Rename')));
     await flush();
+    click(h, [...h.window.document.querySelectorAll('.modal .btn')].find((b) => b.textContent === 'Cancel'));
+    await flush();
+    expect(h.window.document.querySelector('.modal .ask-field')).toBe(null);
     expect(h.calls.filter((c) => c.channel === 'session:rename').length).toBe(0);
   });
 });

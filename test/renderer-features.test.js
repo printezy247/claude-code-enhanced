@@ -290,9 +290,9 @@ describe('edit and resend (#30)', () => {
   });
 });
 
-/** Replace window.prompt with a fixed answer. */
+/** Answer the in-app text dialog with a fixed value. */
 function withIpcPrompt(win, answer) {
-  win.prompt = () => answer;
+  win.askText = async () => answer;
 }
 
 describe('shortcuts (#16, #17)', () => {

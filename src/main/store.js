@@ -29,7 +29,8 @@ const DEFAULT_SETTINGS = {
     allowLocalBinding: true,
     allowedDomains: [],
   },
-  autoNudge: true,          // once per prompt, re-prompt a model that ends a turn on "Let me …" without acting
+  contextMode: 'auto',      // context-mode plugin: 'auto' = Claude models only, 'on', 'off'
+  autoNudge: true,         // once per prompt, re-prompt a model that ends a turn on "Let me …" without acting
   localNumCtx: 73728,        // context to load local Ollama models with (claude base prompt ≈66K tokens; more costs RAM)
   forceCtx: {},             // per-model override: { "qwen3-4b": 32000 } skips the floor (#11)
 };
