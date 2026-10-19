@@ -11,7 +11,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { atomicWriteJson } = require('./atomic');
-
 // ---- PKCE helpers -----------------------------------------------------------
 const b64url = (buf) => Buffer.from(buf).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 
@@ -30,6 +29,14 @@ function codeFromInput(input) {
   const raw = String(input || '').trim();
   const [code, state] = raw.split('#');
   return { code, state };
+}
+
+/** Constant-time string comparison to avoid leaking state via timing. */
+function safeEqual(a, b) {
+  const ba = Buffer.from(String(a == null ? '' : a));
+  const bb = Buffer.from(String(b == null ? '' : b));
+  if (ba.length !== bb.length) return false;
+  return crypto.timingSafeEqual(ba, bb);
 }
 
 /** POST token params as JSON, retrying form-encoded if the server rejects JSON. */
@@ -110,7 +117,10 @@ function begin(providerId, cfg, opts = {}) {
   const exchange = async (input) => {
     const { code, state: retState } = codeFromInput(input);
     if (!code) throw new Error('no authorization code');
-    if (retState && retState !== state) throw new Error('OAuth state mismatch — start the flow again');
+    // State is mandatory on the automatic callback path (enforced before this
+    // is called) but optional for the manual paste-code flow, where the user
+    // may paste just a code. Validate only when the caller supplies it.
+    if (retState && !safeEqual(retState, state)) throw new Error('OAuth state mismatch — start the flow again');
     const body = await postToken(cfg.tokenUrl, {
       grant_type: 'authorization_code',
       code,
@@ -150,7 +160,19 @@ function begin(providerId, cfg, opts = {}) {
       + msg + '</body></html>');
   };
   const server = http.createServer((req, res) => {
-    const u = new URL(req.url, 'http://127.0.0.1');
+    // DNS-rebinding guard: only accept requests addressed to the loopback host
+    // we actually bound. A foreign Host header means a browser tab on another
+    // origin is trying to reach the callback.
+    const host = String(req.headers.host || '').toLowerCase();
+    // An empty Host header is rejected: a real browser request always carries
+    // one, so a missing header is a strong signal of a non-browser probe.
+    if (!host || !/^(127\.0\.0\.1|localhost)(:\d+)?$/.test(host)) {
+      page(res, 403, 'Forbidden.');
+      return;
+    }
+    let u;
+    try { u = new URL(req.url, 'http://127.0.0.1'); }
+    catch { page(res, 400, 'Bad request.'); return; }
     if (u.pathname !== cbPath) { page(res, 404, 'Not found.'); return; }
     const code = u.searchParams.get('code');
     const err = u.searchParams.get('error');
@@ -164,7 +186,7 @@ function begin(providerId, cfg, opts = {}) {
     // CSRF guard: the browser must bring back the exact state we generated.
     // A forged or substituted callback (someone else's `code`) must never be
     // exchanged — reject the whole flow rather than accept a foreign code.
-    if (retState !== state) {
+    if (!safeEqual(retState, state)) {
       page(res, 400, 'OAuth state mismatch — please restart the sign-in.');
       if (!settled) { settled = true; rejectCb(new Error('OAuth state mismatch — start the flow again')); }
       return;
@@ -172,7 +194,7 @@ function begin(providerId, cfg, opts = {}) {
     page(res, 200, 'Signed in. You can close this tab and return to Claude Code Enhanced.');
     if (settled) return;
     settled = true;
-    exchange(code).then(resolveCb, rejectCb);
+    exchange(code + '#' + retState).then(resolveCb, rejectCb);
   });
   const listen = new Promise((resolve, reject) => {
     server.once('error', reject);
