@@ -1311,6 +1311,12 @@ const Chat = (() => {
         const row = el('div', 'skill-row');
         row.appendChild(el('code', '', s.name));
         row.appendChild(el('span', 'chip ' + (MCP_CLS[s.status] || ''), s.status));
+        // The tool list is what proves the connector has tool-calling access.
+        const tools = s.tools || [];
+        if (tools.length) {
+          row.appendChild(el('span', 'chip mcp-ok', tools.length + ' tools'));
+          row.title = tools.map((t) => t.name).join(', ');
+        }
         if (s.error) row.appendChild(el('span', 'skill-desc', String(s.error).slice(0, 120)));
         const tog = el('button', 'btn small', s.status === 'disabled' ? 'enable' : 'disable');
         tog.addEventListener('click', async () => {
@@ -1327,6 +1333,19 @@ const Chat = (() => {
             if (!nr.ok) { toast(nr.error, 'err'); rc.disabled = false; } else load();
           });
           row.appendChild(rc);
+        }
+        // Per-connector "ask every time" — the desktop app's tool policy. The
+        // server is re-registered with always_ask on each of its tools.
+        if (tools.length) {
+          const ask = el('button', 'btn small', 'ask every time');
+          ask.title = 'Require an approval for every call to this connector';
+          ask.addEventListener('click', async () => {
+            ask.disabled = true;
+            const nr = await ccx.invoke('chat:mcp', { id: chat.id, op: 'connect', name: s.name, alwaysAsk: true });
+            ask.disabled = false;
+            if (!nr.ok) toast(nr.error, 'err'); else toast('Always ask enabled for ' + s.name, 'ok');
+          });
+          row.appendChild(ask);
         }
         body.appendChild(row);
       }

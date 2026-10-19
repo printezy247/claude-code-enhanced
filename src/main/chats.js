@@ -10,6 +10,7 @@ const path = require('path');
 const os = require('os');
 const { EventEmitter } = require('events');
 const providers = require('./providers');
+const { promptAppend: bootstrapPrompt } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
@@ -341,18 +342,17 @@ class ChatManager extends EventEmitter {
     // Every CCE chat starts with the caveman (lite) voice, rtk command
     // compression and the superpowers skill set (brainstorming first) baked
     // into the engine's system prompt, so connector tools stay available. #feat-cce-bootstrap
-    options.systemPrompt = {
-      type: 'preset',
-      preset: 'claude_code',
-      append: [
-        'CCE session bootstrap (always active):',
-        '- Voice: caveman lite — concise, no filler, professional but tight.',
-        '- Commands: prefer rtk-wrapped shell commands (rtk <cmd>) when rtk is on PATH to compress output.',
-        '- Skills: invoke superpowers skills (brainstorming before implementation) for any non-trivial task.',
-        '- Connectors/MCP servers attached to this session have full tool-calling access; use their tools proactively.',
-      ].join('\n'),
-      snapshot: true,
-    };
+    // The capabilities are detected on disk, so the model is never told to use
+    // a toolkit this machine does not have.
+    const bootstrap = await bootstrapPrompt();
+    if (bootstrap) {
+      options.systemPrompt = {
+        type: 'preset',
+        preset: 'claude_code',
+        append: bootstrap,
+        snapshot: true,
+      };
+    }
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)
@@ -688,6 +688,37 @@ class ChatManager extends EventEmitter {
   async mcpStatus(id) { return await this._chat(id).q.mcpServerStatus(); }
   async mcpToggle(id, name, enabled) { return await this._chat(id).q.toggleMcpServer(String(name), !!enabled); }
   async mcpReconnect(id, name) { return await this._chat(id).q.reconnectMcpServer(String(name)); }
+
+  /**
+   * Attach a connector to a LIVE session, so its tools are callable straight
+   * away instead of after the next chat start. This is the desktop app's
+   * "connect to MCP server" path: the server definition is registered with the
+   * engine (setMcpServers), which connects it and publishes its tool schemas.
+   */
+  async mcpConnect(id, name, config, alwaysAsk) {
+    const chat = this._chat(id);
+    const entry = { ...config };
+    if (alwaysAsk) {
+      // Per-tool "always ask" policy — the desktop app's connector setting.
+      // The tool list is only known after a first connect, so it is read from
+      // the live status and applied on the next registration.
+      const tools = (await this.mcpStatus(id) || [])
+        .filter((sv) => sv.name === String(name))
+        .flatMap((sv) => (sv.tools || []).map((t) => t.name));
+      if (tools.length) entry.tools = tools.map((t) => ({ name: t, permission_policy: 'always_ask' }));
+    }
+    chat.dynamicMcp = { ...(chat.dynamicMcp || {}), [String(name)]: entry };
+    return await chat.q.setMcpServers(chat.dynamicMcp);
+  }
+
+  /** Drop a dynamically attached connector from the live session. */
+  async mcpDisconnect(id, name) {
+    const chat = this._chat(id);
+    const next = { ...(chat.dynamicMcp || {}) };
+    delete next[String(name)];
+    chat.dynamicMcp = next;
+    return await chat.q.setMcpServers(next);
+  }
   async agents(id) { return await this._chat(id).q.supportedAgents(); }
   async applyFlags(id, patch) { return await this._chat(id).q.applyFlagSettings(patch || {}); }
   // Output styles are files on disk; the CLI lists them after a reload. #feat-output-styles

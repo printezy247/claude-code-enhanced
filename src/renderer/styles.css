@@ -232,7 +232,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .modal {
   background: var(--bg2); border: 1px solid var(--bg4); border-radius: 14px;
   width: min(640px, 92vw); max-height: 88vh; overflow: auto;
-  padding: 22px 24px; box-shadow: 0 24px 70px rgba(0, 0, 0, .5);
+  padding: 22px 24px; box-shadow: none;
   user-select: text;
 }
 .modal h3 { font-size: 16px; margin-bottom: 16px; display: flex; align-items: center; gap: 10px; }
@@ -270,7 +270,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .toast {
   background: var(--bg3); border: 1px solid var(--bg4); border-left: 3px solid var(--accent);
   color: var(--text); border-radius: 10px; padding: 10px 16px; font-size: 13px;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, .4); max-width: 440px;
+  box-shadow: none; max-width: 440px;
   animation: slide-in .18s ease-out;
 }
 .toast.err { border-left-color: var(--danger); }
@@ -495,7 +495,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .chat-slash {
   position: absolute; bottom: 100%; left: 22px; right: 22px;
   background: var(--bg3); border: 1px solid var(--bg4); border-bottom: none;
-  border-radius: 10px 10px 0 0; overflow: hidden; box-shadow: 0 -8px 24px rgba(0,0,0,.35);
+  border-radius: 10px 10px 0 0; overflow: hidden; box-shadow: none;
 }
 .slash-item { padding: 7px 14px; font-family: var(--mono); font-size: 12.5px; color: var(--muted); cursor: pointer; }
 .slash-item.sel, .slash-item:hover { background: var(--accent-soft); color: var(--text); }
@@ -525,7 +525,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
   position: absolute; top: 46px; right: 16px; width: 420px; max-height: 70%;
   overflow: auto; z-index: 30;
   background: var(--bg2); border: 1px solid var(--bg4); border-radius: 12px;
-  padding: 14px 16px; box-shadow: 0 18px 48px rgba(0,0,0,.5);
+  padding: 14px 16px; box-shadow: none;
 }
 .chat-skills-panel h4 { font-size: 13px; margin-bottom: 6px; }
 .skills-list { display: flex; flex-direction: column; gap: 7px; margin: 10px 0; }
@@ -702,7 +702,7 @@ pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
 }
 .palette {
   width: 620px; max-width: 92vw; background: var(--bg3); border: 1px solid var(--border);
-  border-radius: 12px; box-shadow: 0 18px 50px rgba(0,0,0,.5); overflow: hidden;
+  border-radius: 12px; box-shadow: none; overflow: hidden;
 }
 .palette input {
   width: 100%; background: transparent; border: none;
@@ -782,7 +782,7 @@ pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
 .chat-menu {
   position: absolute; z-index: 40; min-width: 220px; background: var(--bg2);
   border: 1px solid var(--border); border-radius: 10px; padding: 6px;
-  box-shadow: 0 12px 32px rgba(0, 0, 0, .45); display: flex; flex-direction: column; gap: 2px;
+  box-shadow: none; display: flex; flex-direction: column; gap: 2px;
 }
 .chat-menu-item {
   display: flex; gap: 8px; align-items: center; padding: 7px 9px; border-radius: 7px;
@@ -812,7 +812,7 @@ pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
 .convo-quick .btn.ghost { background: none; border-color: var(--border); color: var(--muted); }
 .convo-quick .btn.ghost:not(:disabled):hover { color: var(--accent); border-color: var(--accent); }
 .convo-quick .btn:disabled { opacity: .4; cursor: default; }
-.convo-quick .btn.primary { box-shadow: 0 1px 0 rgba(255, 255, 255, .08) inset; }
+.convo-quick .btn.primary { box-shadow: none; }
 .convo-quick .hint { font-size: 11px; white-space: nowrap; }
 
 /* Nav state: the sidebar badge stops being a plain count. */
@@ -831,7 +831,7 @@ pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
   position: absolute; top: 46px; left: 10px; z-index: 50;
   width: min(400px, 92%); max-height: calc(100% - 120px);
   background: var(--bg2); border: 1px solid var(--border); border-radius: 12px;
-  box-shadow: 0 16px 44px rgba(0, 0, 0, .55);
+  box-shadow: none;
   display: flex; flex-direction: column; overflow: hidden;
 }
 #convo-drop.hidden { display: none; }
@@ -915,6 +915,10 @@ body.split-open #splitpane { display: flex; }
 .task-list { margin: 0; padding-left: 18px; font-size: 12px; line-height: 1.7; }
 .task-list li.done { color: var(--muted); text-decoration: line-through; }
 .task-list li.active { color: var(--text); }
+/* Context breakdown rows: a colour chip per category and its token count. */
+.task-row { display: flex; align-items: center; gap: 6px; }
+.task-row .ctx-tokens { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ctx-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--accent); }
 /* Dev-server / artifact preview pane (#feat-preview-pane) */
 #split-body.preview-body { display: flex; flex-direction: column; gap: 8px; }
 .preview-bar { display: flex; gap: 6px; flex: none; }
@@ -970,7 +974,7 @@ body.split-open #splitpane { display: flex; }
 .chat-find {
   position: absolute; top: 52px; right: 18px; z-index: 30; display: flex; gap: 6px; align-items: center;
   background: var(--bg3); border: 1px solid var(--bg4); border-radius: 10px; padding: 6px 8px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.35);
+  box-shadow: none;
 }
 .chat-find input { flex: 1; min-width: 160px; background: var(--bg); border: 1px solid var(--border);
   border-radius: 7px; padding: 5px 8px; font-size: 12.5px; color: var(--text); }

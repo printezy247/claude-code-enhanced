@@ -622,7 +622,28 @@ const basenameOf = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() 
 /* ================= split view (#44) ================= */
 
 let splitTerm = null;
+let splitSession = null;  // { id } — the PTY behind the right-rail terminal
 let tasksTimer = null;   // auto-refresh while the tasks panel is visible
+
+/**
+ * Give the right-rail terminal a real PTY. Without one it rendered an empty
+ * grid and swallowed every keystroke.
+ */
+async function ensureSplitSession(cwd) {
+  if (splitSession) return splitSession;
+  const dir = String(cwd || '');
+  let res;
+  try {
+    res = await ccx.invoke('session:create', { cwd: dir, type: 'shell', cols: 100, rows: 24 });
+  } catch { return null; }
+  if (!res || !res.id) return null;
+  splitSession = { id: res.id };
+  if (splitTerm) {
+    splitTerm.onData((d) => ccx.send('session:write', { id: res.id, data: d }));
+    splitTerm.onResize(({ cols, rows }) => ccx.invoke('session:resize', { id: res.id, cols, rows }));
+  }
+  return splitSession;
+}
 
 function activeCwd() {
   // A chat's folder can change after its tab was registered; ask the chat first.
@@ -655,8 +676,12 @@ function renderSplit() {
   if (!body) return;
   if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null; }
   if (kind === 'terminal') {
+    // A live shell, not a bare xterm: the pane used to create a terminal with
+    // no PTY behind it, so it stayed blank and nothing could be typed. #feat-desktop-layout
     const active = state.sessions.get(state.activeId);
-    const cwd = active ? active.cwd : (state.settings && state.settings.defaultCwd) || '';
+    const chat = Chat.chats.get(state.activeId);
+    const cwd = (chat && chat.cwd) || (active && active.cwd)
+      || (state.settings && state.settings.defaultCwd) || '';
     if (!splitTerm) {
       splitTerm = new TermCtor({
         fontSize: 12, scrollback: 2000, cursorBlink: true, theme: TERM_THEME,
@@ -665,7 +690,6 @@ function renderSplit() {
       const fit = new FitCtor();
       splitTerm.loadAddon(fit);
       splitTerm._fit = fit;
-      splitTerm.open(body);
     }
     if (splitTerm.element && body.contains(splitTerm.element)) {
       // already attached; nothing to do
@@ -677,11 +701,32 @@ function renderSplit() {
       } catch { try { splitTerm.open(body); } catch { /* already opened */ } }
     }
     try { splitTerm._fit.fit(); } catch { /* hidden */ }
+    ensureSplitSession(cwd);
     return;
   }
   body.innerHTML = '';
   body.classList.remove('preview-body');
   const cwd2 = activeCwd();
+  if (kind === 'files') {
+    // File tree of the active folder, the way the desktop app's Files pane
+    // lists the working directory. #feat-desktop-layout
+    const list = el('div', 'task-rows');
+    list.appendChild(el('div', 'task-row hint', 'loading…'));
+    body.appendChild(list);
+    ccx.invoke('project:files', { cwd: cwd2 }).then((r) => {
+      if (!body.contains(list)) return;
+      list.innerHTML = '';
+      const files = (r && r.files) || [];
+      if (!files.length) { list.appendChild(el('div', 'task-row hint', 'no files')); return; }
+      for (const f of files.slice(0, 500)) {
+        const row = el('div', 'task-row mono', f);
+        row.title = cwd2 + '/' + f;
+        row.addEventListener('click', () => ccx.invoke('shell:reveal', { path: cwd2 + '/' + f }));
+        list.appendChild(row);
+      }
+    });
+    return;
+  }
   if (kind === 'changes') {
     ccx.invoke('git:info', { cwd: cwd2 }).then((r) => {
       const info = r.ok ? r : {};
@@ -796,6 +841,9 @@ function renderTasks(body, cwd) {
   const bar = el('div', 'task-bar');
   bar.appendChild(el('i'));
   ctx.appendChild(bar);
+  // Category breakdown, like the desktop app's context panel.
+  const ctxBreak = el('div', 'task-rows');
+  ctx.appendChild(ctxBreak);
   if (chat) ccx.invoke('chat:context', { id: chat.id }).then((r) => {
     if (!body.contains(ctx) || !r.ok || !r.usage) return;
     const u = r.usage;
@@ -805,7 +853,54 @@ function renderTasks(body, cwd) {
     fill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
     ctxRow.textContent = (u.totalTokens || 0).toLocaleString() + ' / '
       + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
+    ctxBreak.innerHTML = '';
+    for (const c of (u.categories || [])) {
+      if (!c || c.kind === 'free') continue;
+      const row = el('div', 'task-row hint');
+      const dot = el('span', 'ctx-dot');
+      if (c.color) dot.style.background = c.color;
+      row.appendChild(dot);
+      row.appendChild(el('span', '', c.name || 'other'));
+      row.appendChild(el('span', 'ctx-tokens', (Number(c.tokens) || 0).toLocaleString()));
+      ctxBreak.appendChild(row);
+    }
   });
+
+  // Connectors: the MCP servers this session can call tools on, with the
+  // per-session switch the desktop app offers. #feat-connector-tools
+  const conn = card('Connectors');
+  const connRows = el('div', 'task-rows');
+  conn.appendChild(connRows);
+  if (chat) {
+    ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).then((r) => {
+      if (!body.contains(conn)) return;
+      const servers = (r && r.ok && r.servers) || [];
+      connRows.innerHTML = '';
+      if (!servers.length) {
+        connRows.appendChild(el('div', 'task-row hint', 'no MCP servers in this session'));
+        return;
+      }
+      for (const sv of servers) {
+        const row = el('div', 'task-row hint');
+        const name = el('span', '', sv.name);
+        row.appendChild(name);
+        const tools = (sv.tools || []).length;
+        row.appendChild(el('span', 'ctx-tokens', tools ? tools + ' tools' : sv.status || ''));
+        const tog = el('button', 'btn small', sv.status === 'disabled' ? 'enable' : 'disable');
+        tog.addEventListener('click', async () => {
+          tog.disabled = true;
+          await ccx.invoke('chat:mcp', {
+            id: chat.id, op: 'toggle', name: sv.name, enabled: sv.status === 'disabled',
+          });
+          renderSplit();
+        });
+        row.appendChild(tog);
+        connRows.appendChild(row);
+      }
+    });
+  } else {
+    connRows.appendChild(el('div', 'task-row hint', 'start a chat to see connectors'));
+  }
 
   // Tasks: the agent's todo list from the active chat.
   const tasks = card('Tasks');
@@ -1664,6 +1759,34 @@ function mcpRow(s, removable, { quiet = false } = {}) {
   if ((s.state === 'failed' || s.state === 'degraded') && s.detail) row.appendChild(el('span', 'meta mcp-why', s.detail));
   // In the sign-in group the summary already says how; one line per row was noise.
   if (s.state === 'auth' && !quiet) row.appendChild(el('span', 'meta mcp-why', 'run /mcp in a session → Authenticate'));
+  // Attach to the open chat: the server's tools become callable straight away,
+  // the way the desktop app's connector panel behaves. #feat-connector-tools
+  if (removable) {
+    const link = el('button', 'btn small', 'connect to chat');
+    link.title = 'Attach this connector to the open chat so its tools can be called';
+    link.addEventListener('click', async () => {
+      link.disabled = true;
+      link.textContent = 'connecting…';
+      const chatId = state.activeId;
+      const chat = window.Chat && Chat.chats.get(chatId);
+      if (!chat) {
+        link.disabled = false; link.textContent = 'connect to chat';
+        toast('Open a chat first, then connect the connector.', 'err');
+        return;
+      }
+      const r = await ccx.invoke('chat:mcp', { id: chat.id, op: 'connect', name: s.name });
+      link.disabled = false; link.textContent = 'connect to chat';
+      if (r && r.ok) {
+        const added = (r.added || []).length;
+        const errs = (r.errors || []).length;
+        toast(added ? 'Connected ' + s.name + ' — tools are live' : (errs ? 'Could not connect ' + s.name : 'Already connected'), errs ? 'err' : 'ok');
+        refreshMcpList();
+      } else {
+        toast((r && r.error) || 'Failed to connect ' + s.name, 'err');
+      }
+    });
+    row.appendChild(link);
+  }
   if (removable) {
     const rm = el('button', 'btn small danger', 'Remove');
     rm.addEventListener('click', async () => {
@@ -2360,10 +2483,20 @@ function wireChrome() {
 }
 
 ccx.onPtyData(({ id, data }) => {
+  // The right-rail terminal has its own PTY, so its output lands here.
+  if (splitSession && splitSession.id === id) {
+    if (splitTerm) splitTerm.write(data);
+    return;
+  }
   const s = state.sessions.get(id);
   if (s) s.term.write(data);
 });
 ccx.onPtyExit(({ id, exitCode }) => {
+  if (splitSession && splitSession.id === id) {
+    splitSession = null;
+    if (splitTerm) splitTerm.write(`\r\n\x1b[2m[session exited · code ${exitCode}]\x1b[0m\r\n`);
+    return;
+  }
   const s = state.sessions.get(id);
   if (s) {
     s.alive = false;

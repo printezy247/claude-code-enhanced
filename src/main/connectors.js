@@ -183,6 +183,76 @@ function list(claudePath) {
   return run(claudePath, ['mcp', 'list'], { timeout: 120_000 });
 }
 
+/**
+ * `claude mcp get <name>` prints the server definition, not just its health:
+ *
+ *   github:
+ *     Scope: User config (available in all your projects)
+ *     Status: ✔ Connected
+ *     Type: http
+ *     URL: https://api.githubcopilot.com/mcp/
+ *     Headers:
+ *       Authorization: Bearer ghp_…
+ *
+ *   context7:
+ *     Type: stdio
+ *     Command: npx
+ *     Args: -y @upstash/context7-mcp
+ *
+ * The desktop version hands these definitions to the engine directly, so the
+ * connector's tools are callable in the session. Parse them into the SDK's
+ * McpServerConfig shape so CCE can do the same.
+ */
+function parseMcpDefinition(output) {
+  const text = String(output || '');
+  if (!/^\s*Type:\s*(http|sse|stdio)\s*$/m.test(text)) return null;
+  const type = (/^\s*Type:\s*(\w+)\s*$/m.exec(text) || [])[1];
+  const url = (/^\s*URL:\s*(\S+)\s*$/m.exec(text) || [])[1];
+  const command = (/^\s*Command:\s*(.+?)\s*$/m.exec(text) || [])[1];
+  const argsLine = (/^\s*Args:\s*(.*?)\s*$/m.exec(text) || [])[1];
+  const headers = {};
+  const inHeaders = /^\s*Headers:\s*$/m.test(text);
+  if (inHeaders) {
+    const after = text.slice(text.search(/^\s*Headers:\s*$/m));
+    for (const line of after.split('\n').slice(1)) {
+      if (!/^\s{4,}\S/.test(line)) break;      // a new section starts
+      const m = /^\s*(.+?):\s*(.*)$/.exec(line);
+      if (m && m[2]) headers[m[1].trim()] = m[2].trim();
+    }
+  }
+  if (type === 'stdio') {
+    if (!command) return null;
+    const args = argsLine ? argsLine.split(/\s+/).filter(Boolean) : [];
+    return { type: 'stdio', command, args };
+  }
+  if (!url) return null;
+  const cfg = { type: type === 'sse' ? 'sse' : 'http', url };
+  if (Object.keys(headers).length) cfg.headers = headers;
+  return cfg;
+}
+
+/**
+ * The definition of one configured server, in the SDK's McpServerConfig shape.
+ * @returns {Promise<{name: string, config: object}|null>}
+ */
+async function definition(claudePath, name) {
+  const res = await run(claudePath, ['mcp', 'get', name], { timeout: 60_000 });
+  const config = parseMcpDefinition(res.output);
+  return config ? { name: String(name), config } : null;
+}
+
+/** Every configured server that can be handed to the engine as a definition. */
+async function definitions(claudePath) {
+  const res = await list(claudePath);
+  const out = [];
+  for (const s of parseMcpList(res.output)) {
+    if (s.kind !== 'own') continue;              // plugin/claude.ai servers are managed elsewhere
+    const def = await definition(claudePath, s.name);
+    if (def) out.push(def);
+  }
+  return out;
+}
+
 // `claude mcp list` prints one health-checked line per server:
 //   name: https://host/mcp (HTTP) - ✔ Connected
 //   name: npx -y pkg - ✘ Failed to connect — CONNECTION_CLOSED: …
@@ -241,4 +311,7 @@ async function status(claudePath) {
   return { ok: true, servers, output: res.output };
 }
 
-module.exports = { PRESETS, add, addCustom, remove, list, status, parseMcpList, parseMcpGet, normalizeHeader };
+module.exports = {
+  PRESETS, add, addCustom, remove, list, status, parseMcpList, parseMcpGet, normalizeHeader,
+  parseMcpDefinition, definition, definitions,
+};

@@ -1393,10 +1393,22 @@ function registerIpc() {
   handle('chat:context', async ({ id }) => ({ usage: await chats.context(id) }));
   handle('chat:checkpoints', async ({ id }) => ({ checkpoints: chats.checkpoints(id) }));
   handle('chat:rewind', async ({ id, uuid, dryRun }) => await chats.rewind(id, uuid, { dryRun: !!dryRun }));
-  handle('chat:mcp', async ({ id, op, name, enabled }) => {
+  handle('chat:mcp', async ({ id, op, name, enabled, alwaysAsk }) => {
     if (op === 'status') return { servers: await chats.mcpStatus(id) };
     if (op === 'toggle') return { server: await chats.mcpToggle(id, name, enabled) };
     if (op === 'reconnect') return { server: await chats.mcpReconnect(id, name) };
+    // Connect a connector to the running session: its tools become callable
+    // immediately, the way the desktop app's connector panel behaves.
+    if (op === 'connect') {
+      const def = await connectors.definition(claudePath(), name);
+      if (!def) throw new Error('no definition for MCP server: ' + name);
+      const res = await chats.mcpConnect(id, def.name, def.config, !!alwaysAsk);
+      return { server: await chats.mcpStatus(id), added: res && res.added, errors: (res && res.errors) || [] };
+    }
+    if (op === 'disconnect') {
+      const res = await chats.mcpDisconnect(id, name);
+      return { server: await chats.mcpStatus(id), removed: res && res.removed, errors: (res && res.errors) || [] };
+    }
     throw new Error('unknown mcp op: ' + op);
   });
   handle('chat:agents', async ({ id }) => ({ agents: await chats.agents(id) }));
@@ -1694,7 +1706,9 @@ function registerIpc() {
     // Porcelain lines: "XY path" — the file list feeds the right-hand
     // tasks panel's Changes section.
     const files = dirty ? dirty.split('\n').filter(Boolean).slice(0, 60).map(l => l.slice(3)) : [];
-    return { remote, branch, repo, dirty: dirtyCount, files };
+    // `ok` matters: the right-hand panel drops the whole card when it is
+    // missing, so the git rows and the changed-file list never appeared.
+    return { ok: true, remote, branch, repo, dirty: dirtyCount, files };
   });
 
   // package.json scripts / Makefile targets for the ▶ run menu
