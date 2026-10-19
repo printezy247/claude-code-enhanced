@@ -351,7 +351,10 @@ class ChatManager extends EventEmitter {
       // by name. A translated provider does not serve it, so point them at the
       // model this chat already uses.
       const own = model || (providerInstance && providerInstance.model) || '';
-      if (own && !(providerInstance && providerInstance.smallFastModel)) {
+      if (providerInstance && providerInstance.smallFastModel) {
+        options.env.ANTHROPIC_SMALL_FAST_MODEL = String(providerInstance.smallFastModel);
+        delete options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL;
+      } else if (own) {
         options.env.ANTHROPIC_SMALL_FAST_MODEL = own;
         options.env.ANTHROPIC_DEFAULT_HAIKU_MODEL = own;
       }
