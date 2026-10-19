@@ -359,3 +359,43 @@ describe('control surface', () => {
     expect(ctrl.setModel).toHaveBeenCalledWith('sonnet');
   });
 });
+describe('permission decisions fail closed', () => {
+  it('denies an unrecognised decision instead of allowing it', async () => {
+    const { id } = await openChat();
+    const ctx = { signal: new AbortController().signal, suggestions: [], toolUseID: 't1' };
+    const p = lastOptions.canUseTool('Bash', { command: 'ls' }, ctx);
+    await until(() => events.some(e => e.kind === 'permission'));
+    const rid = events.find(e => e.kind === 'permission').requestId;
+    let res = null;
+    p.then(r => { res = r; });
+    mgr.answer(id, rid, 'bogus');
+    await until(() => res !== null);
+    expect(res.behavior).toBe('deny');
+  });
+
+  it('denies when no decision is given at all', async () => {
+    const { id } = await openChat();
+    const ctx = { signal: new AbortController().signal, suggestions: [], toolUseID: 't2' };
+    const p = lastOptions.canUseTool('Bash', { command: 'ls' }, ctx);
+    await until(() => events.some(e => e.kind === 'permission'));
+    const rid = events.find(e => e.kind === 'permission').requestId;
+    let res = null;
+    p.then(r => { res = r; });
+    mgr.answer(id, rid, undefined);
+    await until(() => res !== null);
+    expect(res.behavior).toBe('deny');
+  });
+
+  it('still allows an explicit allow', async () => {
+    const { id } = await openChat();
+    const ctx = { signal: new AbortController().signal, suggestions: [], toolUseID: 't3' };
+    const p = lastOptions.canUseTool('Bash', { command: 'ls' }, ctx);
+    await until(() => events.some(e => e.kind === 'permission'));
+    const rid = events.find(e => e.kind === 'permission').requestId;
+    let res = null;
+    p.then(r => { res = r; });
+    mgr.answer(id, rid, 'allow');
+    await until(() => res !== null);
+    expect(res.behavior).toBe('allow');
+  });
+});

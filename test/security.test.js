@@ -170,6 +170,38 @@ describe('main-process IPC guards', () => {
     expect(missing.ok).toBe(false);
   });
 
+  it('memory:read reports the .claude/CLAUDE.md file it actually read', async () => {
+    const stub = require('electron');
+    require('../src/main/main.js');
+    await new Promise(r => setTimeout(r, 200));
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-mem-'));
+    fs.mkdirSync(path.join(tmp, '.claude'), { recursive: true });
+    fs.writeFileSync(path.join(tmp, '.claude', 'CLAUDE.md'), 'project rules live here');
+    try {
+      const read = stub.__state.handlers.get('memory:read');
+      const r = await read(null, { cwd: tmp });
+      expect(r.ok).toBe(true);
+      expect(r.project.exists).toBe(true);
+      expect(r.project.content).toBe('project rules live here');
+      expect(r.project.path).toBe(path.join(tmp, '.claude', 'CLAUDE.md'));
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it('chat:create refuses a cwd that no longer exists', async () => {
+    const stub = require('electron');
+    require('../src/main/main.js');
+    await new Promise(r => setTimeout(r, 200));
+    const create = stub.__state.handlers.get('chat:create');
+    const r = await create(null, { cwd: '/definitely/not/here-' + Date.now() });
+    expect(r.ok).toBe(false);
+    expect(String(r.error)).toMatch(/directory not found/);
+  });
+
   it('preload exposes only channels that main actually handles, and blocks the rest', async () => {
     const stub = require('electron');
     require('../src/preload/preload.js');
