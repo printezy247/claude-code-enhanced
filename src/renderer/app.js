@@ -311,6 +311,16 @@ function renderConversationList() {
 }
 
 /** One conversation row: preview, age, and a ▾ actions menu. */
+// An already-open transcript must be focused, not re-opened: a second live
+// session on the same file races two writers on one transcript.
+function focusIfOpen(sessionId) {
+  if (!sessionId) return false;
+  const hit = [...tabRegistry.entries()].find(([, m]) => m.sessionId === sessionId);
+  if (!hit) return false;
+  activateSession(hit[0]);
+  return true;
+}
+
 function convoRow(s, cwd) {
   const row = el('div', 'convo-row');
   row.title = (s.preview || '(empty session)') + '\n' + cwd;
@@ -348,7 +358,7 @@ function convoRow(s, cwd) {
   row.setAttribute('role', 'button');
   row.setAttribute('aria-label', (s.preview || 'Conversation') + ' — ' + basenameOf(cwd));
   const openIt = () => {
-    Chat.createSession({ cwd, resume: s.sessionId });
+    if (!focusIfOpen(s.sessionId)) Chat.createSession({ cwd, resume: s.sessionId });
     toggleConversations(false);
     switchView('conversations');
   };
@@ -376,7 +386,7 @@ function openConvoMenu(anchor, s, cwd) {
     return b;
   };
   add('Open', 'resume live', () => {
-    Chat.createSession({ cwd, resume: s.sessionId });
+    if (!focusIfOpen(s.sessionId)) Chat.createSession({ cwd, resume: s.sessionId });
     toggleConversations(false);
     switchView('conversations');
   });
