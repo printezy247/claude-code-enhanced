@@ -25,6 +25,7 @@ async function* sseLines(body) {
     }
   }
   buf += dec.decode();   // flush any partial multi-byte sequence
+  buf = buf.replace(/\r$/, '');   // strip a trailing lone CR on the final partial line
   if (buf) yield buf;
 }
 
