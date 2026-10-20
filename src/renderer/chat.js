@@ -200,6 +200,15 @@ const Chat = (() => {
       permCount: 0, ctxTimer: null, spent: 0, hooks: [], bgTasks: new Map(),
       pendingMsgs: [], effort: '', suggested: false,
       pendingResults: new Map(),
+      // Live output of a running task that beat its card. #feat-live-output
+      pendingLive: new Map(),
+      // The live tail per tool call. Kept on the chat, not on the card, so a
+      // card that is re-rendered (a streamed call is redrawn when the final
+      // assistant message lands) still shows the running output.
+      liveTasks: new Map(),
+      // The unfiltered text of a result the engine compacted for the model.
+      // #feat-output-filter
+      toolOriginals: new Map(),
     };
     chats.set(id, chat);
     chat.msgs.addEventListener('scroll', () => {
@@ -2431,6 +2440,10 @@ const Chat = (() => {
       if (evt.reason === 'interrupted') toast('Pending permission cleared (interrupted)', '');
     }
     else if (kind === 'task') onTaskEvent(chat, evt.msg);
+    // The live tail of a running background task's output. #feat-live-output
+    else if (kind === 'tool-output') applyLiveOutput(chat, evt.toolUseId, evt.text, evt.done);
+    // The unfiltered text behind a result the engine compacted. #feat-output-filter
+    else if (kind === 'tool-original') storeToolOriginal(chat, evt.toolUseId, evt.text);
     else if (kind === 'hook') onHookEvent(chat, evt.msg);
     else if (kind === 'auth') onAuth(chat, evt);
     else if (kind === 'interrupted') {
@@ -3303,6 +3316,11 @@ const Chat = (() => {
       body.appendChild(det);
       const d = body.querySelector('.monaco-diff');
       if (d && d.__init && !body.classList.contains('hidden')) d.__init();
+      // The body was just rebuilt, so the output it held is gone with it. Put
+      // back whatever belongs there: the final result if the card resolved,
+      // the live tail if the task is still running. #feat-live-output
+      if (ctx.status === 'done' || ctx.status === 'err') renderOutput(chat, toolUseId, ctx);
+      else if (ctx.liveText) writeLiveOutput(ctx);
     }
     head.addEventListener('click', () => {
       const opening = body.classList.contains('hidden');
@@ -3324,6 +3342,26 @@ const Chat = (() => {
       ctx.output = early.text;
       ctx.isError = early.isError;
     }
+    // Live output that arrived before this card (or before the card was
+    // re-rendered) waits in chat.liveTasks: apply it now instead of losing
+    // the output. #feat-live-output
+    const earlyLive = chat.liveTasks && chat.liveTasks.get(toolUseId);
+    if (earlyLive) {
+      chat.pendingLive?.delete(toolUseId);
+      writeLiveOutput(ctx, earlyLive.text);
+      ctx.liveDone = earlyLive.done;
+      if (!earlyLive.done) ctx.body.classList.remove('hidden');
+    }
+    // The unfiltered text wins over a buffered (compacted) result: the card
+    // must show what the command really printed. #feat-output-filter
+    const earlyOriginal = chat.toolOriginals && chat.toolOriginals.get(toolUseId);
+    if (earlyOriginal !== undefined) {
+      ctx.output = earlyOriginal;
+      // Keep the entry when the result has not landed yet — resolveToolResult
+      // consumes it there. A result that already arrived is terminal, so the
+      // original is used up.
+      if (early) chat.toolOriginals.delete(toolUseId);
+    }
     chat.tools.set(toolUseId, ctx);
     if (ctx.agentId) {
       chat.agentTasks = chat.agentTasks || new Map();
@@ -3339,6 +3377,91 @@ const Chat = (() => {
     // first they must resolve instead — see the earlyResolved guards there.
     if (early) ctx.earlyResolved = true;
     return ctx;
+  }
+
+  /* ---------------- live tool output ---------------- */
+
+  /**
+   * The live tail of a running background task's output. #feat-live-output
+   *
+   * `text` is a tail (the engine's get_task_output returns the last 8 KiB),
+   * not the whole output: the authoritative text arrives later as the
+   * tool_result, which overwrites it.
+   */
+  function applyLiveOutput(chat, toolUseId, text, done) {
+    const ctx = chat.tools.get(toolUseId);
+    // The tail belongs to the tool call, not to one card: keep it on the chat
+    // so a card that is redrawn still shows the running output.
+    chat.liveTasks = chat.liveTasks || new Map();
+    const live = chat.liveTasks.get(toolUseId) || { text: '', done: false };
+    if (text !== undefined && text !== null) live.text = String(text);
+    if (done) live.done = true;
+    chat.liveTasks.set(toolUseId, live);
+    if (chat.liveTasks.size > 50) {
+      const oldest = chat.liveTasks.keys().next().value;
+      // Never drop the entry we just wrote: re-setting an existing key keeps
+      // its old position, so it can be the oldest.
+      if (oldest !== toolUseId) chat.liveTasks.delete(oldest);
+    }
+    if (!ctx) {
+      // The frame beat its card: buffer it so the output is not lost. #4
+      chat.pendingLive = chat.pendingLive || new Map();
+      if (text) chat.pendingLive.set(toolUseId, String(text));
+      // A card that never comes is a lost cause — do not buffer forever.
+      if (chat.pendingLive.size > 50) {
+        const oldest = chat.pendingLive.keys().next().value;
+        chat.pendingLive.delete(oldest);
+      }
+      return;
+    }
+    // The result is terminal: a late tail must not overwrite the text the
+    // engine actually reported.
+    if (ctx.status !== 'done' && ctx.status !== 'err') {
+      writeLiveOutput(ctx, text);
+      // While the task runs the card opens itself so the user sees the output
+      // live. Once it is done the card keeps whatever state the user left it in.
+      if (!ctx.liveDone) ctx.body.classList.remove('hidden');
+      scrollDownSoft(chat);
+    }
+    if (done) ctx.liveDone = true;
+  }
+
+  /** Write the live text into the card's output element (same element and
+   *  insertion point renderOutput uses). */
+  function writeLiveOutput(ctx, text) {
+    if (text !== undefined && text !== null) ctx.liveText = String(text);
+    if (!ctx.liveText) return;
+    let out = ctx.body.querySelector('.tool-output');
+    if (!out) {
+      out = el('pre', 'tool-output mono');
+      ctx.body.insertBefore(out, ctx.body.firstChild);
+    }
+    out.textContent = ctx.liveText.slice(0, 8000);
+  }
+
+  /**
+   * The unfiltered text of a result the main process compacted for the model.
+   * The card shows this one — the model saw the short version. #feat-output-filter
+   */
+  function storeToolOriginal(chat, toolUseId, text) {
+    chat.toolOriginals = chat.toolOriginals || new Map();
+    const value = String(text == null ? '' : text);
+    chat.toolOriginals.set(toolUseId, value);
+    // The result is terminal: an original nobody consumes is dead weight.
+    if (chat.toolOriginals.size > 50) {
+      const oldest = chat.toolOriginals.keys().next().value;
+      // Never drop the entry we just wrote: re-setting an existing key keeps
+      // its old position, so it can be the oldest.
+      if (oldest !== toolUseId) chat.toolOriginals.delete(oldest);
+    }
+    // The result already landed (the frames arrived out of order): the card's
+    // output is the only place the original can still show.
+    const ctx = chat.tools.get(toolUseId);
+    if (ctx && ctx.output !== undefined) {
+      ctx.output = value;
+      chat.toolOriginals.delete(toolUseId);
+      renderOutput(chat, toolUseId);
+    }
   }
 
   /** Fill the todo drawer from a TodoWrite tool input. #5 */
@@ -3556,6 +3679,11 @@ const Chat = (() => {
 
   function resolveToolResult(chat, block) {
     const ctx = chat.tools.get(block.tool_use_id);
+    // The main process compacts a big result for the model and sends the
+    // original text separately: the card shows the original. #feat-output-filter
+    const original = chat.toolOriginals && chat.toolOriginals.get(block.tool_use_id);
+    const text = original !== undefined ? original : resultText(block.content);
+    if (original !== undefined) chat.toolOriginals.delete(block.tool_use_id);
     if (!ctx) {
       // No card yet for this id: either the result beat its card (buffer it so
       // the output is not lost — #4) or the model emitted the call as prose
@@ -3564,7 +3692,7 @@ const Chat = (() => {
         noteToolOutcome(chat.model, false);
       }
       chat.pendingResults = chat.pendingResults || new Map();
-      chat.pendingResults.set(block.tool_use_id, { text: resultText(block.content), isError: !!block.is_error });
+      chat.pendingResults.set(block.tool_use_id, { text, isError: !!block.is_error });
       // Don't hold stale entries: a card that never comes is a lost cause.
       if (chat.pendingResults.size > 50) {
         const oldest = chat.pendingResults.keys().next().value;
@@ -3577,19 +3705,22 @@ const Chat = (() => {
     // too or the live card would never resolve.
     if (ctx.name === 'TodoWrite') renderTodos(chat, ctx.input);
     else if (!block.is_error && /^Task(Create|Update|List)$/.test(ctx.name)) applyTaskTool(chat, ctx.name, ctx.input || {}, resultText(block.content));
-    ctx.output = resultText(block.content);
+    ctx.output = text;
     ctx.isError = !!block.is_error;
     ctx.setStatus(block.is_error ? 'err' : 'done');
   }
 
-  function renderOutput(chat, toolUseId) {
-    const ctx = chat.tools.get(toolUseId);
+  function renderOutput(chat, toolUseId, knownCtx) {
+    const ctx = knownCtx || chat.tools.get(toolUseId);
     if (!ctx) return;
     let out = ctx.body.querySelector('.tool-output');
     if (!out) {
-      out = el('pre', 'tool-output mono' + (ctx.isError ? ' tool-err' : ''));
+      out = el('pre', 'tool-output mono');
       ctx.body.insertBefore(out, ctx.body.firstChild);
     }
+    // The live tail may have created the element first: keep the error
+    // styling in step with the result that is on screen.
+    out.classList.toggle('tool-err', !!ctx.isError);
     const text = ctx.output || (ctx.status === 'running' ? '…' : '(no output)');
     // The engine spills a big result to a file and leaves a short notice here.
     // Showing only the notice looks like the tool returned nothing, so offer the

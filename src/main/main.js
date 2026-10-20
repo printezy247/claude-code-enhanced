@@ -41,17 +41,26 @@ const proxyToken = require('crypto').randomBytes(24).toString('hex');
 let proxyPort = null;
 const ChatManager = require('./chats');
 const { modelContext } = require('./modelcontext');
+const { WindowRegistry, route } = require('./windows');
 
 const store = new Store();
 const auth = new AuthStore();
 const sessions = new SessionManager();
 // The manager needs the proxy token so proxied chats authenticate.
 const chats = new ChatManager({ proxyToken, contextOf: modelContext });
+// Which window owns which chat and terminal session. The managers are global
+// — their ids come from one counter each — so a second manager would mint the
+// same ids and two windows would fight over one chat. This registry is what
+// keeps the windows apart. #feat-multi-window
+const windowRegistry = new WindowRegistry();
 
 providers.useAuth(auth);
 let win = null;
 let tray = null;
 let claudeInfo = { found: false, path: '', version: '' };
+// When the CLI was last looked for. A window that regains focus re-probes,
+// but not more than once every 10 s. #feat-multi-window
+let lastClaudeProbe = Date.now();
 
 // Resolved secrets per provider uid, so the proxy (which resolves synchronously
 // per request) never has to touch disk or hit the network mid-turn.
@@ -345,7 +354,7 @@ function proxyBaseUrl(provider) {
 
 // ---------- window ----------------------------------------------------------
 function createWindow() {
-  win = new BrowserWindow({
+  const w = new BrowserWindow({
     width: 1280,
     height: 820,
     minWidth: 960,
@@ -363,45 +372,77 @@ function createWindow() {
       spellcheck: false,
     },
   });
-  win.setMenuBarVisibility(false);
+  w.setMenuBarVisibility(false);
+  // The newest window is the active one: the tray, the dialogs and the
+  // notifications act on it. #feat-multi-window
+  win = w;
+  // Everything this window opens belongs to it.
+  const wcId = windowRegistry.add(w);
+  // Re-probe whenever a window regains focus while we still think the CLI is
+  // absent. Startup can race a claude self-update (the ~/.local/bin/claude
+  // symlink is briefly dangling), which stuck the "CLI not found" banner
+  // until restart. Every window gets the probe, not just the first one.
+  w.on('focus', () => {
+    if (claudeInfo.found || Date.now() - lastClaudeProbe < 10_000) return;
+    lastClaudeProbe = Date.now();
+    detectClaude().then((info) => {
+      if (!info.found) return;
+      claudeInfo = info;
+      if (w && !w.isDestroyed()) w.webContents.send('claude:detected', info);
+    });
+  });
 
   // A markdown link in a chat must not navigate the app away from itself, and a
   // target=_blank link must not open a second window with our preload attached.
   // Both happened before: clicking a link replaced the whole UI and left the
   // user with a blank page. #6
-  win.webContents.on('will-navigate', (event, url) => {
+  w.webContents.on('will-navigate', (event, url) => {
     const target = new URL(url);
     if (target.protocol === 'file:') return;                 // our own page
     event.preventDefault();
     if (/^https?:$/.test(target.protocol)) shell.openExternal(url);
   });
-  win.webContents.setWindowOpenHandler(({ url }) => {
+  w.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
     return { action: 'deny' };
   });
   // Refuse every permission request the renderer could make: the app needs no
   // camera, mic, geolocation or notifications permission from the page itself.
-  win.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  w.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
 
-  win.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
+  w.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
     .catch((err) => console.error('[cce] page load failed:', String(err)));
-  win.on('closed', () => { win = null; });
+  w.on('closed', () => {
+    if (win === w) win = null;
+    // A window that goes away takes its chats and its terminals with it: the
+    // engine processes and the ptys would otherwise outlive their owner and
+    // keep burning tokens nobody sees. #feat-multi-window
+    for (const chatId of windowRegistry.itemsOf(wcId, 'chats')) {
+      try { chats.close(chatId); } catch { /* already gone */ }
+      windowRegistry.release('chats', chatId);
+    }
+    for (const sid of windowRegistry.itemsOf(wcId, 'sessions')) {
+      try { sessions.kill(sid); } catch { /* already gone */ }
+      windowRegistry.release('sessions', sid);
+    }
+    windowRegistry.remove(wcId);
+  });
   // Close-to-tray: the engine processes keep running, so closing the window
   // should not kill a 40-minute turn. Opt-in in Settings. #46
-  win.on('close', (e) => {
+  w.on('close', (e) => {
     if (!store.settings.closeToTray || app.isQuitting) return;
     e.preventDefault();
     // Hiding with no clickable tray item stranded the app: no window, no icon,
     // only pkill could end it. Without a tray, minimize instead.
-    if (!trayUsable()) { win.minimize(); return; }
-    win.hide();
+    if (!trayUsable()) { w.minimize(); return; }
+    w.hide();
     tray.displayBalloon({
       title: 'Claude Code Enhanced',
       content: 'Still running in the tray. Click the tray icon to reopen, or press Ctrl+Q in the window to quit.',
     });
   });
   // Ctrl+Q quits for real from the window, tray or no tray.
-  win.webContents.on('before-input-event', (e, input) => {
+  w.webContents.on('before-input-event', (e, input) => {
     if (input.type === 'keyDown' && input.control && !input.shift && !input.alt && String(input.key).toLowerCase() === 'q') {
       e.preventDefault();
       app.isQuitting = true;
@@ -410,18 +451,18 @@ function createWindow() {
   });
 
   if (process.env.CCE_SMOKE) {
-    win.webContents.on('did-fail-load', (_e, code, desc) =>
+    w.webContents.on('did-fail-load', (_e, code, desc) =>
       console.log('CCE_SMOKE: did-fail-load', code, desc));
-    win.webContents.on('render-process-gone', (_e, details) =>
+    w.webContents.on('render-process-gone', (_e, details) =>
       console.log('CCE_SMOKE: render-process-gone', JSON.stringify(details)));
-    win.webContents.on('console-message', (_e, level, msg, line, source) =>
+    w.webContents.on('console-message', (_e, level, msg, line, source) =>
       console.log(`CCE_SMOKE: renderer[${level}] ${source}:${line} ${msg}`));
-    win.webContents.once('did-finish-load', () => {
+    w.webContents.once('did-finish-load', () => {
       console.log('CCE_SMOKE: page loaded');
-      win.webContents.executeJavaScript('window.__CCE_SMOKE = true').catch(() => {});
+      w.webContents.executeJavaScript('window.__CCE_SMOKE = true').catch(() => {});
       setTimeout(() => {
-        if (!win || win.isDestroyed()) return;
-        win.webContents.executeJavaScript(
+        if (!w || w.isDestroyed()) return;
+        w.webContents.executeJavaScript(
           '(async () => { const out = { monaco: !!(window.monaco && window.monaco.editor), diff: "n/a" };'
           + ' try { const d = document.createElement("div");'
           + ' d.style.cssText = "position:absolute;left:-9999px;width:500px;height:200px";'
@@ -462,28 +503,28 @@ function createWindow() {
       }, 4000);
       const shoot2 = async (file) => {
         try {
-          if (!win || win.isDestroyed()) return;
-          await win.webContents.executeJavaScript('document.querySelector("#convo-drop").classList.add("hidden")');
+          if (!w || w.isDestroyed()) return;
+          await w.webContents.executeJavaScript('document.querySelector("#convo-drop").classList.add("hidden")');
           await new Promise(r => setTimeout(r, 300));
-          const img = await win.webContents.capturePage();
+          const img = await w.webContents.capturePage();
           fs.writeFileSync(file, img.toPNG());
           console.log('CCE_SMOKE: shot2', file);
         } catch (e) { console.error('CCE_SMOKE: capture2 failed:', e); }
       };
       const shootNarrow = async (file) => {
         try {
-          if (!win || win.isDestroyed()) return;
-          win.setSize(960, 640);
+          if (!w || w.isDestroyed()) return;
+          w.setSize(960, 640);
           await new Promise(r => setTimeout(r, 500));
-          fs.writeFileSync(file, (await win.webContents.capturePage()).toPNG());
-          win.setSize(1280, 860);
+          fs.writeFileSync(file, (await w.webContents.capturePage()).toPNG());
+          w.setSize(1280, 860);
           console.log('CCE_SMOKE: shot-narrow', file);
         } catch (e) { console.error('CCE_SMOKE: narrow capture failed:', e); }
       };
       const shoot = async (file) => {
         try {
-          if (!win || win.isDestroyed()) return;
-          const img = await win.webContents.capturePage();
+          if (!w || w.isDestroyed()) return;
+          const img = await w.webContents.capturePage();
           fs.writeFileSync(file, img.toPNG());
           console.log('CCE_SMOKE: shot', file);
         } catch (e) { console.error('CCE_SMOKE: capture failed:', e); }
@@ -493,7 +534,7 @@ function createWindow() {
         // Turn matrix: local / anthropic-protocol / openai-proxy providers each
         // send one real prompt; capture the pane's errors and reply.
         setTimeout(async () => {
-          const probe = await win.webContents.executeJavaScript(
+          const probe = await w.webContents.executeJavaScript(
             '(async () => {'
             + ' const all = await ccx.invoke("providers:all");'
             + ' const want = ["Ollama", "OpenRouter", "Mistral", "Cloudflare", "Google"];'
@@ -530,7 +571,7 @@ function createWindow() {
         // "env is not defined" ReferenceError that the default-provider smoke
         // run could never reach.
         setTimeout(() => {
-          win.webContents.executeJavaScript(
+          w.webContents.executeJavaScript(
             '(async () => {'
             + ' const all = await ccx.invoke("providers:all");'
             + ' const p = (all.instances || []).find(x => x.protocol === "openai");'
@@ -554,7 +595,7 @@ function createWindow() {
       if (process.env.CCE_SMOKE_TESTALL) {
         // Test every configured provider with its real credential and list models.
         setTimeout(async () => {
-          const probe = await win.webContents.executeJavaScript(
+          const probe = await w.webContents.executeJavaScript(
             '(async () => {'
             + ' const all = await ccx.invoke("providers:all");'
             + ' const rows = [];'
@@ -573,7 +614,7 @@ function createWindow() {
         // Regression probe for the provider settings surface: catalog, auth
         // status, local scan, and the Connect/detail modals rendering.
         setTimeout(async () => {
-          const probe = await win.webContents.executeJavaScript(
+          const probe = await w.webContents.executeJavaScript(
             '(async () => {'
             + ' const cat = await ccx.invoke("catalog:all");'
             + ' const md = await ccx.invoke("modelsdev:stats");'
@@ -607,7 +648,7 @@ function createWindow() {
         // Regression probe for the Add-provider dialog: switches presets and
         // reports whether template fields populate and key-only layout holds.
         setTimeout(() => {
-          win.webContents.executeJavaScript(
+          w.webContents.executeJavaScript(
             '(async () => {'
             + ' openProviderEditor(null);'
             + ' const dlg = document.querySelector("#modal-root .modal");'
@@ -645,14 +686,66 @@ function createWindow() {
       }
     });
   }
+  // The caller needs the id: it is how a window is told apart from another
+  // one in the ownership registry. #feat-multi-window
+  return { id: wcId, win: w };
 }
 
 // ---------- ipc --------------------------------------------------------------
+// The event is passed on to the handler: only the sender's webContents id
+// proves which window a call came from, and ownership is what makes a
+// cross-window call refuseable. #feat-multi-window
 function handle(channel, fn) {
-  ipcMain.handle(channel, async (_e, payload) => {
-    try { return { ok: true, ...(await fn(payload || {})) }; }
+  ipcMain.handle(channel, async (e, payload) => {
+    try { return { ok: true, ...(await fn(payload || {}, e)) }; }
     catch (err) { return { ok: false, error: String(err.message || err) }; }
   });
+}
+
+// ---------- window ownership -------------------------------------------------
+/** The id of the window that sent an IPC message, or null. */
+function senderWindowId(e) {
+  const id = e && e.sender && e.sender.id;
+  return typeof id === 'number' ? id : null;
+}
+
+/** The window an IPC message came from, falling back to the active one. */
+function senderWin(e) {
+  const id = senderWindowId(e);
+  if (id == null) return win;
+  return windowRegistry.winOf(id) || win;
+}
+
+/**
+ * Refuse an operation on a chat or session another window owns.
+ *
+ * Returns the error message, or null when the call is allowed. An item
+ * nobody owns is allowed: it predates the registry, or it was created before
+ * this window existed.
+ */
+function refuseForeign(kind, itemId, e) {
+  if (!itemId) return null;
+  const owner = windowRegistry.ownerOf(kind, itemId);
+  if (owner == null) return null;
+  const from = senderWindowId(e);
+  if (from != null && from !== owner) {
+    return 'That ' + (kind === 'chats' ? 'chat' : 'session') + ' belongs to another window.';
+  }
+  return null;
+}
+
+/**
+ * Wrap a handler so it refuses an item another window owns.
+ *
+ * The id of the chat or session is the first thing every one of these
+ * payloads carries, so one wrapper covers them all.
+ */
+function owned(kind, fn) {
+  return async (payload, e) => {
+    const refusal = refuseForeign(kind, payload && payload.id, e);
+    if (refusal) throw new Error(refusal);
+    return fn(payload, e);
+  };
 }
 
 function registerIpc() {
@@ -665,6 +758,15 @@ function registerIpc() {
     claude: claudeInfo,
     home: os.homedir(),
     };
+  });
+
+  // ----- windows -----
+  // A second application window. The renderer asks; the main process owns the
+  // bookkeeping, because only it knows which window owns which chat.
+  handle('window:new', async () => {
+    const created = createWindow();
+    try { created.win.focus(); } catch { /* the window may not be ready yet */ }
+    return { id: created.id, count: windowRegistry.size };
   });
 
   // Release ping (#47): compares the packaged version with the GitHub release.
@@ -695,7 +797,7 @@ function registerIpc() {
   // Provider failover chain: retry a failed turn across the next provider in
   // the list. The engine reads ANTHROPIC_BASE_URL at spawn time, so failover
   // works between turns (a chat restart), not mid-turn. #42
-  handle('provider:failover', async ({ id }) => {
+  handle('provider:failover', owned('chats', async ({ id }, e) => {
     const chat = chats.chats.get(id);
     if (!chat) throw new Error('chat not found');
     const order = Array.isArray(store.settings.failoverChain) ? store.settings.failoverChain : [];
@@ -721,8 +823,13 @@ function registerIpc() {
       claudePath: (store.settings.claudePath || '').trim() || undefined,
       anthropicBaseUrl: usesProxy(next) ? proxyBaseUrl(next) : undefined,
     });
+    // The replacement chat belongs to the window that asked for the failover.
+    // #feat-multi-window
+    const owner = senderWindowId(e);
+    if (owner != null) windowRegistry.claim(owner, 'chats', created.id);
+    windowRegistry.release('chats', id);
     return { ok: true, from: current, to: next.uid, newId: created.id, provider: providers.publicInstance(next) };
-  });
+  }));
 
   handle('providers:save', async ({ instance }) => {
     if (!instance || !instance.name) throw new Error('provider name required');
@@ -1147,7 +1254,7 @@ function registerIpc() {
   });
 
   // ----- sessions -----
-  handle('session:create', async ({ cwd, type = 'claude', providerUid, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '' }) => {
+  handle('session:create', async ({ cwd, type = 'claude', providerUid, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '' }, e) => {
     const dir = (cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
     if (!fs.existsSync(dir)) throw new Error(`directory not found: ${dir}`);
 
@@ -1174,6 +1281,9 @@ function registerIpc() {
     if (!env.TERM) env.TERM = 'xterm-256color';
 
     const created = sessions.create({ cwd: dir, command, args, env, cols, rows, type });
+    // The terminal belongs to the window that opened it. #feat-multi-window
+    const owner = senderWindowId(e);
+    if (owner != null) windowRegistry.claim(owner, 'sessions', created.id);
     if (initText) {
       setTimeout(() => sessions.write(created.id, initText), 1500);
     }
@@ -1181,15 +1291,25 @@ function registerIpc() {
   });
 
   handle('session:list', async () => ({ sessions: sessions.list() }));
-  ipcMain.on('session:write', (_e, { id, data }) => sessions.write(id, data));
-  handle('session:resize', async ({ id, cols, rows }) => { sessions.resize(id, cols, rows); return {}; });
-  handle('session:kill', async ({ id }) => { sessions.kill(id); return {}; });
+  ipcMain.on('session:write', (e, { id, data }) => {
+    if (refuseForeign('sessions', id, e)) return;
+    sessions.write(id, data);
+  });
+  handle('session:resize', owned('sessions', async ({ id, cols, rows }) => { sessions.resize(id, cols, rows); return {}; }));
+  handle('session:kill', owned('sessions', async ({ id }) => {
+    sessions.kill(id);
+    windowRegistry.release('sessions', id);
+    return {};
+  }));
 
   sessions.on('data', (id, data) => {
-    if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data });
+    // The output belongs to the window that opened the session. #feat-multi-window
+    const target = route(windowRegistry, 'sessions', id, win);
+    if (target && !target.isDestroyed()) target.webContents.send('pty:data', { id, data });
   });
   sessions.on('exit', (id, exitCode) => {
-    if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
+    const target = route(windowRegistry, 'sessions', id, win);
+    if (target && !target.isDestroyed()) target.webContents.send('pty:exit', { id, exitCode });
   });
 
   // ----- chats (Agent SDK) -----
@@ -1206,14 +1326,19 @@ function registerIpc() {
     // Finished turns, but only when the window is in the background: a
     // notification for work the user is already watching is noise. #36
     if (evt && evt.kind === 'status' && evt.busy === false && store.settings.notifyOnDone !== false) {
-      const focused = win && !win.isDestroyed() && win.isFocused();
+      // The window that owns the chat decides whether the user is watching.
+      // #feat-multi-window
+      const owner = route(windowRegistry, 'chats', id, win);
+      const focused = owner && !owner.isDestroyed() && owner.isFocused();
       if (!focused && !finished.has(id)) {
         finished.add(id);
         notify('Claude finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.');
       }
     }
     if (evt && evt.kind === 'status' && evt.busy === true) finished.delete(id);
-    if (win && !win.isDestroyed()) win.webContents.send('chat:event', { id, ...evt });
+    // The event belongs to the window that owns the chat. #feat-multi-window
+    const target = route(windowRegistry, 'chats', id, win);
+    if (target && !target.isDestroyed()) target.webContents.send('chat:event', { id, ...evt });
   });
   // Chats already busy when the window loses focus must not notify on finish.
   const finished = new Set();
@@ -1228,7 +1353,7 @@ function registerIpc() {
   }
 
   // Local-model pre-warm helpers live in ./localmodels (tested by scripts/check.js).
-  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree }) => {
+  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree }, e) => {
     // A stale or renamed cwd otherwise reaches the engine, which dies with the
     // misleading "CLI path wrong / auth expired" watchdog message.
     if (cwd) {
@@ -1291,6 +1416,9 @@ function registerIpc() {
       // auto-wiring the system CLI stalls (SDK expects its matching engine version).
       claudePath: (store.settings.claudePath || '').trim() || undefined,
     });
+    // The chat belongs to the window that opened it. #feat-multi-window
+    const owner = senderWindowId(e);
+    if (owner != null) windowRegistry.claim(owner, 'chats', created.id);
     // Report back the model actually in force (auto-picked or typo-corrected)
     // so the renderer's dropdown doesn't keep showing 'provider default'.
     return { ...created, model: model || '', worktree };
@@ -1300,9 +1428,9 @@ function registerIpc() {
     }
   });
   handle('chat:last', async ({ cwd }) => ({ sessionId: chats.lastChatFor(cwd) }));
-  handle('chat:send', async ({ id, text, blocks }) => chats.send(id, text, blocks));
-  handle('chat:interrupt', async ({ id }) => { await chats.interrupt(id); return {}; });
-  handle('chat:set-model', async ({ id, model }) => {
+  handle('chat:send', owned('chats', async ({ id, text, blocks }) => chats.send(id, text, blocks)));
+  handle('chat:interrupt', owned('chats', async ({ id }) => { await chats.interrupt(id); return {}; }));
+  handle('chat:set-model', owned('chats', async ({ id, model }) => {
     // Mid-chat model switches need the same local pre-warm as chat creation:
     // without it, Ollama serves the model at its default (tiny) context.
     const chat = chats.chats.get(id);
@@ -1320,11 +1448,11 @@ function registerIpc() {
     }
     const r = await chats.setModel(id, model);
     return { ...(r && typeof r === 'object' ? r : null), model };
-  });
+  }));
   // Switch a live chat to another saved provider. The engine reads its env at
   // spawn, so the session cannot be re-pointed mid-chat — recreate on the
   // target provider and resume the same conversation. #feat-provider-toggle
-  handle('chat:set-provider', async ({ id, uid }) => {
+  handle('chat:set-provider', owned('chats', async ({ id, uid }, e) => {
     const chat = chats.chats.get(id);
     if (!chat) return { ok: false, error: 'chat not found' };
     if (chat.busy) return { ok: false, error: 'a turn is running — stop it before switching provider' };
@@ -1346,20 +1474,24 @@ function registerIpc() {
       claudePath: (store.settings.claudePath || '').trim() || undefined,
       anthropicBaseUrl: usesProxy(next) ? proxyBaseUrl(next) : undefined,
     });
+    // The new chat replaces the old one in the same window. #feat-multi-window
+    const owner = senderWindowId(e);
+    if (owner != null) windowRegistry.claim(owner, 'chats', created.id);
     // Close the old engine AFTER the new one exists so an abort frame from the
     // old session cannot race the recreate.
     try { chats.close(id); } catch { /* already gone */ }
+    windowRegistry.release('chats', id);
     return {
       ok: true, id: created.id,
       provider: providers.publicInstance(next),
       model: created.model || next.model || '',
       permissionMode: created.permissionMode || chat.permissionMode,
     };
-  });
-  handle('chat:set-mode', async ({ id, mode }) => chats.setMode(id, mode));
+  }));
+  handle('chat:set-mode', owned('chats', async ({ id, mode }) => chats.setMode(id, mode)));
   // Per-chat reasoning effort and thinking budget. The settings existed in
   // chats.create but had no runtime control and no UI at all. #38
-  handle('chat:effort', async ({ id, effort, thinking }) => {
+  handle('chat:effort', owned('chats', async ({ id, effort, thinking }) => {
     const c = chats.chats.get(id);
     if (!c) throw new Error('chat not found');
     const out = {};
@@ -1377,25 +1509,23 @@ function registerIpc() {
       out.thinking = t;
     }
     return out;
-  });
+  }));
   // Model list straight from the engine (display names, context sizes) instead
   // of the hard-coded opus/sonnet/haiku options. #39
-  handle('chat:supported-models', async ({ id }) => {
-    const c = chats.chats.get(id);
-    if (!c) return { models: [] };
-    try { return { models: await c.q.supportedModels() }; }
-    catch (err) { return { models: [], error: String(err.message || err) }; }
-  });
-  handle('chat:permission-answer', async ({ id, requestId, decision, answers, message }) => chats.answer(id, requestId, decision, answers, message));
-  handle('chat:elicit-answer', async ({ id, requestId, action, content }) => chats.answerElicitation(id, requestId, action, content));
-  handle('chat:close', async ({ id }) => { chats.close(id); return {}; });
+  handle('chat:permission-answer', owned('chats', async ({ id, requestId, decision, answers, message }) => chats.answer(id, requestId, decision, answers, message)));
+  handle('chat:elicit-answer', owned('chats', async ({ id, requestId, action, content }) => chats.answerElicitation(id, requestId, action, content)));
+  handle('chat:close', owned('chats', async ({ id }) => {
+    chats.close(id);
+    windowRegistry.release('chats', id);
+    return {};
+  }));
   handle('chat:skills', async ({ cwd }) => ({ skills: chats.scanSkills(cwd) }));
-  handle('chat:commands', async ({ id }) => ({ commands: await chats.commands(id) }));
+  handle('chat:commands', owned('chats', async ({ id }) => ({ commands: await chats.commands(id) })));
   // Desktop-parity controls
-  handle('chat:context', async ({ id }) => ({ usage: await chats.context(id) }));
-  handle('chat:checkpoints', async ({ id }) => ({ checkpoints: chats.checkpoints(id) }));
-  handle('chat:rewind', async ({ id, uuid, dryRun }) => await chats.rewind(id, uuid, { dryRun: !!dryRun }));
-  handle('chat:mcp', async ({ id, op, name, enabled, tools, policy }) => {
+  handle('chat:context', owned('chats', async ({ id }) => ({ usage: await chats.context(id) })));
+  handle('chat:checkpoints', owned('chats', async ({ id }) => ({ checkpoints: chats.checkpoints(id) })));
+  handle('chat:rewind', owned('chats', async ({ id, uuid, dryRun }) => await chats.rewind(id, uuid, { dryRun: !!dryRun })));
+  handle('chat:mcp', owned('chats', async ({ id, op, name, enabled, tools, policy }) => {
     if (op === 'status') return { servers: await chats.mcpStatus(id) };
     if (op === 'toggle') return { server: await chats.mcpToggle(id, name, enabled) };
     if (op === 'reconnect') return { server: await chats.mcpReconnect(id, name) };
@@ -1411,11 +1541,17 @@ function registerIpc() {
       return { server: await chats.mcpStatus(id), added: res && res.added, errors: (res && res.errors) || [] };
     }
     throw new Error('unknown mcp op: ' + op);
-  });
-  handle('chat:agents', async ({ id }) => ({ agents: await chats.agents(id) }));
-  handle('chat:styles', async ({ id }) => ({ styles: await chats.styles(id) }));
-  handle('chat:flags', async ({ id, patch }) => ({ applied: await chats.applyFlags(id, patch) }));
-  handle('chat:stopTask', async ({ id, taskId }) => await chats.stopTask(id, taskId));
+  }));
+  handle('chat:agents', owned('chats', async ({ id }) => ({ agents: await chats.agents(id) })));
+  handle('chat:styles', owned('chats', async ({ id }) => ({ styles: await chats.styles(id) })));
+  handle('chat:flags', owned('chats', async ({ id, patch }) => ({ applied: await chats.applyFlags(id, patch) })));
+  handle('chat:stopTask', owned('chats', async ({ id, taskId }) => await chats.stopTask(id, taskId)));
+  handle('chat:supported-models', owned('chats', async ({ id }) => {
+    const c = chats.chats.get(id);
+    if (!c) return { models: [] };
+    try { return { models: await c.q.supportedModels() }; }
+    catch (err) { return { models: [], error: String(err.message || err) }; }
+  }));
   // Runtime tools skills rely on (bun/uv run skill scripts, git imports skills).
   handle('tools:check', async () => await tools.check());
 
@@ -1526,7 +1662,7 @@ function registerIpc() {
   handle('chat:transcript', async ({ cwd, sessionId }) => (await chats.transcriptVia(cwd, sessionId)) || chats.transcript(cwd, sessionId));
   handle('chat:delete', async ({ cwd, sessionId }) => chats.deleteSession(cwd, sessionId));
   handle('chat:deleteFolder', async ({ cwd }) => chats.deleteFolder(cwd));
-  handle('chat:fork', async ({ id }) => chats.forkParams(id));
+  handle('chat:fork', owned('chats', async ({ id }) => chats.forkParams(id)));
 
   // ----- session management through the SDK (#52) -----
   // Rename, tag (archive) and branch-from-a-message all used to be impossible
@@ -1818,8 +1954,10 @@ function registerIpc() {
 
 
   // ----- dialogs / shell -----
-  handle('dialog:pickDir', async ({ defaultPath }) => {
-    const res = await dialog.showOpenDialog(win, {
+  handle('dialog:pickDir', async ({ defaultPath }, e) => {
+    // The picker belongs to the window that asked for it, not to whichever
+    // window happens to be newest. #feat-multi-window
+    const res = await dialog.showOpenDialog(senderWin(e), {
       properties: ['openDirectory'],
       defaultPath: defaultPath || store.settings.defaultCwd || os.homedir(),
     });
@@ -1831,8 +1969,8 @@ function registerIpc() {
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const MAX_TEXT_BYTES = 400 * 1024;
   const IMAGE_TYPES = /^image\/(png|jpeg|gif|webp)$/;
-  handle('dialog:pickFiles', async () => {
-    const res = await dialog.showOpenDialog(win, {
+  handle('dialog:pickFiles', async (_payload, e) => {
+    const res = await dialog.showOpenDialog(senderWin(e), {
       properties: ['openFile', 'multiSelections'],
       defaultPath: store.settings.defaultCwd || os.homedir(),
     });
@@ -1909,21 +2047,18 @@ function registerIpc() {
 }
 
 // ---------- lifecycle ---------------------------------------------------------
-// Single-instance guard. Without it a second launch binds no proxy (fixed port
-// taken) and the user gets a window where every OpenAI-protocol chat silently
-// fails. See issue #22.
+// Single-instance guard. The proxy binds an ephemeral port now, so a second
+// launch would not have fought over it — but a second *process* would have
+// meant a second proxy, a second config and a second tray icon. One process,
+// many windows: the second launch opens a window in the running app instead
+// of starting a rival one. #feat-multi-window
 const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    if (win && !win.isDestroyed()) {
-      if (win.isMinimized()) win.restore();
-      // Closed-to-tray leaves the window hidden; focus() on a hidden window is
-      // a no-op, so clicking the desktop icon looked like "the app won't open".
-      if (!win.isVisible()) win.show();
-      win.focus();
-    }
+    // A second launch opens a second window in the running app. #feat-multi-window
+    createWindow();
   });
 
   app.whenReady().then(async () => {
@@ -1974,19 +2109,6 @@ if (!gotLock) {
       if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
       if (win && !win.isDestroyed()) win.webContents.send('claude:detected', claudeInfo);
     });
-    // Startup can race a claude self-update (the ~/.local/bin/claude symlink is
-    // briefly dangling), which stuck the "CLI not found" banner until restart.
-    // Re-probe whenever the window regains focus while we still think it's absent.
-    let lastClaudeProbe = Date.now();
-    win.on('focus', () => {
-      if (claudeInfo.found || Date.now() - lastClaudeProbe < 10_000) return;
-      lastClaudeProbe = Date.now();
-      detectClaude().then((info) => {
-        if (!info.found) return;
-        claudeInfo = info;
-        if (win && !win.isDestroyed()) win.webContents.send('claude:detected', info);
-      });
-    });
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });
   }).catch((err) => {
     console.error('[cce] startup failed:', (err && err.stack) || err);
@@ -1995,3 +2117,9 @@ if (!gotLock) {
 
 app.on('window-all-closed', () => { if (!store.settings.closeToTray) app.quit(); });
 app.on('before-quit', () => { app.isQuitting = true; sessions.killAll(); chats.killAll(); });
+
+// ---------- exports ---------------------------------------------------------
+// The main process is the app's entry point, but it is also the only place
+// that knows which window owns what — so the state is exported for the tests
+// that pin the routing rules. #feat-multi-window
+module.exports = { windowRegistry, chats, sessions, store, createWindow };

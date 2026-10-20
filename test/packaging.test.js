@@ -24,7 +24,9 @@ describe('app icon ships with the app', () => {
 
 describe('closing never strands the app', () => {
   it('minimizes instead of hiding when there is no usable tray item', () => {
-    expect(main).toMatch(/if \(!trayUsable\(\)\) \{ win\.minimize\(\); return; \}/);
+    // The window is a local `w` inside createWindow() — the module-level `win`
+    // is the newest window, which is not necessarily this one.
+    expect(main).toMatch(/if \(!trayUsable\(\)\) \{ w\.minimize\(\); return; \}/);
   });
 
   it('Ctrl+Q quits from the window', () => {

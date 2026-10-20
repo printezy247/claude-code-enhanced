@@ -12,6 +12,7 @@ const { EventEmitter } = require('events');
 const providers = require('./providers');
 const { promptAppend: bootstrapPrompt } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
+const { compactBashOutput, toolResultText, DEFAULT_MAX_CHARS } = require('./toolfilter');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
@@ -37,6 +38,11 @@ function loadSdk() {
 }
 
 const PERM_TIMEOUT_MS = 6 * 60_000;
+// How often a running shell task is polled for its output tail, and how long
+// the first poll waits. The first one is quick so the card starts filling
+// almost at once; the rest are steady. #feat-live-output
+const TASK_POLL_FIRST_MS = 250;
+const TASK_POLL_MS = 700;
 const PERM_TIMEOUT_MESSAGE = 'The user did not answer this permission request within 6 minutes (they may be away). '
   + 'Do not retry this call or a variant of it. Finish anything that needs no permission, then stop and tell '
   + 'the user exactly which action is waiting for their approval.';
@@ -219,6 +225,11 @@ class ChatManager extends EventEmitter {
     this.nextId = 1;
     this.permSeq = 1;
     this.lastCreatedId = null;
+    // taskId -> { chatId, toolUseId, timer, text }: the running shell tasks
+    // whose output is streamed into the tool card. #feat-live-output
+    this.taskPolls = new Map();
+    // toolUseId -> taskId: the join key between a task and its tool call.
+    this.taskByTool = new Map();
   }
 
   /** The SDK for this manager: the injected fake, else the real module. */
@@ -296,6 +307,34 @@ class ChatManager extends EventEmitter {
     // Fail faster than the 300s default when the engine stream stalls mid-turn
     // (long Bash runs keep streaming, so a dead body means a dead turn).
     options.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = '180000';
+    // Shell-output filter. The model reads a compacted result; the card in the
+    // UI keeps the original, so nothing is hidden from the user. #feat-output-filter
+    if (!settings || settings.outputFilter !== 'off') {
+      const maxChars = Number(settings && settings.outputFilterMaxChars) || DEFAULT_MAX_CHARS;
+      options.hooks = {
+        PostToolUse: [{
+          matcher: 'Bash',
+          hooks: [async (input) => {
+            const name = String((input && input.tool_name) || '');
+            if (name !== 'Bash') return {};
+            const original = toolResultText(input.tool_response);
+            if (!original) return {};
+            const command = (input.tool_input && input.tool_input.command) || '';
+            const r = compactBashOutput({ output: original, command, maxChars });
+            // Nothing was cut: the model already reads everything, and the
+            // card would show the same text twice.
+            if (!r.compacted) return {};
+            this.emit('event', id, { kind: 'tool-original', toolUseId: input.tool_use_id, text: r.original });
+            return {
+              hookSpecificOutput: {
+                hookEventName: 'PostToolUse',
+                updatedToolOutput: r.text,
+              },
+            };
+          }],
+        }],
+      };
+    }
     if (model) options.model = model;
     if (resume && resume !== 'last') options.resume = resume;
     if (resume === 'last') {
@@ -565,8 +604,15 @@ class ChatManager extends EventEmitter {
           if (msg.type === 'auth_status') {
             this.emit('event', id, { kind: 'auth', authenticating: !!msg.isAuthenticating, output: msg.output || [], error: msg.error || '' });
           }
+          // A finished tool call ends the live stream of its output. #feat-live-output
+          if (msg.type === 'user' && msg.message && Array.isArray(msg.message.content)) {
+            for (const b of msg.message.content) {
+              if (b && b.type === 'tool_result' && b.tool_use_id) this._endTaskByTool(id, b.tool_use_id);
+            }
+          }
           if (msg.type === 'system' && TASK_SUBTYPES.includes(msg.subtype)) {
             this.emit('event', id, { kind: 'task', msg });
+            this._onTaskFrame(id, chat, msg);
           } else if (msg.type === 'system' && (msg.subtype === 'hook_started' || msg.subtype === 'hook_response')) {
             this.emit('event', id, { kind: 'hook', msg });
           }
@@ -1103,8 +1149,99 @@ class ChatManager extends EventEmitter {
     return { ok: true };
   }
 
+  // ---------- live shell output ---------------------------------------------
+  /**
+   * A frame about a background task.
+   *
+   * The engine does not stream a tool's output: a Bash call ends with one
+   * tool_result frame. A shell task the engine knows about can be read while
+   * it runs, though — get_task_output returns the tail it wrote so far — so
+   * the card fills while the command is still running. #feat-live-output
+   */
+  _onTaskFrame(id, chat, msg) {
+    const taskId = msg && msg.task_id;
+    if (!taskId) return;
+    if (msg.subtype === 'task_started') {
+      // Without a tool_use_id there is no card to write into.
+      if (!msg.tool_use_id) return;
+      if (!chat || !chat.q || typeof chat.q.getTaskOutput !== 'function') return;
+      this._followTask(id, chat, taskId, msg.tool_use_id);
+      return;
+    }
+    // The task is over: the tool_result that follows carries the real text.
+    if (msg.subtype === 'task_notification') this._endTask(id, taskId, true);
+  }
+
+  /**
+   * Poll a running task for its output tail.
+   *
+   * The first poll is quick so the card starts filling almost at once; the
+   * rest are steady. One poll per task: a second start for the same task
+   * would double the control requests the engine sees.
+   */
+  _followTask(id, chat, taskId, toolUseId) {
+    if (this.taskPolls.has(taskId)) return;
+    const entry = { chatId: id, taskId, toolUseId, timer: null, text: '', stopped: false };
+    this.taskPolls.set(taskId, entry);
+    this.taskByTool.set(toolUseId, taskId);
+
+    const poll = async () => {
+      if (entry.stopped) return;
+      let res = null;
+      try {
+        res = await chat.q.getTaskOutput(taskId);
+      } catch (err) {
+        // The engine refuses this task — it is not a shell task, or it is
+        // already gone. Stop asking: a refused poll must not become a loop.
+        this._endTask(id, taskId, false);
+        return;
+      }
+      if (entry.stopped) return;
+      const text = res && typeof res.output === 'string' ? res.output : '';
+      if (text) {
+        entry.text = text;
+        this.emit('event', id, { kind: 'tool-output', toolUseId, text, done: false });
+      }
+      if (entry.stopped) return;
+      entry.timer = setTimeout(poll, TASK_POLL_MS);
+    };
+    entry.timer = setTimeout(poll, TASK_POLL_FIRST_MS);
+  }
+
+  /**
+   * Stop polling a task.
+   *
+   * `emitDone` tells the card that the live stream is over: the tool_result
+   * that follows carries the authoritative text, and the card must not keep
+   * showing a stale tail as if it were current.
+   */
+  _endTask(id, taskId, emitDone) {
+    const entry = this.taskPolls.get(taskId);
+    if (!entry) return;
+    this.taskPolls.delete(taskId);
+    if (entry.timer) clearTimeout(entry.timer);
+    entry.stopped = true;
+    if (this.taskByTool.get(entry.toolUseId) === taskId) this.taskByTool.delete(entry.toolUseId);
+    if (emitDone) {
+      this.emit('event', id, { kind: 'tool-output', toolUseId: entry.toolUseId, text: entry.text, done: true });
+    }
+  }
+
+  /** The tool call ended: its live output stops. #feat-live-output */
+  _endTaskByTool(id, toolUseId) {
+    const taskId = this.taskByTool.get(toolUseId);
+    if (!taskId) return;
+    this._endTask(id, taskId, true);
+  }
+
   close(id) {
     const chat = this.chats.get(id);
+    // A poll that outlives its chat would keep asking the engine for output
+    // nobody is watching. #feat-live-output
+    for (const [taskId, entry] of [...this.taskPolls]) {
+      if (entry.chatId !== id) continue;
+      this._endTask(id, taskId, false);
+    }
     // Deny anything still waiting so no promise is left hanging after close. #20
     for (const entry of this._permsOf(id)) {
       if (this._dropPerm(entry.requestId)) {
