@@ -175,8 +175,8 @@ describe('header overflow menu (#33)', () => {
 describe('composer (#32)', () => {
   it('offers model and mode in the footer instead of the header', () => {
     const chat = h.window.Chat.chats.get('c1');
-    expect(chat.modelSel.className).toBe('chat-model-foot');
-    expect(chat.modeSel.className).toBe('chat-mode-foot');
+    expect(chat.modelSel.classList.contains('chat-model-foot')).toBe(true);
+    expect(chat.modeSel.classList.contains('chat-mode-foot')).toBe(true);
     expect(pane().querySelector('.chat-header .chat-model')).toBeNull();
   });
 

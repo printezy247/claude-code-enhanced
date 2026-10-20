@@ -124,7 +124,17 @@
     <div id="splitter" title="Drag to resize"></div>
     <section id="splitpane">
       <div class="split-head">
-        <select id="split-kind" class="skills-search" style="max-width:200px">
+        <div class="split-tabs" role="tablist" aria-label="Side panel views">
+          <button class="split-tab" role="tab" data-kind="tasks" title="Overview — session, context, connectors, tasks, changes"><span data-icon="layers"></span><span>Overview</span></button>
+          <button class="split-tab" role="tab" data-kind="changes" title="Working tree changes"><span data-icon="branch"></span><span>Changes</span></button>
+          <button class="split-tab" role="tab" data-kind="files" title="Project files"><span data-icon="folder"></span><span>Files</span></button>
+          <button class="split-tab" role="tab" data-kind="terminal" title="Terminal in this folder"><span data-icon="terminal"></span><span>Terminal</span></button>
+          <button class="split-tab" role="tab" data-kind="diff" title="Last edit diff"><span data-icon="pencil"></span><span>Diff</span></button>
+          <button class="split-tab" role="tab" data-kind="preview" title="Preview a dev server"><span data-icon="globe"></span><span>Preview</span></button>
+        </div>
+        <span class="spacer"></span>
+        <button class="icon-btn" id="btn-split-refresh" title="Refresh" aria-label="Refresh the side panel"><span data-icon="refresh"></span></button>
+        <select id="split-kind" class="sr-only" tabindex="-1" aria-hidden="true">
           <option value="tasks">Overview</option>
           <option value="terminal">Terminal</option>
           <option value="files">Files</option>
@@ -132,7 +142,7 @@
           <option value="diff">Last edit diff</option>
           <option value="preview">Preview</option>
         </select>
-        <button class="btn small" id="btn-split-close" title="Close split view">✕</button>
+        <button class="icon-btn" id="btn-split-close" title="Close the side panel (Alt+V)" aria-label="Close the side panel"><span data-icon="close"></span></button>
       </div>
       <div class="split-body" id="split-body"></div>
     </section>

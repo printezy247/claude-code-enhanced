@@ -236,6 +236,45 @@ const CONVO_BUCKETS = [
   ['Older', Infinity],
 ];
 
+/*
+ * Categories: All · Open · Pinned · Archived. Pins are a per-machine
+ * convenience (localStorage); archive is a tag on the transcript itself.
+ */
+let convoView = 'all';
+function lsGet(key, fallback) {
+  try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
+}
+function lsSet(key, value) {
+  try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* private mode */ }
+}
+function pinnedSessions() { return new Set(lsGet('cce.pinned', [])); }
+function togglePin(sessionId) {
+  const set = pinnedSessions();
+  if (set.has(sessionId)) set.delete(sessionId); else set.add(sessionId);
+  lsSet('cce.pinned', [...set]);
+  return set.has(sessionId);
+}
+function convoGroupBy() {
+  return (document.querySelector('#convo-drop .convo-groupby') || {}).value || 'folder';
+}
+function paintConvoTabs(pinned, openIds) {
+  const tabs = document.querySelectorAll('#convo-drop .convo-tab');
+  const counts = {
+    all: convoSessions.filter((s) => s.tag !== 'archived').length,
+    open: convoSessions.filter((s) => openIds.has(s.sessionId)).length,
+    pinned: convoSessions.filter((s) => pinned.has(s.sessionId)).length,
+    archived: convoSessions.filter((s) => s.tag === 'archived').length,
+  };
+  for (const t of tabs) {
+    const on = t.dataset.view === convoView;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+    const n = t.querySelector('.ct-n');
+    if (n) n.textContent = String(counts[t.dataset.view] || 0);
+  }
+}
+function collapsedFolders() { return new Set(lsGet('cce.convoCollapsed', [])); }
+
 function renderConversationList() {
   // Async data can land after the window is gone; bail out instead of throwing.
   if (typeof document === 'undefined') return;
@@ -248,10 +287,20 @@ function renderConversationList() {
 
   // Archived conversations stay on disk but out of the way until asked for.
   const showArchived = (document.querySelector('#convo-drop .convo-archived') || {}).checked === true;
-  let items = convoSessions.filter((s) => (showArchived || s.tag !== 'archived') && (!q
-    || String(s.preview || '').toLowerCase().includes(q)
-    || String(s.cwd || s.folder || '').toLowerCase().includes(q)));
+  const view = convoView;
+  const pinned = pinnedSessions();
+  const openIds = new Set([...tabRegistry.values()].map((m) => m.sessionId).filter(Boolean));
+  let items = convoSessions.filter((s) => {
+    if (view === 'archived') { if (s.tag !== 'archived') return false; }
+    else if (!showArchived && s.tag === 'archived') return false;
+    if (view === 'pinned' && !pinned.has(s.sessionId)) return false;
+    if (view === 'open' && !openIds.has(s.sessionId)) return false;
+    return !q || String(s.preview || '').toLowerCase().includes(q)
+      || String(s.cwd || s.folder || '').toLowerCase().includes(q)
+      || String(s.branch || '').toLowerCase().includes(q);
+  });
   if (folder) items = items.filter((s) => String(s.cwd || s.folder || '~') === folder);
+  paintConvoTabs(pinned, openIds);
 
   // Sort first, then bucket: the bucket pass preserves this order inside groups.
   if (sort === 'new') items.sort((a, b) => b.mtime - a.mtime);
@@ -265,7 +314,49 @@ function renderConversationList() {
       : items.length + ' of ' + convoSessions.length + ' conversations';
   }
   if (!items.length) {
-    root.appendChild(el('div', 'hint', q || folder ? 'Nothing matches.' : 'No conversations yet.'));
+    const empty = { pinned: 'Nothing pinned — use ▾ → Pin on a conversation you come back to.',
+      open: 'No open conversations.', archived: 'Nothing archived.' }[view];
+    root.appendChild(el('div', 'convo-empty hint', q || folder ? 'Nothing matches.' : (empty || 'No conversations yet.')));
+    return;
+  }
+
+  // Pinned rows sit in their own block on top of the All view.
+  if (view === 'all' && !q) {
+    const pins = items.filter((s) => pinned.has(s.sessionId));
+    if (pins.length) {
+      const sec = el('div', 'convo-group convo-pinned');
+      const head = el('div', 'convo-sec');
+      head.appendChild(elIcon('span', 'cs-name', CCEIcons.svg('star', 12) + ' Pinned'));
+      head.appendChild(el('span', 'cs-path', ''));
+      head.appendChild(el('span', 'cs-count', String(pins.length)));
+      sec.appendChild(head);
+      const listEl = el('div', 'convo-rows');
+      for (const s of pins) listEl.appendChild(convoRow(s, String(s.cwd || s.folder || '~')));
+      sec.appendChild(listEl);
+      root.appendChild(sec);
+      items = items.filter((s) => !pinned.has(s.sessionId));
+    }
+  }
+
+  // Group by date: one list, time buckets, folder shown on each row.
+  if (convoGroupBy() === 'date') {
+    const now0 = Date.now();
+    let prev = 0;
+    for (const [label, within] of CONVO_BUCKETS) {
+      const inBucket = items.filter((s) => now0 - s.mtime <= within && now0 - s.mtime > prev);
+      prev = within;
+      if (!inBucket.length) continue;
+      const sec = el('div', 'convo-group');
+      const head = el('div', 'convo-sec');
+      head.appendChild(el('span', 'cs-name', label));
+      head.appendChild(el('span', 'cs-path', ''));
+      head.appendChild(el('span', 'cs-count', String(inBucket.length)));
+      sec.appendChild(head);
+      const listEl = el('div', 'convo-rows');
+      for (const s of inBucket) listEl.appendChild(convoRow(s, String(s.cwd || s.folder || '~')));
+      sec.appendChild(listEl);
+      root.appendChild(sec);
+    }
     return;
   }
 
@@ -282,15 +373,29 @@ function renderConversationList() {
     byNewest ? b[1][0].mtime - a[1][0].mtime : a[1][0].mtime - b[1][0].mtime);
 
   const now = Date.now();
+  const collapsed = collapsedFolders();
   for (const [cwd, rows] of ordered) {
     const sec = el('div', 'convo-group');
-    const head = el('div', 'convo-sec');
+    const head = el('button', 'convo-sec');
+    const isCollapsed = collapsed.has(cwd) && !q;
+    head.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+    head.appendChild(elIcon('span', 'cs-caret', CCEIcons.svg('chevron', 12)));
     head.appendChild(el('span', 'cs-name', basenameOf(cwd)));
     head.appendChild(el('span', 'cs-path', cwd === '~' ? '~' : cwd));
     head.appendChild(el('span', 'cs-count', String(rows.length)));
-    head.title = cwd;
+    head.title = cwd + ' — click to collapse / expand';
     sec.appendChild(head);
     const listEl = el('div', 'convo-rows');
+    if (isCollapsed) { listEl.classList.add('hidden'); sec.classList.add('collapsed'); }
+    head.addEventListener('click', () => {
+      const set = collapsedFolders();
+      const nowCollapsed = !set.has(cwd);
+      if (nowCollapsed) set.add(cwd); else set.delete(cwd);
+      lsSet('cce.convoCollapsed', [...set]);
+      listEl.classList.toggle('hidden', nowCollapsed);
+      sec.classList.toggle('collapsed', nowCollapsed);
+      head.setAttribute('aria-expanded', nowCollapsed ? 'false' : 'true');
+    });
     sec.appendChild(listEl);
 
     // Time buckets inside the folder, preserving the chosen sort within a bucket.
@@ -339,8 +444,14 @@ function convoRow(s, cwd) {
     row.classList.add('is-open');
     row.appendChild(el('span', 'chip open-chip', 'open'));
   }
+  if (s.tag === 'archived') row.appendChild(el('span', 'chip arch-chip', 'archived'));
+  if (pinnedSessions().has(s.sessionId)) {
+    const star = elIcon('span', 'pin-mark', CCEIcons.svg('star', 12));
+    star.title = 'Pinned';
+    row.appendChild(star);
+  }
 
-  const menu = el('button', 'convo-more', '▾');
+  const menu = elIcon('button', 'convo-more', CCEIcons.svg('dots', 15));
   menu.title = 'Conversation actions';
   // A glyph is not an accessible name; `title` alone is unreliable, so the
   // button is named for assistive tech too. #53
@@ -376,9 +487,12 @@ function openConvoMenu(anchor, s, cwd) {
   const menu = el('div', 'convo-menu');
   menu.setAttribute('role', 'menu');
   menu.setAttribute('aria-label', 'Conversation actions');
+  const ICONS = { Open: 'play', Fork: 'fork', 'Rename…': 'pencil', Archive: 'archive', Unarchive: 'archive',
+    Transcript: 'notebook', Export: 'download', 'New chat in this folder': 'plus', Delete: 'trash', Pin: 'star', Unpin: 'star' };
   const add = (label, hint, run) => {
     const b = el('button', 'convo-menu-item');
     b.setAttribute('role', 'menuitem');
+    b.appendChild(elIcon('span', 'cm-ico', CCEIcons.svg(ICONS[label] || 'dots', 14)));
     b.appendChild(el('span', 'cm-label', label));
     if (hint) b.appendChild(el('span', 'cm-hint', hint));
     b.addEventListener('click', () => { menu.remove(); run(); });
@@ -394,6 +508,12 @@ function openConvoMenu(anchor, s, cwd) {
     Chat.createSession({ cwd, resume: s.sessionId, fork: true });
     toggleConversations(false);
     switchView('conversations');
+  });
+  const isPinned = pinnedSessions().has(s.sessionId);
+  add(isPinned ? 'Unpin' : 'Pin', isPinned ? 'remove from the top' : 'keep it on top', () => {
+    const on = togglePin(s.sessionId);
+    renderConversationList();
+    toast(on ? 'Pinned' : 'Unpinned', 'ok');
   });
   add('Rename…', 'name it yourself', async () => {
     const title = await window.askText('Name this conversation', s.preview || '', { okLabel: 'Rename' });
@@ -412,13 +532,9 @@ function openConvoMenu(anchor, s, cwd) {
       const next = s.tag === 'archived' ? '' : 'archived';
       const r = await ccx.invoke('session:tag', { sessionId: s.sessionId, tag: next, cwd });
       if (!r.ok) return toast(r.error || 'failed', 'err');
-      if (next) {
-        convoSessions = convoSessions.filter((x) => x.sessionId !== s.sessionId);
-      } else {
-        s.tag = '';
-      }
+      s.tag = next;
       renderConversationList();
-      toast(next ? 'Archived — find it under “show archived”' : 'Restored', 'ok');
+      toast(next ? 'Archived — find it under the Archived tab' : 'Restored', 'ok');
     });
   add('Transcript', 'read it first', () => showTranscript(s, cwd));
   add('Export', 'markdown file', async () => {
@@ -573,6 +689,8 @@ function toggleConversations(force) {
   }
 }
 
+window.toggleConversations = toggleConversations;
+
 /** Build the dropdown panel once; all list markup lives here, not in index.html. */
 function ensureConvoDrop() {
   let drop = document.querySelector('#convo-drop');
@@ -580,8 +698,25 @@ function ensureConvoDrop() {
   drop = el('div', 'hidden');
   drop.id = 'convo-drop';
   drop.innerHTML = `
+    <div class="convo-title">
+      <span class="ico" data-icon="layers"></span><b>Conversations</b>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="btn-convo-new" title="New chat (Ctrl+Shift+T)" aria-label="New chat"><span data-icon="plus"></span></button>
+      <button class="icon-btn" id="btn-convo-refresh" title="Reload from disk" aria-label="Reload"><span data-icon="refresh"></span></button>
+      <button class="icon-btn" id="btn-convo-hide" title="Close (Ctrl+B)" aria-label="Close"><span data-icon="close"></span></button>
+    </div>
+    <div class="convo-tabs" role="tablist" aria-label="Conversation categories">
+      <button class="convo-tab active" role="tab" data-view="all">All <span class="ct-n">0</span></button>
+      <button class="convo-tab" role="tab" data-view="open">Open <span class="ct-n">0</span></button>
+      <button class="convo-tab" role="tab" data-view="pinned">Pinned <span class="ct-n">0</span></button>
+      <button class="convo-tab" role="tab" data-view="archived">Archived <span class="ct-n">0</span></button>
+    </div>
     <div class="convo-head">
-      <input class="convo-search" type="text" placeholder="Search conversations…" />
+      <input class="convo-search" type="text" placeholder="Search text, folder or branch…" />
+      <select class="convo-groupby" title="Group by">
+        <option value="folder">by project</option>
+        <option value="date">by date</option>
+      </select>
       <select class="convo-sort" title="Sort order">
         <option value="new">newest first</option>
         <option value="old">oldest first</option>
@@ -590,17 +725,24 @@ function ensureConvoDrop() {
       <select class="convo-filter" title="Filter by project folder">
         <option value="">all folders</option>
       </select>
-      <button class="btn small" id="btn-convo-refresh" title="Reload from disk">↻</button>
-      <button class="btn small" id="btn-convo-hide" title="Close (Ctrl+B)">✕</button>
     </div>
     <div class="convo-list" id="convo-list"></div>
-    <label class="convo-archived-wrap">
-      <input class="convo-archived" type="checkbox" /> show archived
-    </label>
-    <div class="convo-foot" id="convo-foot"></div>`;
+    <div class="convo-foot">
+      <span id="convo-foot"></span>
+      <label class="convo-archived-wrap" title="Also list archived conversations under All">
+        <input class="convo-archived" type="checkbox" /> include archived
+      </label>
+    </div>`;
   document.querySelector('#view-conversations').appendChild(drop);
+  paintDeclaredIcons(drop);
   drop.querySelector('#btn-convo-refresh').addEventListener('click', () => loadConversationList());
   drop.querySelector('#btn-convo-hide').addEventListener('click', () => toggleConversations(false));
+  drop.querySelector('#btn-convo-new').addEventListener('click', () => { toggleConversations(false); document.querySelector('#qa-new')?.click(); });
+  for (const t of drop.querySelectorAll('.convo-tab')) {
+    t.addEventListener('click', () => { convoView = t.dataset.view; renderConversationList(); });
+  }
+  drop.querySelector('.convo-groupby').value = lsGet('cce.convoGroupBy', 'folder');
+  drop.querySelector('.convo-groupby').addEventListener('change', (e) => { lsSet('cce.convoGroupBy', e.target.value); renderConversationList(); });
   drop.querySelector('.convo-search').addEventListener('input', () => renderConversationList());
   drop.querySelector('.convo-sort').addEventListener('change', () => renderConversationList());
   drop.querySelector('.convo-filter').addEventListener('change', () => renderConversationList());
@@ -674,6 +816,11 @@ function renderSplit() {
   const kind = document.querySelector('#split-kind')?.value || 'tasks';
   const body = document.querySelector('#split-body');
   if (!body) return;
+  document.querySelectorAll('#splitpane .split-tab').forEach((t) => {
+    const on = t.dataset.kind === kind;
+    t.classList.toggle('active', on);
+    t.setAttribute('aria-selected', on ? 'true' : 'false');
+  });
   if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null; }
   if (kind === 'terminal') {
     // A live shell, not a bare xterm: the pane used to create a terminal with
@@ -710,32 +857,75 @@ function renderSplit() {
   if (kind === 'files') {
     // File tree of the active folder, the way the desktop app's Files pane
     // lists the working directory. #feat-desktop-layout
-    const list = el('div', 'task-rows');
+    const filter = el('input', 'rail-filter');
+    filter.placeholder = 'Filter files…';
+    filter.setAttribute('aria-label', 'Filter files');
+    body.appendChild(filter);
+    const count = el('div', 'rail-sub hint', '');
+    body.appendChild(count);
+    const list = el('div', 'task-rows tall');
     list.appendChild(el('div', 'task-row hint', 'loading…'));
     body.appendChild(list);
-    ccx.invoke('project:files', { cwd: cwd2 }).then((r) => {
-      if (!body.contains(list)) return;
+    let files = [];
+    const paint = () => {
+      const q = filter.value.trim().toLowerCase();
+      const shown = files.filter((f) => !q || f.toLowerCase().includes(q));
       list.innerHTML = '';
-      const files = (r && r.files) || [];
-      if (!files.length) { list.appendChild(el('div', 'task-row hint', 'no files')); return; }
-      for (const f of files.slice(0, 500)) {
-        const row = el('div', 'task-row mono', f);
-        row.title = cwd2 + '/' + f;
-        row.addEventListener('click', () => ccx.invoke('shell:reveal', { path: cwd2 + '/' + f }));
+      count.textContent = shown.length + ' of ' + files.length + ' files' + (shown.length > 500 ? ' (first 500 shown)' : '');
+      if (!shown.length) { list.appendChild(el('div', 'task-row hint', files.length ? 'nothing matches' : 'no files')); return; }
+      for (const f of shown.slice(0, 500)) {
+        const row = el('button', 'task-row mono file-row');
+        const slash = f.lastIndexOf('/');
+        row.appendChild(el('span', 'fr-dir', slash >= 0 ? f.slice(0, slash + 1) : ''));
+        row.appendChild(el('span', 'fr-name', slash >= 0 ? f.slice(slash + 1) : f));
+        row.title = cwd2 + '/' + f + '\nclick: show in folder · shift+click: mention in the chat';
+        row.addEventListener('click', (e) => {
+          const chat = Chat.chats.get(state.activeId);
+          if (e.shiftKey && chat && chat.composer) {
+            chat.composer.value += (chat.composer.value && !/\s$/.test(chat.composer.value) ? ' ' : '') + '@' + f + ' ';
+            chat.composer.focus();
+          } else ccx.invoke('shell:reveal', { path: cwd2 + '/' + f });
+        });
         list.appendChild(row);
       }
+    };
+    filter.addEventListener('input', paint);
+    ccx.invoke('project:files', { cwd: cwd2 }).then((r) => {
+      if (!body.contains(list)) return;
+      files = (r && r.files) || [];
+      paint();
     });
     return;
   }
   if (kind === 'changes') {
+    const head = el('div', 'rail-sub hint', 'loading…');
+    body.appendChild(head);
+    const list = el('div', 'task-rows tall');
+    body.appendChild(list);
     ccx.invoke('git:info', { cwd: cwd2 }).then((r) => {
-      const info = r.ok ? r : {};
-      const line = el('div', 'hint',
-        (info.repo ? '⎇ ' + info.repo : 'not a git repository')
+      if (!body.contains(list)) return;
+      const info = r && r.ok ? r : {};
+      head.textContent = (info.repo ? info.repo : (info.branch ? 'local repository' : 'not a git repository'))
         + (info.branch ? ' · ' + info.branch : '')
-        + (info.dirty ? ' · ' + info.dirty + ' uncommitted file(s)' : ' · clean'));
-      body.appendChild(line);
-      body.appendChild(el('div', 'hint', 'Open a chat and ask for a diff, or use ▶ run here.'));
+        + (info.dirty ? ' · ' + info.dirty + ' uncommitted file(s)' : ' · clean');
+      for (const f of (info.files || [])) {
+        const row = el('button', 'task-row mono file-row');
+        row.appendChild(el('span', 'fr-name', f));
+        row.title = cwd2 + '/' + f;
+        row.addEventListener('click', () => ccx.invoke('shell:reveal', { path: cwd2 + '/' + f }));
+        list.appendChild(row);
+      }
+      const chat = Chat.chats.get(state.activeId);
+      if ((info.files || []).length && chat && chat.send) {
+        const acts = el('div', 'rail-actions');
+        const rev = el('button', 'btn small', 'Ask Claude to review these changes');
+        rev.addEventListener('click', () => {
+          chat.composer.value = 'Review my uncommitted changes (git diff): correctness, tests, naming. Severity-ranked, file:line, concrete fixes.';
+          chat.send();
+        });
+        acts.appendChild(rev);
+        body.appendChild(acts);
+      }
     });
     return;
   }
@@ -804,27 +994,81 @@ window.renderSplit = renderSplit;
  */
 function renderTasks(body, cwd) {
   const chat = Chat.chats.get(state.activeId);
+  const keepScroll = body.scrollTop;
   body.innerHTML = '';
-  const card = (title) => {
-    const c = el('div', 'task-card');
-    c.appendChild(el('h4', '', title));
+  const openState = lsGet('cce.railCards', {});
+  // Collapsible cards: the header is a button that remembers its state, the
+  // badge on the right summarises the card while it is closed.
+  const card = (key, title, icon) => {
+    const c = el('section', 'task-card');
+    c.dataset.card = key;
+    const head = el('button', 'task-card-head');
+    head.appendChild(elIcon('span', 'tc-ico', CCEIcons.svg(icon, 14)));
+    const h = el('h4', '', title);
+    head.appendChild(h);
+    const badge = el('span', 'tc-badge', '');
+    head.appendChild(badge);
+    head.appendChild(elIcon('span', 'tc-caret', CCEIcons.svg('chevron', 12)));
+    const inner = el('div', 'task-card-body');
+    const isOpen = openState[key] !== false;
+    c.classList.toggle('closed', !isOpen);
+    head.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+    head.addEventListener('click', () => {
+      const now = c.classList.toggle('closed');
+      head.setAttribute('aria-expanded', now ? 'false' : 'true');
+      const st = lsGet('cce.railCards', {});
+      st[key] = !now;
+      lsSet('cce.railCards', st);
+    });
+    c.appendChild(head);
+    c.appendChild(inner);
+    c.h = h; c.badge = badge; c.inner = inner;
     body.appendChild(c);
     return c;
   };
 
+  // Session: what this chat is running on, at a glance.
+  const sess = card('session', 'Session', 'bot');
+  if (chat) {
+    const r = chat.lastResult || {};
+    const u = r.usage || {};
+    const rows = [
+      ['status', chat.busy ? 'working…' : (chat.alive ? 'idle' : 'ended')],
+      ['provider', chat.provider ? chat.provider.name : 'default (Claude account)'],
+      ['model', chat.model || (chat.init && chat.init.model) || 'provider default'],
+      ['mode', (chat.modeSel && chat.modeSel.selectedOptions[0]) ? chat.modeSel.selectedOptions[0].textContent : (chat.mode || '')],
+    ];
+    if (r.num_turns != null) rows.push(['last turn', r.num_turns + ' turns · ' + Math.round((r.duration_ms || 0) / 1000) + 's']);
+    if (u.input_tokens != null) rows.push(['tokens', '↑' + fmtTokShort(u.input_tokens) + ' ↓' + fmtTokShort(u.output_tokens || 0)]);
+    if ((!chat.provider || !chat.provider.baseUrl) && chat.spent > 0.0001) rows.push(['spent', '$' + chat.spent.toFixed(4)]);
+    for (const [k, v] of rows) {
+      const row = el('div', 'kv-row');
+      row.appendChild(el('span', 'kv-k', k));
+      row.appendChild(el('span', 'kv-v', String(v)));
+      sess.inner.appendChild(row);
+    }
+    sess.badge.textContent = chat.busy ? 'working' : 'idle';
+    sess.badge.classList.toggle('busy', !!chat.busy);
+  } else {
+    sess.inner.appendChild(el('div', 'task-row hint', 'no chat in this tab'));
+  }
+
   // Environment + Changes share one git:info call.
-  const env = card('Environment');
+  const env = card('environment', 'Environment', 'folder');
   const envRow = el('div', 'task-row hint', '⌂ ' + cwd);
   envRow.title = cwd;
-  env.appendChild(envRow);
-  const ch = card('Changes');
+  env.inner.appendChild(envRow);
+  const ch = card('changes', 'Changes', 'branch');
   const chList = el('div', 'task-rows');
-  ch.appendChild(chList);
+  ch.inner.appendChild(chList);
   ccx.invoke('git:info', { cwd }).then((r) => {
-    if (!body.contains(env) || !r.ok) return;
-    env.appendChild(el('div', 'task-row hint',
+    if (!body.contains(env) || !r || !r.ok) return;
+    env.inner.appendChild(el('div', 'task-row hint',
       (r.branch ? '⎇ ' + r.branch : 'no branch') + (r.repo ? ' · ' + r.repo : '')
       + (r.dirty ? ' · ' + r.dirty + ' changed' : ' · clean')));
+    env.badge.textContent = r.branch || '';
+    ch.badge.textContent = r.dirty ? String(r.dirty) : 'clean';
+    ch.badge.classList.toggle('warn', !!r.dirty);
     if (!(r.files || []).length) { chList.appendChild(el('div', 'task-row hint', 'working tree clean')); return; }
     for (const f of r.files) {
       const row = el('div', 'task-row mono', f);
@@ -834,59 +1078,96 @@ function renderTasks(body, cwd) {
     }
   });
 
-  // Context: usage of the active chat.
-  const ctx = card('Context');
+  // Context: usage of the active chat, as a ring plus a per-category bar.
+  const ctx = card('context', 'Context', 'chart');
+  const ctxTop = el('div', 'ctx-top');
+  const ring = el('span', 'ctx-ring big');
+  ring.style.setProperty('--p', '0');
+  ctxTop.appendChild(ring);
   const ctxRow = el('div', 'task-row hint', chat ? '…' : 'start a chat to see usage');
-  ctx.appendChild(ctxRow);
-  const bar = el('div', 'task-bar');
+  ctxTop.appendChild(ctxRow);
+  ctx.inner.appendChild(ctxTop);
+  const bar = el('div', 'task-bar stacked');
   bar.appendChild(el('i'));
-  ctx.appendChild(bar);
+  ctx.inner.appendChild(bar);
   // Category breakdown, like the desktop app's context panel.
   const ctxBreak = el('div', 'task-rows');
-  ctx.appendChild(ctxBreak);
-  if (chat) ccx.invoke('chat:context', { id: chat.id }).then((r) => {
-    if (!body.contains(ctx) || !r.ok || !r.usage) return;
-    const u = r.usage;
-    const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
-    const fill = bar.querySelector('i');
-    fill.style.width = pct.toFixed(1) + '%';
-    fill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
-    ctxRow.textContent = (u.totalTokens || 0).toLocaleString() + ' / '
-      + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
-    ctxBreak.innerHTML = '';
-    for (const c of (u.categories || [])) {
-      if (!c || c.kind === 'free') continue;
-      const row = el('div', 'task-row hint');
-      const dot = el('span', 'ctx-dot');
-      if (c.color) dot.style.background = c.color;
-      row.appendChild(dot);
-      row.appendChild(el('span', '', c.name || 'other'));
-      row.appendChild(el('span', 'ctx-tokens', (Number(c.tokens) || 0).toLocaleString()));
-      ctxBreak.appendChild(row);
-    }
-  });
+  ctx.inner.appendChild(ctxBreak);
+  if (chat) {
+    const compact = el('button', 'btn small', 'Compact in place');
+    compact.title = 'Summarize earlier turns; the same chat continues';
+    compact.addEventListener('click', () => { if (chat.compactBtn) chat.compactBtn.click(); });
+    const acts = el('div', 'rail-actions');
+    acts.appendChild(compact);
+    ctx.inner.appendChild(acts);
+    ccx.invoke('chat:context', { id: chat.id }).then((r) => {
+      if (!body.contains(ctx) || !r || !r.ok || !r.usage) return;
+      const u = r.usage;
+      const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
+      ring.style.setProperty('--p', pct.toFixed(1));
+      ring.classList.toggle('warn', pct > 65);
+      const fill = bar.querySelector('i');
+      fill.style.width = pct.toFixed(1) + '%';
+      fill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
+      ctxRow.textContent = (u.totalTokens || 0).toLocaleString() + ' / '
+        + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
+      ctx.badge.textContent = pct.toFixed(0) + '%';
+      ctx.badge.classList.toggle('warn', pct > 65);
+      ctxBreak.innerHTML = '';
+      // Bars are relative to the largest category, so they read as a ranking
+      // (against the whole window most would be invisible slivers).
+      const max = Math.max(1, ...(u.categories || []).filter((c) => c && c.kind !== 'free').map((c) => Number(c.tokens) || 0));
+      for (const c of (u.categories || [])) {
+        if (!c || c.kind === 'free') continue;
+        const row = el('div', 'task-row hint ctx-cat');
+        const dot = el('span', 'ctx-dot');
+        if (c.color) dot.style.background = c.color;
+        row.appendChild(dot);
+        row.appendChild(el('span', '', c.name || 'other'));
+        const mini = el('span', 'ctx-mini');
+        const mf = el('i');
+        mf.style.width = Math.min(100, (Number(c.tokens) || 0) / max * 100).toFixed(1) + '%';
+        if (c.color) mf.style.background = c.color;
+        mini.appendChild(mf);
+        row.appendChild(mini);
+        row.appendChild(el('span', 'ctx-tokens', (Number(c.tokens) || 0).toLocaleString()));
+        ctxBreak.appendChild(row);
+      }
+    });
+  }
 
   // Connectors: the MCP servers this session can call tools on, with the
   // per-session switch the desktop app offers. #feat-connector-tools
-  const conn = card('Connectors');
+  const conn = card('connectors', 'Connectors', 'plug2');
   const connRows = el('div', 'task-rows');
-  conn.appendChild(connRows);
+  conn.inner.appendChild(connRows);
   if (chat) {
     ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).then((r) => {
       if (!body.contains(conn)) return;
       const servers = (r && r.ok && r.servers) || [];
       connRows.innerHTML = '';
+      const live = servers.filter((s) => s.status === 'connected').length;
+      conn.badge.textContent = servers.length ? live + '/' + servers.length : '0';
       if (!servers.length) {
         connRows.appendChild(el('div', 'task-row hint', 'no MCP servers in this session'));
         return;
       }
       for (const sv of servers) {
-        const row = el('div', 'task-row hint');
-        const name = el('span', '', sv.name);
+        const row = el('div', 'task-row hint conn-row');
+        row.appendChild(el('span', 'st-dot st-' + String(sv.status || 'pending').replace(/[^a-z-]/g, '')));
+        const name = el('span', 'conn-name', sv.name);
+        name.title = sv.status + ((sv.tools || []).length ? '\n' + sv.tools.map((t) => t.name).join(', ') : '');
         row.appendChild(name);
         const tools = (sv.tools || []).length;
         row.appendChild(el('span', 'ctx-tokens', tools ? tools + ' tools' : sv.status || ''));
-        const tog = el('button', 'btn small', sv.status === 'disabled' ? 'enable' : 'disable');
+        // A switch, not a word: on = enabled for this session.
+        const on = sv.status !== 'disabled';
+        const tog = el('button', 'switch' + (on ? ' on' : ''));
+        tog.setAttribute('role', 'switch');
+        tog.setAttribute('aria-checked', on ? 'true' : 'false');
+        tog.setAttribute('aria-label', (on ? 'Disable ' : 'Enable ') + sv.name + ' for this session');
+        tog.title = (on ? 'Disable' : 'Enable') + ' for this session';
+        tog.textContent = on ? 'disable' : 'enable';
         tog.addEventListener('click', async () => {
           tog.disabled = true;
           await ccx.invoke('chat:mcp', {
@@ -902,22 +1183,38 @@ function renderTasks(body, cwd) {
     connRows.appendChild(el('div', 'task-row hint', 'start a chat to see connectors'));
   }
 
-  // Tasks: the agent's todo list from the active chat.
-  const tasks = card('Tasks');
+  // Tasks: the agent's todo list from the active chat, with progress.
+  const tasks = card('tasks', 'Tasks', 'check');
   const items = chat && chat.todosList ? [...chat.todosList.children] : [];
   if (items.length) {
     const doneN = items.filter(li => li.classList.contains('done')).length;
-    tasks.querySelector('h4').textContent = 'Tasks ' + doneN + '/' + items.length;
+    tasks.h.textContent = 'Tasks ' + doneN + '/' + items.length;
+    tasks.badge.textContent = Math.round(doneN / items.length * 100) + '%';
+    const prog = el('div', 'task-bar');
+    const pf = el('i');
+    pf.style.width = (doneN / items.length * 100).toFixed(1) + '%';
+    prog.appendChild(pf);
+    tasks.inner.appendChild(prog);
     const ol = el('ol', 'task-list');
     for (const li of items) {
       const text = li.querySelector('.todo-text');
       ol.appendChild(el('li', li.classList.contains('done') ? 'done' : li.classList.contains('active') ? 'active' : '',
         (li.classList.contains('done') ? '✓ ' : li.classList.contains('active') ? '▸ ' : '○ ') + (text ? text.textContent : li.textContent)));
     }
-    tasks.appendChild(ol);
+    tasks.inner.appendChild(ol);
   } else {
-    tasks.appendChild(el('div', 'task-row hint', 'no todos from the agent yet'));
+    tasks.inner.appendChild(el('div', 'task-row hint', 'no todos from the agent yet'));
   }
+
+  // Background work the engine is running for this chat (subagents, shells).
+  if (chat && chat.bgTasks && chat.bgTasks.size) {
+    const bg = card('background', 'Background', 'clock');
+    bg.badge.textContent = String(chat.bgTasks.size);
+    for (const [, row] of chat.bgTasks) {
+      bg.inner.appendChild(el('div', 'task-row hint', '◌ ' + (row.label || 'task')));
+    }
+  }
+  body.scrollTop = keepScroll;
 }
 
 /** A chat recreated on another provider gets a new engine session id: move the
@@ -2339,6 +2636,15 @@ function wireChrome() {
     renderSplit();
     try { localStorage.setItem('cce.split', $('#split-kind').value); } catch { /* private mode */ }
   });
+  // The visible tabs drive the (hidden) select, so everything that reads the
+  // current pane keeps one source of truth.
+  document.querySelectorAll('#splitpane .split-tab').forEach((t) => t.addEventListener('click', () => {
+    const k = $('#split-kind');
+    if (!k) return;
+    k.value = t.dataset.kind;
+    k.dispatchEvent(new Event('change'));
+  }));
+  $('#btn-split-refresh')?.addEventListener('click', () => renderSplit());
 
   // Layout toggles: left sidebar (Ctrl+\) and the right tasks panel. #feat-desktop-layout
   $('#btn-sidebar')?.addEventListener('click', () => toggleSidebar());
