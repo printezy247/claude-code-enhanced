@@ -842,6 +842,7 @@ function renderSplit() {
       // already attached; nothing to do
     } else {
       body.innerHTML = '';
+      body.__taskHtml = null;   // the Overview must fully redraw when it comes back
       try {
         if (splitTerm.element) body.appendChild(splitTerm.element);
         else splitTerm.open(body);
@@ -851,7 +852,15 @@ function renderSplit() {
     ensureSplitSession(cwd);
     return;
   }
-  body.innerHTML = '';
+  // Overview already showing: keep its cards until renderTasks swaps in the
+  // new ones, instead of a blank panel on every tab switch.
+  if (!(kind === 'tasks' && body.__taskHtml != null)) {
+    body.innerHTML = '';
+    body.__taskHtml = null;
+    // An Overview render still waiting on git/context must not land on top of
+    // the pane that replaced it.
+    body.__taskSeq = (body.__taskSeq || 0) + 1;
+  }
   body.classList.remove('preview-body');
   const cwd2 = activeCwd();
   if (kind === 'files') {
@@ -986,16 +995,33 @@ function renderSplit() {
 }
 window.toggleSplit = toggleSplit;
 window.renderSplit = renderSplit;
+// The agent's task list changed: redraw the Overview now (coalesced, so a burst
+// of TaskUpdate calls is one redraw), but only for the tab that is on screen.
+let railTimer = null;
+window.refreshTasksRail = (chatId) => {
+  if (chatId && chatId !== state.activeId) return;
+  if (!document.querySelector('#main.split')) return;
+  if ((document.querySelector('#split-kind')?.value || 'tasks') !== 'tasks') return;
+  clearTimeout(railTimer);
+  railTimer = setTimeout(() => {
+    const body = document.querySelector('#split-body');
+    if (body) renderTasks(body, activeCwd(), 'tasks');
+  }, 150);
+};
 
 /**
  * Right-hand tasks panel — the desktop layout's coding-task column:
  * Environment (folder + git state), Context (active chat's window usage),
  * Tasks (the agent's todo list), Changes (uncommitted files). #feat-desktop-layout
  */
-function renderTasks(body, cwd) {
+function renderTasks(target, cwd, only) {
   const chat = Chat.chats.get(state.activeId);
-  const keepScroll = body.scrollTop;
-  body.innerHTML = '';
+  // Build off-screen and swap once every async card has filled in: clearing
+  // the live panel and refilling it piecemeal made it blink on each refresh.
+  const body = document.createElement('div');
+  const pending = [];
+  // A single-card update must not cancel a full render that is still in flight.
+  const seq = only ? -1 : (target.__taskSeq = (target.__taskSeq || 0) + 1);
   const openState = lsGet('cce.railCards', {});
   // Collapsible cards: the header is a button that remembers its state, the
   // badge on the right summarises the card while it is closed.
@@ -1061,8 +1087,8 @@ function renderTasks(body, cwd) {
   const ch = card('changes', 'Changes', 'branch');
   const chList = el('div', 'task-rows');
   ch.inner.appendChild(chList);
-  ccx.invoke('git:info', { cwd }).then((r) => {
-    if (!body.contains(env) || !r || !r.ok) return;
+  pending.push(ccx.invoke('git:info', { cwd }).then((r) => {
+    if (!(env.isConnected || body.contains(env)) || !r || !r.ok) return;
     env.inner.appendChild(el('div', 'task-row hint',
       (r.branch ? '⎇ ' + r.branch : 'no branch') + (r.repo ? ' · ' + r.repo : '')
       + (r.dirty ? ' · ' + r.dirty + ' changed' : ' · clean')));
@@ -1076,7 +1102,7 @@ function renderTasks(body, cwd) {
       row.addEventListener('click', () => ccx.invoke('shell:reveal', { path: cwd + '/' + f }));
       chList.appendChild(row);
     }
-  });
+  }));
 
   // Context: usage of the active chat, as a ring plus a per-category bar.
   const ctx = card('context', 'Context', 'chart');
@@ -1100,8 +1126,8 @@ function renderTasks(body, cwd) {
     const acts = el('div', 'rail-actions');
     acts.appendChild(compact);
     ctx.inner.appendChild(acts);
-    ccx.invoke('chat:context', { id: chat.id }).then((r) => {
-      if (!body.contains(ctx) || !r || !r.ok || !r.usage) return;
+    pending.push(ccx.invoke('chat:context', { id: chat.id }).then((r) => {
+      if (!(ctx.isConnected || body.contains(ctx)) || !r || !r.ok || !r.usage) return;
       const u = r.usage;
       const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
       ring.style.setProperty('--p', pct.toFixed(1));
@@ -1133,7 +1159,7 @@ function renderTasks(body, cwd) {
         row.appendChild(el('span', 'ctx-tokens', (Number(c.tokens) || 0).toLocaleString()));
         ctxBreak.appendChild(row);
       }
-    });
+    }));
   }
 
   // Connectors: the MCP servers this session can call tools on, with the
@@ -1142,8 +1168,8 @@ function renderTasks(body, cwd) {
   const connRows = el('div', 'task-rows');
   conn.inner.appendChild(connRows);
   if (chat) {
-    ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).then((r) => {
-      if (!body.contains(conn)) return;
+    pending.push(ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).then((r) => {
+      if (!(conn.isConnected || body.contains(conn))) return;
       const servers = (r && r.ok && r.servers) || [];
       connRows.innerHTML = '';
       const live = servers.filter((s) => s.status === 'connected').length;
@@ -1178,32 +1204,44 @@ function renderTasks(body, cwd) {
         row.appendChild(tog);
         connRows.appendChild(row);
       }
-    });
+    }));
   } else {
     connRows.appendChild(el('div', 'task-row hint', 'start a chat to see connectors'));
   }
 
-  // Tasks: the agent's todo list from the active chat, with progress.
+  // Tasks: the agent's todo list from the active chat, with progress. Like the
+  // desktop app: a progress line, the live step spelled out, then the checklist.
   const tasks = card('tasks', 'Tasks', 'check');
   const items = chat && chat.todosList ? [...chat.todosList.children] : [];
   if (items.length) {
     const doneN = items.filter(li => li.classList.contains('done')).length;
-    tasks.h.textContent = 'Tasks ' + doneN + '/' + items.length;
-    tasks.badge.textContent = Math.round(doneN / items.length * 100) + '%';
+    tasks.badge.textContent = doneN + '/' + items.length;
+    tasks.badge.classList.toggle('busy', doneN < items.length);
     const prog = el('div', 'task-bar');
     const pf = el('i');
     pf.style.width = (doneN / items.length * 100).toFixed(1) + '%';
     prog.appendChild(pf);
     tasks.inner.appendChild(prog);
+    const live = items.find(li => li.classList.contains('active'));
+    if (live) {
+      const t = live.querySelector('.todo-text');
+      tasks.inner.appendChild(el('div', 'task-now', live.dataset.active || (t ? t.textContent : '')));
+    } else if (doneN === items.length) {
+      tasks.inner.appendChild(el('div', 'task-now done', 'All tasks done'));
+    }
     const ol = el('ol', 'task-list');
     for (const li of items) {
       const text = li.querySelector('.todo-text');
-      ol.appendChild(el('li', li.classList.contains('done') ? 'done' : li.classList.contains('active') ? 'active' : '',
-        (li.classList.contains('done') ? '✓ ' : li.classList.contains('active') ? '▸ ' : '○ ') + (text ? text.textContent : li.textContent)));
+      const st = li.classList.contains('done') ? 'done' : li.classList.contains('active') ? 'active' : 'todo';
+      const row = el('li', st);
+      row.appendChild(elIcon('span', 'task-mark', st === 'done' ? CCEIcons.svg('check', 12) : ''));
+      row.appendChild(el('span', 'task-text', text ? text.textContent : li.textContent));
+      ol.appendChild(row);
     }
     tasks.inner.appendChild(ol);
   } else {
-    tasks.inner.appendChild(el('div', 'task-row hint', 'no todos from the agent yet'));
+    tasks.inner.appendChild(el('div', 'task-row hint',
+      chat && chat.busy ? 'The agent has not made a task list for this turn' : 'Task lists appear here when the agent plans multi-step work'));
   }
 
   // Background work the engine is running for this chat (subagents, shells).
@@ -1214,7 +1252,39 @@ function renderTasks(body, cwd) {
       bg.inner.appendChild(el('div', 'task-row hint', '◌ ' + (row.label || 'task')));
     }
   }
-  body.scrollTop = keepScroll;
+  const swap = () => {
+    // A newer render started meanwhile, or the panel was closed: drop this one.
+    if (seq !== target.__taskSeq || !target.isConnected) return;
+    // Nothing changed: leave the live DOM alone (no repaint, hover and focus kept).
+    if (body.innerHTML === target.__taskHtml) return;
+    target.__taskHtml = body.innerHTML;
+    const keepScroll = target.scrollTop;
+    const fresh = [...body.children];
+    const old = [...target.children];
+    const sameCards = old.length === fresh.length
+      && old.every((c, i) => c.dataset && c.dataset.card === fresh[i].dataset.card);
+    if (sameCards) {
+      // Same cards in the same order: replace only the ones whose content
+      // changed, so a ticking token count does not repaint the whole panel.
+      fresh.forEach((c, i) => { if (old[i].outerHTML !== c.outerHTML) old[i].replaceWith(c); });
+    } else {
+      target.replaceChildren(...fresh);
+    }
+    target.scrollTop = keepScroll;
+  };
+  // One card changed (the task list): swap just that card now, no waiting on
+  // git / context / connectors, which still hold their last values.
+  if (only) {
+    const next = body.querySelector(`[data-card="${only}"]`);
+    const cur = target.querySelector(`[data-card="${only}"]`);
+    if (next && cur && target.isConnected) {
+      if (cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
+      target.__taskHtml = null;   // the next full render must compare afresh
+      return;
+    }
+  }
+  // A slow call must not hold the whole panel back: show what is there after 1.5s.
+  Promise.race([Promise.allSettled(pending), new Promise((r) => setTimeout(r, 1500))]).then(swap);
 }
 
 /** A chat recreated on another provider gets a new engine session id: move the
@@ -2749,6 +2819,18 @@ function wireChrome() {
       if (m && m.kind === 'chat' && window.Chat) {
         const c = Chat.chats.get(state.activeId);
         if (c) { e.preventDefault(); Chat.showFind(c); }
+      }
+    }
+    // Command palette and composer expand, from anywhere in a chat tab. Terminal
+    // tabs keep Ctrl+K / Ctrl+E for the shell (kill line, end of line).
+    const mod = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
+    const k = String(e.key).toLowerCase();
+    if (mod && (k === 'k' || k === 'e') && inChat && window.Chat) {
+      const c = Chat.chats.get(state.activeId);
+      if (c) {
+        e.preventDefault();
+        if (k === 'k') Chat.openPalette(c);
+        else Chat.toggleExpanded(c);
       }
     }
   });

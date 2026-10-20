@@ -301,12 +301,9 @@ const Chat = (() => {
     chat.forkBtn = { click: forkConversation };   // palette entry points at this
     wireHeaderMenu(chat, forkConversation);
     wireRunMenu(chat);
-    pane.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'k') {
-        e.preventDefault();
-        openPalette(chat);
-      }
-    });
+    // Ctrl+K / Ctrl+E live in app.js's global shortcuts: a listener on the pane
+    // only fired while the composer had focus, so a click on the transcript
+    // silently disabled them.
 
     // composer
     const send = () => {
@@ -416,12 +413,6 @@ const Chat = (() => {
       chat.expandBtn.addEventListener('click', () =>
         setExpanded(chat, !chat.pane.classList.contains('composer-expanded')));
     }
-    chat.composer.addEventListener('keydown', (e) => {
-      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'e') {
-        e.preventDefault();
-        setExpanded(chat, !chat.pane.classList.contains('composer-expanded'));
-      }
-    });
     // Compact in place: the engine summarizes earlier turns and the same chat
     // keeps going (no new tab, no lost context).
     if (chat.compactBtn) chat.compactBtn.addEventListener('click', () => doCompact(chat));
@@ -3298,7 +3289,7 @@ const Chat = (() => {
     if (name === 'TaskCreate') {
       const m = text.match(/#\s*(\d+)/) || text.match(/\b(?:task|id)\D{0,3}(\d+)/i);
       const id = m ? m[1] : String(board.size + 1);
-      board.set(id, { content: String(input.subject || ''), status: 'pending' });
+      board.set(id, { content: String(input.subject || ''), status: 'pending', activeForm: input.activeForm || '' });
     } else if (name === 'TaskUpdate') {
       const id = String(input.taskId || '').replace(/^#/, '');
       const t = board.get(id) || { content: '', status: 'pending' };
@@ -3306,6 +3297,7 @@ const Chat = (() => {
       else {
         if (input.subject) t.content = String(input.subject);
         if (input.status) t.status = input.status;
+        if (input.activeForm) t.activeForm = String(input.activeForm);
         if (!t.content) t.content = 'task ' + id;
         board.set(id, t);
       }
@@ -3320,21 +3312,29 @@ const Chat = (() => {
   }
 
   function renderTodoItems(chat, items) {
+    // The side panel mirrors this list; tell it now rather than on its next tick.
+    const notify = () => { if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id); };
     if (!items.length) {
+      chat.todosList.innerHTML = '';
       chat.todosEl.classList.add('hidden');
+      notify();
       return;
     }
     chat.todosList.innerHTML = '';
     for (const t of items) {
-      const li = el('li', 'todo-item' + (t.status === 'completed' ? ' done' : t.status === 'in_progress' ? ' active' : ''));
-      li.appendChild(el('span', 'todo-mark', t.status === 'completed' ? '✓' : t.status === 'in_progress' ? '▸' : '○'));
+      const now = t.status === 'in_progress';
+      const li = el('li', 'todo-item' + (t.status === 'completed' ? ' done' : now ? ' active' : ''));
+      li.appendChild(el('span', 'todo-mark', t.status === 'completed' ? '✓' : now ? '▸' : '○'));
       li.appendChild(el('span', 'todo-text', String(t.content || '')));
-      if (t.status === 'in_progress') li.appendChild(el('span', 'chip', 'now'));
+      // "Running the tests" reads better than "Run the tests" for the live step.
+      if (now && t.activeForm) li.dataset.active = String(t.activeForm);
+      if (now) li.appendChild(el('span', 'chip', 'now'));
       chat.todosList.appendChild(li);
     }
     const done = items.filter(t => t.status === 'completed').length;
     chat.todosEl.querySelector('h4').textContent = 'todos ' + done + '/' + items.length;
     chat.todosEl.classList.remove('hidden');
+    notify();
   }
 
   // Left/right text for a file-modifying tool call. The pre-edit content is not in
@@ -4144,5 +4144,10 @@ const Chat = (() => {
     }
   });
 
-  return { createSession, handleEvent, chats, closeChat, activateChat, showFind };
+  const toggleExpanded = (chat) => {
+    setExpanded(chat, !chat.pane.classList.contains('composer-expanded'));
+    chat.composer.focus();
+  };
+
+  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded };
 })();

@@ -1474,7 +1474,7 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .kv-v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctx-top { display: flex; align-items: center; gap: 10px; }
 .ctx-cat .ctx-mini { flex: 0 0 60px; height: 4px; border-radius: 2px; background: var(--bg4); overflow: hidden; margin-left: auto; }
-.ctx-cat .ctx-mini i { display: block; height: 100%; }
+.ctx-cat .ctx-mini i { display: block; height: 100%; background: var(--accent); }
 .ctx-cat .ctx-tokens { margin-left: 6px; min-width: 52px; text-align: right; }
 .rail-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .rail-filter { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
@@ -1503,3 +1503,39 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
   .chat-send.busy .ic { animation: none; }
   .chat-input { transition: none; }
 }
+
+/* ---- side panel: roomier, calmer type (0.9.33 polish) ---- */
+.split-body { padding: 14px 16px 20px; }
+.task-card { margin-bottom: 12px; border-radius: 12px; }
+.task-card-head { padding: 12px 14px; gap: 9px; }
+.task-card-head h4 { font-size: 13px; font-weight: 600; letter-spacing: .01em; }
+.task-card:not(.closed) .task-card-head { padding-bottom: 8px; }
+.task-card-body { padding: 2px 16px 14px 37px; }
+.tc-badge { font-size: 11px; padding: 2px 9px; letter-spacing: .02em; }
+.kv-row { font-size: 12.5px; line-height: 1.4; gap: 12px; padding: 3px 0; }
+.kv-k { width: 76px; font-size: 12px; }
+.task-row { font-size: 12.5px; line-height: 1.5; padding: 3px 0; }
+.task-rows { gap: 4px; }
+.conn-row { gap: 10px; padding: 4px 0; }
+.conn-row .ctx-tokens { font-size: 11.5px; }
+.ctx-top { gap: 14px; padding: 2px 0 4px; }
+.task-bar { height: 4px; margin: 6px 0 10px; }
+.rail-actions { margin-top: 12px; }
+/* Tasks: live step + round checklist markers, desktop style */
+.task-now { font-size: 12.5px; color: var(--accent); margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }
+.task-now::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: currentColor;
+  animation: task-pulse 1.4s ease-in-out infinite; }
+.task-now.done { color: var(--ok); }
+.task-now.done::before { animation: none; }
+@keyframes task-pulse { 50% { opacity: .3; } }
+.task-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; line-height: 1.45; }
+.task-list li { display: flex; align-items: flex-start; gap: 10px; }
+.task-mark { flex: none; width: 15px; height: 15px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--border);
+  display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; }
+.task-list li.active .task-mark { border-color: var(--accent); box-shadow: inset 0 0 0 3px var(--bg), inset 0 0 0 8px var(--accent); }
+.task-list li.done .task-mark { border-color: var(--ok); background: var(--ok); color: var(--bg); }
+.task-list li.done .task-mark svg { width: 10px; height: 10px; stroke-width: 3; }
+.task-list li.done .task-text { color: var(--muted); text-decoration: line-through; }
+.task-list li.active .task-text { color: var(--text); font-weight: 500; }
+.task-list li.todo .task-text { color: var(--text); opacity: .85; }
+@media (prefers-reduced-motion: reduce) { .task-now::before { animation: none; } }

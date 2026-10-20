@@ -247,3 +247,23 @@ describe('request / response fixes', () => {
     expect(pane().querySelector('.chat-msgs').textContent).not.toMatch(/nudging/);
   });
 });
+
+describe('chat shortcuts work wherever focus is', () => {
+  const key = (k) => doc().body.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: k, ctrlKey: true, bubbles: true, cancelable: true }));
+
+  it('Ctrl+K opens the palette with focus outside the composer', () => {
+    chat().composer.blur();
+    key('k');
+    expect(doc().querySelector('.palette-back')).toBeTruthy();
+    key('k');   // pressing it again closes it
+    expect(doc().querySelector('.palette-back')).toBeNull();
+  });
+
+  it('Ctrl+E toggles the expanded composer from anywhere in the chat', () => {
+    chat().composer.blur();
+    key('e');
+    expect(pane().classList.contains('composer-expanded')).toBe(true);
+    key('e');
+    expect(pane().classList.contains('composer-expanded')).toBe(false);
+  });
+});
