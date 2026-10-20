@@ -72,6 +72,32 @@ function entryFor(instance) {
   return e || null;
 }
 
+/**
+ * The API key for a provider, from the auth store, else from the environment
+ * variable its catalog entry names.
+ *
+ * models.dev records an env var for API-key providers (OpenCode Go's preset
+ * declares OPENCODE_API_KEY). CCE never read it, so a provider configured
+ * without a pasted key went upstream with no credential at all and the gateway
+ * answered "Go requires a credential". The stored key still wins, so an
+ * explicit key in the app overrides the environment.
+ *
+ * @param {object} instance the provider instance
+ * @param {object} [auth] the auth store (injected so tests can drive it)
+ * @param {object} [env] the environment to read (defaults to process.env)
+ */
+function resolveApiKey(instance, auth, env) {
+  const store = auth || authRef;
+  const fromStore = store ? store.resolve(instance.uid) : {};
+  if (fromStore.apiKey) return fromStore.apiKey;
+  if (fromStore.authToken) return '';
+  const entry = entryFor(instance);
+  const name = entry && entry.envVar;
+  if (!name) return '';
+  const source = env || process.env;
+  return String(source[name] || '').trim();
+}
+
 /** The env a session needs for the selected provider. */
 function envFor(instance, settings) {
   const env = {};
@@ -288,6 +314,6 @@ module.exports = {
   normalizeModelFields, chatModelFor,
   keyUrlMismatch,
   PRESETS, ensureDefaults, envFor, publicInstance, newUid,
-  useAuth, catalogEntries, makeInstance, entryFor,
+  useAuth, catalogEntries, makeInstance, entryFor, resolveApiKey,
   migrateUrls, migrateModels,
 };

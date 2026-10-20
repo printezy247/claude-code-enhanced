@@ -60,6 +60,13 @@ async function fetchUpstream(url, opts, signal, tries = 2) {
 
 function upHeaders(prov) {
   const h = { 'content-type': 'application/json' };
+  // Gateways that fingerprint the client (OpenCode Go) reject a request with
+  // no User-Agent at all, and their docs ask for a client-identifying name
+  // rather than a generic SDK string. Node's default ("node") is generic, so
+  // name the app; a provider can still override it with its own header.
+  if (!h['user-agent'] && !prov.headers?.['user-agent']) {
+    h['user-agent'] = 'claude-code-enhanced/' + (prov.appVersion || '0.9.32') + ' (Electron)';
+  }
   const key = prov.apiKey || '';
   if (key) {
     if (prov.keyHeader === 'x-api-key') h['x-api-key'] = key;

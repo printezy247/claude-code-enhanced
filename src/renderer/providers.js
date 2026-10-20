@@ -92,6 +92,11 @@ const ProvidersUI = (() => {
     if (p.authHint) card.appendChild(el('div', 'meta', (p.authType === 'oauth' ? 'oauth  ' : 'key  ') + p.authHint
       + (p.authExpired ? '  (expired — reconnect)' : '')));
     else if (p.local) card.appendChild(el('div', 'meta', 'local runtime — no key needed'));
+    else if (p.envVar) {
+      // The key can come from the environment. Say so, instead of leaving the
+      // user with "no credential" and no idea where the key belongs.
+      card.appendChild(el('div', 'meta auth-none', 'no credential — set ' + p.envVar + ' in your environment, or add a key here'));
+    }
     else card.appendChild(el('div', 'meta auth-none', 'no credential — add a key or sign in'));
 
     const caps = el('div', 'cap-row');
@@ -373,7 +378,11 @@ const ProvidersUI = (() => {
         status.appendChild(el('span', 'hint', p.authHint || 'stored'));
       } else {
         status.appendChild(el('span', 'chip', 'no credential'));
-        status.appendChild(el('span', 'hint', entry.local ? 'local runtime — no key needed' : 'add a key or sign in below'));
+        status.appendChild(el('span', 'hint', entry.local
+          ? 'local runtime — no key needed'
+          : (entry.envVar
+            ? 'set ' + entry.envVar + ' in your environment, or paste a key below'
+            : 'add a key or sign in below')));
       }
     };
     paintStatus();

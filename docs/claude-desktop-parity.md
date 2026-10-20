@@ -247,13 +247,35 @@ provider failed mid-turn.
 - `src/main/adapters.js` — `upHeaders()` merges it into the upstream request
   (a user-configured header still wins).
 
-Measured against the live endpoint:
+Two things are required by Go, and CCE sent neither:
 
 | request | result |
 |---|---|
 | no session header | `400 MissingSessionID` — the reported failure |
 | `x-opencode-session` | passes routing (fails later on the credential) |
 | `x-claude-code-session-id` | passes routing (Go recognises its own spelling) |
+| **no `User-Agent`** | `403` (Cloudflare error 1010) — a generic library name is enough, but no UA at all is not |
+| `User-Agent: node` | `200` |
+
+Measured end to end through CCE's own proxy against the live endpoint: a chat
+turn returns `200` with a model response, and `/v1/models` returns the 37
+Go models.
+
+The credential was the third gap: the OpenCode Go preset declares
+`envVar: 'OPENCODE_API_KEY'` (models.dev records it), but CCE never read it,
+so a provider with no pasted key went upstream with **no** `Authorization`
+header and Go answered `Go requires a credential`.
+
+- `src/main/providers.js` — `resolveApiKey()`: the stored key wins, else the
+  catalog entry's env var, read from the process env and the login shell
+  (a GUI-launched app inherits neither).
+- `src/main/main.js` — the secret cache uses it; the proxy gets the app
+  version for the User-Agent.
+- `src/main/adapters.js` — the upstream request carries a client-identifying
+  `User-Agent` (`claude-code-enhanced/<version> (Electron)`), which Go asks
+  for; a provider can still override it.
+- Renderer — the provider card and detail panel name the env var when no
+  credential is stored, so the key's home is visible before a chat fails.
 
 ## 4. Still open (deliberately not built)
 

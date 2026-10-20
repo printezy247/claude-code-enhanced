@@ -70,7 +70,19 @@ function refreshSecretCache() {
   secretCache.clear();
   for (const p of store.providers) {
     const r = auth.resolve(p.uid);
-    secretCache.set(p.uid, { apiKey: r.apiKey || '', authToken: r.authToken || '' });
+    // A provider whose catalog entry names an environment variable (models.dev
+    // records one for API-key providers such as OpenCode Go's
+    // OPENCODE_API_KEY) can be authenticated from the environment when no key
+    // was stored in the app. Without this the preset was unusable unless the
+    // key was pasted into the UI, and the request went out with no credential
+    // at all ("Go requires a credential").
+    let apiKey = r.apiKey || '';
+    if (!apiKey) {
+      const name = (providers.entryFor(p) || {}).envVar;
+      const fromEnv = name && (process.env[name] || (loginEnv() || {})[name]);
+      if (fromEnv) apiKey = String(fromEnv).trim();
+    }
+    secretCache.set(p.uid, { apiKey, authToken: r.authToken || '' });
   }
 }
 function secretFor(uid) { return secretCache.get(uid) || {}; }
@@ -1951,6 +1963,8 @@ if (!gotLock) {
         protocol: inst.protocol || 'openai',
         keyHeader: inst.keyHeader || 'bearer',
         headers: inst.headers || {},
+        // Some gateways fingerprint the client; name the app in the UA.
+        appVersion: app.getVersion(),
         // Stand-ins for a model name this provider does not serve.
         model: inst.model || '',
         smallFastModel: inst.smallFastModel || '',
