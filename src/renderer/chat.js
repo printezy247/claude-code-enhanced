@@ -521,11 +521,24 @@ const Chat = (() => {
     if (/(?::|…|\.\.\.)\s*$/.test(last)) return intent.test(last);
     return /^(?:(?:ok(?:ay)?|now|next|so|alright|first|then)[,.]?\s+)*(?:let me|let's|i'll now|i will now|now i(?:'ll| will)|next,? i(?:'ll| will))\b/i.test(last);
   }
+  // The agent stopped to wait for CI/merge, not because it stalled — nudging
+  // would only burn a whole turn pressuring a process that cannot go faster.
+  function waitingOnExternal(text) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    const paragraph = t.split(/\n{2,}/).pop();
+    return /\b(waiting|wait for|once (it|the|this)( is| goes)? green|when (it|the)( passes| is green| goes green)|poll|checking the ci|ci (status|checks?)|merge (once|when)|will merge|pipeline)\b/i.test(paragraph);
+  }
   function maybeNudge(chat, msg) {
     const on = !state.settings || state.settings.autoNudge !== false;
     if (!on || !chat.alive || (chat.nudges || 0) >= 1) return false;
     // More turns already queued: the engine carries on by itself.
     if (Number(msg.queued_turn_count) > 0 || chat.pendingImages.length) return false;
+    // Waiting is not stalling: live background tasks, an open approval, or a
+    // result that says it will come back when CI/merge lands.
+    if (chat.bgTasks.size > 0) return false;
+    if ((chat.permCount || 0) > 0 || (chat.elicCount || 0) > 0) return false;
+    if (waitingOnExternal(msg.result)) return false;
     if (!announcedNextStep(msg.result)) return false;
     // Never overwrite a draft the user is already typing.
     if (chat.composer.value.trim()) return false;

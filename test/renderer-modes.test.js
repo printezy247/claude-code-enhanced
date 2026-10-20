@@ -155,6 +155,36 @@ describe('stalled-turn nudge', () => {
     await flush();
     expect(sent(h)).toHaveLength(0);
   });
+
+  it('does not nudge while a background task is live', async () => {
+    const { h, chat, send } = await open();
+    chat.bgTasks.set('t1', { id: 't1', title: 'build' });
+    send(result('I will report back when it completes. Let me check the log:'));
+    await flush();
+    expect(sent(h)).toHaveLength(0);
+  });
+
+  it('does not nudge when the result says it is waiting for CI/merge', async () => {
+    const { h, send } = await open();
+    send(result("I'll merge once the CI goes green. Let me watch the pipeline:"));
+    await flush();
+    expect(sent(h)).toHaveLength(0);
+  });
+
+  it('does not nudge while a permission prompt is open', async () => {
+    const { h, chat, send } = await open();
+    chat.permCount = 1;
+    send(result('Running the migration. Let me apply the SQL:'));
+    await flush();
+    expect(sent(h)).toHaveLength(0);
+  });
+
+  it('still nudges plain next-step text', async () => {
+    const { h, send } = await open();
+    send(result('I understand now. Let me properly set it up by cloning the repo fresh.'));
+    await flush();
+    expect(sent(h)).toHaveLength(1);
+  });
 });
 
 describe('raw input', () => {
