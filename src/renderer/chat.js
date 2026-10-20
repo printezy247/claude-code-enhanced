@@ -225,8 +225,11 @@ const Chat = (() => {
     closeBtn.title = 'Close chat';
     closeBtn.setAttribute('aria-label', 'Close chat');
     tab.appendChild(closeBtn);
-    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeChat(id); });
-    tab.addEventListener('click', () => activateChat(id));
+    // Read chat.id at click time: a provider switch re-keys the chat onto a
+    // new engine id (the listeners' creation-time `id` would go dead and the
+    // tab could neither be viewed nor closed).
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeChat(chat.id); });
+    tab.addEventListener('click', () => activateChat(chat.id));
     $('#tabs').appendChild(tab);
     chat.tabEl = tab;
 
@@ -613,7 +616,13 @@ const Chat = (() => {
     }
     if (chat.alive) await ccx.invoke('chat:close', { id });
     chat.pane.remove(); chat.tabEl.remove(); chats.delete(id);
-    if (window.__tabs) window.__tabs.delete(id);
+    if (window.__tabs) {
+      // Clear before deleting: a stale busy flag would outlive the entry in
+      // any state the nav computed from it.
+      const m = window.__tabs.get(id);
+      if (m) { m.busy = false; m.needsYou = false; }
+      window.__tabs.delete(id);
+    }
     if (typeof window.updateTabCount === 'function') window.updateTabCount();
     if (window.__activateNext) window.__activateNext(id);
   }
@@ -2223,9 +2232,14 @@ const Chat = (() => {
     chat.msgs.appendChild(el('div', 'sys-note', '✂ compacting this conversation in place…'));
     scrollDownSoft(chat);
     if (chat.compactBtn) chat.compactBtn.disabled = true;
-    const r = await ccx.invoke('chat:send', { id: chat.id, text: '/compact' + (focus ? ' ' + focus : '') });
-    if (chat.compactBtn) chat.compactBtn.disabled = false;
-    if (!r || !r.ok) appendError(chat, 'Could not compact: ' + ((r && r.error) || 'session not running'));
+    try {
+      const r = await ccx.invoke('chat:send', { id: chat.id, text: '/compact' + (focus ? ' ' + focus : '') });
+      if (!r || !r.ok) appendError(chat, 'Could not compact: ' + ((r && r.error) || 'session not running'));
+    } catch (e) {
+      appendError(chat, 'Could not compact: ' + ((e && e.message) || e));
+    } finally {
+      if (chat.compactBtn) chat.compactBtn.disabled = false;   // a rejected invoke used to strand it disabled
+    }
   }
 
   // The old behaviour, kept as /handoff: a brief, then a fresh session.
@@ -2235,7 +2249,18 @@ const Chat = (() => {
     chat.msgs.querySelector('.chat-empty')?.remove();
     chat.msgs.appendChild(el('div', 'sys-note', '✂ handoff — asking for a brief, then continuing in a fresh session…'));
     scrollDownSoft(chat);
-    await ccx.invoke('chat:send', { id: chat.id, text: COMPACT_PROMPT });
+    try {
+      const r = await ccx.invoke('chat:send', { id: chat.id, text: COMPACT_PROMPT });
+      if (!r || !r.ok) {
+        // Drop compacting or the NEXT ordinary result is misread as the brief
+        // and spawns a session nobody asked for.
+        chat.compacting = false;
+        appendError(chat, 'Could not hand off: ' + ((r && r.error) || 'session not running'));
+      }
+    } catch (e) {
+      chat.compacting = false;
+      appendError(chat, 'Could not hand off: ' + ((e && e.message) || e));
+    }
   }
 
   function handleBuiltin(chat, text) {
@@ -2417,12 +2442,18 @@ const Chat = (() => {
     else if (kind === 'error') appendError(chat, evt.error);
     else if (kind === 'exit') {
       chat.alive = false; chat.tabEl.classList.add('dead'); setBusy(chat, false);
+      // The session is gone; no spinner may survive it in the tab bar.
+      const m = window.__tabs && window.__tabs.get(chat.id);
+      if (m) { m.busy = false; m.needsYou = false; }
+      if (typeof window.updateNavState === 'function') window.updateNavState();
       const n = el('div', 'sys-note', '— chat session ended —');
       chat.msgs.appendChild(n); scrollDownSoft(chat);
     }
   }
 
   function setBusy(chat, busy) {
+    // Late status frames from the dead engine must not resurrect a handed-off tab.
+    if (chat.handedOff && busy) return;
     chat.busy = busy;
     publishTabState(chat);
     chat.dot.classList.toggle('busy', busy);
@@ -2599,6 +2630,9 @@ const Chat = (() => {
               permissionMode: chat.mode,
               initText: 'Handoff brief from the previous session (compacted):\n\n' + brief + '\n\nConfirm you have the context by replying \"ready\", then wait for my next instruction.',
             });
+            // The old engine is finished; a late status frame from it must
+            // not resurrect this tab's busy spinner.
+            chat.handedOff = true;
           } else {
             appendError(chat, 'Compaction failed (' + msg.subtype + '). The engine auto-compacts near the context limit regardless.');
           }

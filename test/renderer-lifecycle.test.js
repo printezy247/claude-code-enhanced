@@ -207,3 +207,60 @@ describe('spilled tool output offers the file (#50)', () => {
     expect(chat.msgs.querySelector('.tool-spill')).toBeNull();
   });
 });
+describe('stuck-state guards (0.9.34)', () => {
+  it('re-enables the compact button when chat:send throws', async () => {
+    const { chat } = await open({ 'chat:send': () => { throw new Error('ipc down'); } });
+    chat.compactBtn.click();
+    await flush();
+    expect(chat.compactBtn.disabled).toBe(false);
+  });
+
+  it('a failed handoff send does not hijack the next result', async () => {
+    let created = 0;
+    const { h, send } = await open({
+      'chat:send': () => ({ ok: false, error: 'session not running' }),
+      'chat:create': () => { created++; return { ok: true, id: 'c' + created, cwd: '/tmp', model: '', permissionMode: 'acceptEdits', provider: null }; },
+    });
+    const chat = h.window.Chat.chats.get('c1');
+    chat.composer.value = '/handoff';
+    chat.send();
+    await flush();
+    // A failed handoff must drop compacting, or the next ordinary result is
+    // misread as the brief and spawns a session nobody asked for.
+    expect(chat.compacting).toBe(false);
+    send({ type: 'result', subtype: 'success', is_error: false, result: 'Brief text from the old session.' });
+    await flush();
+    expect(created).toBe(1);
+  });
+
+  it('handoff ignores a late busy status', async () => {
+    let created = 0;
+    const { h, send } = await open({
+      'chat:create': () => {
+        created++;
+        return { ok: true, id: created === 1 ? 'c1' : 'c2', cwd: '/tmp', model: '', permissionMode: 'acceptEdits', provider: null };
+      },
+    });
+    const chat = h.window.Chat.chats.get('c1');
+    chat.composer.value = '/handoff';
+    chat.send();
+    await flush();
+    expect(chat.compacting).toBe(true);
+    send({ type: 'result', subtype: 'success', is_error: false, result: 'Brief from the old session.' });
+    await flush();
+    expect(created).toBe(2);
+    // The dead engine's late status frame must not resurrect the spinner.
+    h.window.Chat.handleEvent({ id: 'c1', kind: 'status', busy: true });
+    expect(chat.busy).toBe(false);
+    expect(chat.dot.classList.contains('busy')).toBe(false);
+  });
+
+  it('clears tab busy state on session exit', async () => {
+    const { h } = await open();
+    h.window.Chat.handleEvent({ id: 'c1', kind: 'status', busy: true });
+    expect(h.window.__tabs.get('c1').busy).toBe(true);
+    h.window.Chat.handleEvent({ id: 'c1', kind: 'exit' });
+    expect(h.window.__tabs.get('c1').busy).toBe(false);
+    expect(h.window.__tabs.get('c1').needsYou).toBe(false);
+  });
+});
