@@ -214,6 +214,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   let stopReason = 'end_turn';
   let sawText = false;     // the reply has visible text
   let sawTool = false;     // the reply has at least one tool call
+  let sawFinish = false;   // finish_reason or [DONE] arrived: the stream really ended
   let failed = null;       // error that ended the stream early
   const toolBuf = new Map();   // openai tool_call index -> {id, name, args}
   const textTools = [];        // calls recovered from the text channel
@@ -299,6 +300,15 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     const all = textTools.splice(0).concat([...toolBuf].sort((a, b) => a[0] - b[0]).map(([, t]) => t));
     for (const t of all) {
       if (!t.name) continue;
+      // Arguments cut off mid-JSON (length limit, dropped stream) used to go
+      // out as a "complete" call: the engine ran the tool with {} or failed,
+      // and the model re-issued it — the repeated-task loop. Say so instead.
+      if (!toolArgsComplete(t.args)) {
+        console.warn('[proxy] incomplete tool arguments dropped:', t.name);
+        emitText('\n[The call to ' + t.name + ' was cut off before its arguments were complete, so it was not run.'
+          + (stopReason === 'max_tokens' ? ' The reply hit the output-token limit.' : '') + ']\n');
+        continue;
+      }
       closeBlock();
       openBlock({ type: 'tool_use', id: t.id, name: t.name });
       sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: t.args || '{}' } });
@@ -313,7 +323,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         const line = raw.trim();
         if (!line.startsWith('data:')) return;
         const payload = line.slice(5).trim();
-        if (payload === '[DONE]') return;
+        if (payload === '[DONE]') { sawFinish = true; return; }
         let j;
         try { j = JSON.parse(payload); } catch { return; }
         // An error sent inside a 200 stream (context overflow, quota, a model
@@ -369,12 +379,16 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
           }
         }
         if (choice.finish_reason) {
+          sawFinish = true;
           const hadTool = sawTool;
           stopReason = choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn';
           flushTools();
           // A call recovered from text or reasoning still has to run, whatever
           // the provider called the finish.
           if (hadTool && stopReason === 'end_turn') stopReason = 'tool_use';
+          // "tool_calls" with no call that survived (no name, cut-off args):
+          // tool_use with no tool_use block ends the turn in silence.
+          if (stopReason === 'tool_use' && !sawTool) stopReason = 'end_turn';
         }
         if (j.usage) {
           const p = j.usage.prompt_tokens || j.usage.input_tokens;
@@ -415,7 +429,17 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     // Held-back text that was never a tool call is still the model's answer.
     else emitText(textCarry);
   }
+  // The upstream closed with no finish_reason, no [DONE] and nothing said: a
+  // dropped connection, not an empty answer. Report it so the engine retries.
+  if (!sawFinish && !sawText && !sawTool && !toolBuf.size && !textTools.length && !reasonAll.trim()) {
+    if (!res.writableEnded && !res.destroyed) {
+      try { sse('error', { type: 'error', error: { type: 'api_error', message: 'The provider stream ended before any reply' } }); } catch { /* socket gone */ }
+      try { res.end(); } catch { /* socket gone */ }
+    }
+    return;
+  }
   flushTools();   // tool calls buffered for sequential emission (no finish_reason seen)
+  if (stopReason === 'tool_use' && !sawTool) stopReason = 'end_turn';
   // The model reasoned and then said nothing. The engine reads that as an empty
   // reply (and a summary made this way fails compaction outright), so the
   // reasoning is the answer.
@@ -427,6 +451,13 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
 }
 
 const { THINK_CLOSE_RE } = require('../shared/think.js');
+
+/** Tool arguments are usable only when they parse to an object ('' means none). */
+function toolArgsComplete(args) {
+  const s = String(args == null ? '' : args).trim();
+  if (!s) return true;
+  try { const v = JSON.parse(s); return !!v && typeof v === 'object' && !Array.isArray(v); } catch { return false; }
+}
 
 // Last model each provider answered with, as a stand-in for one it lacks.
 const lastGoodModel = new Map();
@@ -698,8 +729,15 @@ function aggregateToAnthropic(j, body) {
   if (reasoning.trim()) content.push({ type: 'thinking', thinking: reasoning.trim().slice(0, 8000) });
   if (m.content) content.push({ type: 'text', text: m.content });
   for (const tc of m.tool_calls || []) {
-    let input = {};
-    try { input = JSON.parse(tc.function.arguments || '{}'); } catch { /* keep {} */ }
+    if (!tc.function || !tc.function.name) continue;
+    let input;
+    try { input = JSON.parse(tc.function.arguments || '{}'); } catch { input = undefined; }
+    // Unparseable arguments: running the tool with {} made the model retry
+    // the same call over and over. Report the cut-off call instead.
+    if (!input || typeof input !== 'object') {
+      content.push({ type: 'text', text: '[The call to ' + tc.function.name + ' was cut off before its arguments were complete, so it was not run.]' });
+      continue;
+    }
     content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: tc.function.name, input });
   }
   // Thought, then said nothing: the reasoning is all there is, so it is the answer.
@@ -707,9 +745,10 @@ function aggregateToAnthropic(j, body) {
   if (!content.length) content.push({ type: 'text', text: '' });
   // A recovered call means the turn ends in tool_use even when the provider
   // said "stop": the engine only continues the turn on tool_use.
-  const hasTools = (m.tool_calls || []).length > 0;
+  // Judge by the blocks actually emitted: "tool_calls" with every call dropped
+  // must not claim tool_use, or the engine waits for a call that never comes.
+  const hasTools = content.some((b) => b.type === 'tool_use');
   const stop = hasTools ? 'tool_use'
-    : choice.finish_reason === 'tool_calls' ? 'tool_use'
     : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn';
   return {
     id: j.id || 'chatcmpl-proxy',
@@ -925,4 +964,6 @@ module.exports = {
   inTokens,
   openaiBase,
   mapError,
+  toolArgsComplete,
+  aggregateToAnthropic,
 };

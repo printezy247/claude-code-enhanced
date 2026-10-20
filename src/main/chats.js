@@ -70,6 +70,15 @@ function leanEngineEnv({ env = {}, provider, model, settings = {}, contextOf } =
 }
 
 /**
+ * A writable npm cache for sandboxed chats (`npx` needs to write one; the
+ * sandbox keeps ~/.npm read-only). Null when the folder cannot be made.
+ */
+function sandboxNpmCache(home = os.homedir()) {
+  const dir = path.join(home, '.cache', 'claude-code-enhanced', 'npm');
+  try { fs.mkdirSync(dir, { recursive: true }); return dir; } catch { return null; }
+}
+
+/**
  * Plugins that replace tool output with "indexed, search for it" stubs. Claude
  * follows that up; most third-party models do not, re-run the same command
  * and loop. Off by default on translated providers; `settings.contextMode`
@@ -316,6 +325,13 @@ class ChatManager extends EventEmitter {
           ...(Array.isArray(s.allowedDomains) && s.allowedDomains.length ? { allowedDomains: s.allowedDomains } : {}),
         },
       };
+      // ~/.npm is read-only inside the sandbox, so `npx` died half-installed
+      // (EROFS, then MODULE_NOT_FOUND). Give npm its own writable cache.
+      const npmCache = sandboxNpmCache();
+      if (npmCache) {
+        options.sandbox.filesystem = { allowWrite: [npmCache] };
+        options.env.npm_config_cache = npmCache;
+      }
     }
     // Run the user's real claude executable (same auth/skills as the TUI);
     // the SDK's bundled copy can't be spawned from inside the asar archive.
@@ -516,9 +532,13 @@ class ChatManager extends EventEmitter {
             this._rememberSession(dir, chat.sessionId);
           }
           if (msg.type === 'result') {
-            chat.busy = false;
             chat.lastResult = msg;
-            this.emit('event', id, { kind: 'status', busy: false });
+            // Two prompts sent back to back: the first result is not the end.
+            // Stay busy (Stop stays visible) until the queue drains.
+            if (!(Number(msg.queued_turn_count) > 0)) {
+              chat.busy = false;
+              this.emit('event', id, { kind: 'status', busy: false });
+            }
           }
           // Rewind anchors: uuid-stamped user prompts (checkpointing on).
           if (msg.type === 'user' && msg.uuid && !msg.parent_tool_use_id) {
@@ -571,10 +591,12 @@ class ChatManager extends EventEmitter {
     let wake = null;
     let closed = false;
     return {
+      // false when the stream is closed: the message went nowhere.
       push(m) {
-        if (closed) return;
+        if (closed) return false;
         if (wake) { const w = wake; wake = null; w(m); }
         else queue.push(m);
+        return true;
       },
       // End the generator instead of leaving it suspended forever on the
       // pending `wake` promise — a suspended generator keeps the whole chat
@@ -630,7 +652,10 @@ class ChatManager extends EventEmitter {
     const content = blocks && blocks.length
       ? [...blocks, ...(text ? [{ type: 'text', text }] : [])]
       : text;
-    chat.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: chat.sessionId || '' });
+    // A closed input stream drops the message silently; say so instead of
+    // marking the chat busy forever.
+    const delivered = chat.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: chat.sessionId || '' });
+    if (delivered === false) return { ok: false, error: 'this session has ended — open a new chat (Ctrl+Shift+T)' };
     chat.busy = true;
     this.emit('event', id, { kind: 'status', busy: true });
     return { ok: true };
@@ -643,7 +668,14 @@ class ChatManager extends EventEmitter {
     try {
       const r = await chat.q.interrupt();
       stillQueued = (r && Array.isArray(r.still_queued)) ? r.still_queued.length : 0;
-    } catch { /* may already be stopping */ }
+    } catch (err) { console.warn('[chat] interrupt:', (err && err.message) || err); }
+    // Permission cards still pending for this chat are answered here, so a
+    // stop never leaves a clickable card behind a 6-minute timeout.
+    for (const entry of this._permsOf(id)) {
+      this._dropPerm(entry.requestId);
+      this.emit('event', id, { kind: 'permission-cleared', requestId: entry.requestId, reason: 'interrupted' });
+      try { entry.resolve({ behavior: 'deny', message: 'Interrupted by the user' }); } catch { /* settled */ }
+    }
     chat.busy = false;
     this.emit('event', id, { kind: 'status', busy: false });
     this.emit('event', id, { kind: 'interrupted', stillQueued });
@@ -1133,4 +1165,5 @@ module.exports.TASK_SUBTYPES = TASK_SUBTYPES;
 module.exports.transcriptItems = transcriptItems;
 module.exports.leanEngineEnv = leanEngineEnv;
 module.exports.pluginOverrides = pluginOverrides;
+module.exports.sandboxNpmCache = sandboxNpmCache;
 module.exports.PERM_TIMEOUT_MESSAGE = PERM_TIMEOUT_MESSAGE;

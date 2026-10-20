@@ -118,10 +118,10 @@ const Chat = (() => {
         <span class="chat-project"></span>
         <span class="chat-provider" title="provider"></span>
         <span class="chat-header-sep"></span>
-        <button class="chat-btn chat-mgr-btn hidden" title="Model manager: load / unload, context size, keep-alive">⚙ models</button>
-        <button class="chat-btn chat-stop hidden" title="Interrupt (Esc)">■ stop</button>
-        <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work">▶ continue</button>
-        <button class="chat-btn hdr-more" title="More actions">⋯</button>
+        <button class="chat-btn chat-mgr-btn hidden" title="Model manager: load / unload, context size, keep-alive"><span data-icon="gear"></span> models</button>
+        <button class="chat-btn chat-stop hidden" title="Interrupt (Esc)"><span data-icon="square"></span> stop</button>
+        <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work"><span data-icon="play"></span> continue</button>
+        <button class="chat-btn hdr-more" title="Chat actions" aria-label="Chat actions"><span data-icon="dots"></span></button>
       </div>
       <div class="chat-ctxbar hidden" title="Context window usage"><i></i></div>
       <div class="chat-body">
@@ -140,28 +140,23 @@ const Chat = (() => {
       </div>
       <div class="chat-perm-slot"></div>
       <div class="chat-composer">
-        <div class="chat-workflows" title="One-click workflows">          <span class="wf-label">workflows</span>
-          <button class="wf-chip" data-wf="research"><span data-icon="search"></span> deep research</button>
-          <button class="wf-chip" data-wf="review"><span data-icon="search"></span> code review</button>
-          <button class="wf-chip" data-wf="explain"><span data-icon="notebook"></span> explain repo</button>
-          <button class="wf-chip" data-wf="plan"><span data-icon="map"></span> plan feature</button>
-          <button class="wf-chip" data-wf="testfix"><span data-icon="check"></span> test &amp; fix</button>
-        </div>
         <div class="chat-imgs hidden"></div>
         <div class="chat-queued hidden"></div>
         <div class="chat-slash hidden"></div>
         <div class="chat-input-row">
-          <button class="chat-attach" title="Attach an image or a file">＋</button>
-          <textarea class="chat-input" rows="1" placeholder="Ask Claude to work on this project…  (@ mentions files · paste or drop images · ↑ history)"></textarea>
-          <button class="chat-send" title="Send (Enter)">➤</button>
+          <button class="chat-attach" title="Attach an image or a file" aria-label="Attach a file"><span data-icon="clip2"></span></button>
+          <textarea class="chat-input" rows="1" placeholder="Ask Claude to work on this project…  (@ files · / commands · paste images)"></textarea>
+          <button class="chat-expand hidden" title="Expand the composer (Ctrl+E)" aria-label="Expand the composer" aria-pressed="false"><span data-icon="expand"></span></button>
+          <button class="chat-send" title="Send (Enter)" aria-label="Send"><span data-icon="send"></span></button>
         </div>
         <div class="chat-footbar">
-          <select class="chat-model-foot" title="Model"></select>
-          <select class="chat-mode-foot" title="Permission mode"></select>
-          <button class="chat-effort" title="Reasoning effort">effort: auto</button>
-          <select class="chat-style-foot hidden" title="Output style"></select>
+          <button class="foot-pick chat-wf-btn" title="Workflows — multi-step task flows" aria-haspopup="menu"><span data-icon="flow"></span><span>workflows</span><span class="caret" data-icon="chevron"></span></button>
+          <select class="foot-pick chat-model-foot" title="Model"></select>
+          <select class="foot-pick chat-mode-foot" title="Permission mode"></select>
+          <button class="foot-pick chat-effort" title="Reasoning effort (click to cycle)">effort: auto</button>
+          <select class="foot-pick chat-style-foot hidden" title="Output style"></select>
           <span class="foot-spacer"></span>
-          <span class="foot-hint">⏎ send · ⇧⏎ newline · esc stop</span>
+          <button class="foot-pick chat-compact-btn" title="Compact this conversation in place — earlier turns are summarized, the chat keeps going"><span class="ctx-ring" style="--p:0"></span><span class="ctx-pct">ctx</span><span>compact</span></button>
         </div>
         <div class="chat-statusline"><span class="sl-left">ready — the session starts with your first message</span><span class="sl-right"></span></div>
       </div>`;
@@ -195,6 +190,9 @@ const Chat = (() => {
       ctxFill: pane.querySelector('.chat-ctxbar i'),
       imgs: pane.querySelector('.chat-imgs'),
       contBtn: pane.querySelector('.chat-cont-btn'),
+      expandBtn: pane.querySelector('.chat-expand'),
+      wfBtn: pane.querySelector('.chat-wf-btn'),
+      compactBtn: pane.querySelector('.chat-compact-btn'),
       init: null, lives: null, tools: new Map(), busy: false, alive: true, dead: false,
       skillsDetail: [], slashIdx: -1, slashItems: [], sandbox: !!res.sandbox,
       pendingImages: [], promptHistory: [], histIdx: -1, filesCache: null,
@@ -337,14 +335,20 @@ const Chat = (() => {
       chat.histIdx = -1;
       autoTitle(chat, text);
       chat.composer.value = '';
+      chat.pane.classList.remove('composer-expanded');
       autosize(chat.composer);
       hideSlash(chat);
       clearImages(chat);
       ccx.invoke('chat:send', { id, text, blocks }).then((r) => {
-        if (!r.ok) appendError(chat, 'Session is no longer running — open a new chat (Ctrl+Shift+T). ' + (r.error || ''));
+        if (!r || !r.ok) {
+          appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)'));
+          setBusy(chat, false);
+        }
+      }).catch((e) => {
+        appendError(chat, 'Not sent — ' + ((e && e.message) || e));
+        setBusy(chat, false);
       });
     };
-    wireWorkflows(chat, send);
     chat.send = send;
 
     // ▶ continue: resume a turn the model ended early (long audits, relays)
@@ -408,6 +412,20 @@ const Chat = (() => {
       if (chat.busy) ccx.invoke('chat:interrupt', { id });   // button turns into stop
       else send();
     });
+    if (chat.expandBtn) {
+      chat.expandBtn.addEventListener('click', () =>
+        setExpanded(chat, !chat.pane.classList.contains('composer-expanded')));
+    }
+    chat.composer.addEventListener('keydown', (e) => {
+      if ((e.ctrlKey || e.metaKey) && String(e.key).toLowerCase() === 'e') {
+        e.preventDefault();
+        setExpanded(chat, !chat.pane.classList.contains('composer-expanded'));
+      }
+    });
+    // Compact in place: the engine summarizes earlier turns and the same chat
+    // keeps going (no new tab, no lost context).
+    if (chat.compactBtn) chat.compactBtn.addEventListener('click', () => doCompact(chat));
+    wireWorkflowPicker(chat, send);
     // Attach + drag-and-drop. The native dialog reads the file in main, so the
     // renderer never has to synthesise a File-like object. #32
     chat.attachBtn.addEventListener('click', async () => {
@@ -441,7 +459,9 @@ const Chat = (() => {
       setTimeout(() => {
         if (!chat.alive) return;
         appendUser(chat, opts.initText);
-        ccx.invoke('chat:send', { id, text: opts.initText });
+        ccx.invoke('chat:send', { id, text: opts.initText })
+          .then((r) => { if (!r || !r.ok) appendError(chat, 'Not sent — ' + ((r && r.error) || 'session not running')); })
+          .catch((e) => appendError(chat, 'Not sent — ' + ((e && e.message) || e)));
       }, 1500);
     }
     // Resumed sessions: replay the stored transcript so the past conversation shows.
@@ -503,11 +523,18 @@ const Chat = (() => {
     const sentences = paragraph.split(/(?<=[.!:])\s+/);
     const last = sentences[sentences.length - 1] || paragraph;
     if (/\b(done|completed?|finished|that'?s all|hope this helps|let me know)\b/i.test(last)) return false;
-    return /\b(let me|i'll|i will|i'm going to|i am going to|now i(?:'ll| will)?|next,? i(?:'ll| will)?|going to)\b/i.test(last);
+    // Only a sentence that hands off to an action counts: it ends in ":" / "…",
+    // or it OPENS with the intent ("Let me…", "Now I'll…"). A closing remark
+    // like "I'll leave the tests as they are." used to trigger a redo.
+    const intent = /\b(let me|i'll|i will|i'm going to|i am going to|now i(?:'ll| will)?|next,? i(?:'ll| will)?|going to)\b/i;
+    if (/(?::|…|\.\.\.)\s*$/.test(last)) return intent.test(last);
+    return /^(?:(?:ok(?:ay)?|now|next|so|alright|first|then)[,.]?\s+)*(?:let me|let's|i'll now|i will now|now i(?:'ll| will)|next,? i(?:'ll| will))\b/i.test(last);
   }
   function maybeNudge(chat, msg) {
     const on = !state.settings || state.settings.autoNudge !== false;
     if (!on || !chat.alive || (chat.nudges || 0) >= 1) return false;
+    // More turns already queued: the engine carries on by itself.
+    if (Number(msg.queued_turn_count) > 0 || chat.pendingImages.length) return false;
     if (!announcedNextStep(msg.result)) return false;
     // Never overwrite a draft the user is already typing.
     if (chat.composer.value.trim()) return false;
@@ -641,43 +668,117 @@ const Chat = (() => {
     }
   }
 
+/* ---------------- side panels (one frame for all of them) ---------------- */
+
+  // Every ⋯ panel used to be a bare box: no title bar, no close button, and
+  // two could stack on top of each other. They now share one frame — title,
+  // close (✕ / Esc), and only one open at a time.
+  function makePanel(chat, cls, icon, title, hint) {
+    chat.pane.querySelectorAll('.chat-skills-panel').forEach(p => p.remove());
+    const panel = el('div', 'chat-skills-panel ' + cls);
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', title);
+    const head = el('div', 'panel-head-row');
+    head.appendChild(elIcon('h4', '', (CCEIcons.svg(icon, 15) || '') + ' ' + esc(title)));
+    const x = elIcon('button', 'panel-close', CCEIcons.svg('close', 14));
+    x.title = 'Close (Esc)';
+    x.setAttribute('aria-label', 'Close ' + title);
+    x.addEventListener('click', () => panel.remove());
+    head.appendChild(x);
+    panel.appendChild(head);
+    if (hint) panel.appendChild(el('p', 'hint', hint));
+    panel.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); panel.remove(); chat.composer.focus(); }
+    });
+    return panel;
+  }
+  const panelOpen = (chat, cls) => {
+    const p = chat.pane.querySelector('.' + cls);
+    if (p) { p.remove(); return true; }
+    return false;
+  };
+
 /* ---------------- header overflow menu (#33) ---------------- */
 
   function wireHeaderMenu(chat, forkConversation) {
     let menu = null;
-    const close = () => { if (menu) { menu.remove(); menu = null; } };
+    const away = (e) => { if (menu && !menu.contains(e.target) && !chat.moreBtn.contains(e.target)) close(); };
+    const close = () => {
+      if (!menu) return;
+      menu.remove(); menu = null;
+      chat.moreBtn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('mousedown', away, true);
+    };
     // `icon` is a name from the shared SVG set, not a glyph: it inherits
     // currentColor and is hidden from assistive tech. #54
-    const item = (icon, label, run) => {
+    const item = (icon, label, run, { kbd, on } = {}) => {
       const b = el('button', 'chat-menu-item');
+      b.setAttribute('role', 'menuitem');
       b.appendChild(elIcon('span', 'chat-menu-ico', CCEIcons.svg(icon, 15)));
-      b.appendChild(el('span', '', label));
+      b.appendChild(el('span', 'cmi-label', label));
+      if (on) b.appendChild(el('span', 'cmi-on', 'on'));
+      if (kbd) b.appendChild(el('kbd', 'cmi-kbd', kbd));
       b.addEventListener('click', () => { close(); run(); });
       return b;
     };
+    const section = (name) => menu.appendChild(el('div', 'chat-menu-sec', name));
+    chat.moreBtn.setAttribute('aria-haspopup', 'menu');
     chat.moreBtn.addEventListener('click', () => {
       if (menu) return close();
       menu = el('div', 'chat-menu');
+      menu.setAttribute('role', 'menu');
+      const head = el('div', 'chat-menu-head');
+      head.appendChild(el('span', '', 'Chat actions'));
+      const x = elIcon('button', 'panel-close', CCEIcons.svg('close', 13));
+      x.setAttribute('aria-label', 'Close menu');
+      x.title = 'Close (Esc)';
+      x.addEventListener('click', close);
+      head.appendChild(x);
+      menu.appendChild(head);
+
+      section('This conversation');
+      menu.appendChild(item('compress', 'Compact in place', () => doCompact(chat), { kbd: '/compact' }));
+      menu.appendChild(item('search', 'Find in conversation', () => showFind(chat), { kbd: 'Ctrl+F' }));
+      menu.appendChild(item('fork', 'Fork this conversation', forkConversation));
+      menu.appendChild(item('undo', 'Rewind files', () => toggleRewindPanel(chat)));
+      menu.appendChild(item('download', 'Export as markdown', async () => {
+        if (!chat.sessionId) { toast('Nothing to export yet', 'err'); return; }
+        const r = await ccx.invoke('chat:export', { cwd: chat.cwd, sessionId: chat.sessionId });
+        if (r && r.ok && r.saved) toast('Saved ' + r.path, 'ok'); else if (r && !r.ok) toast(r.error, 'err');
+      }));
+      menu.appendChild(item('clock', 'Past conversations', () => toggleHistoryPanel(chat)));
+
+      section('Tools & context');
       menu.appendChild(item('bolt', 'Skills, commands, agents, hooks', () => toggleSkillsPanel(chat)));
       menu.appendChild(item('plug2', 'MCP servers (live)', () => toggleMcpPanel(chat)));
-      menu.appendChild(item('clock', 'Past conversations', () => toggleHistoryPanel(chat)));
-      menu.appendChild(item('⏪', 'Rewind files', () => toggleRewindPanel(chat)));
       menu.appendChild(item('brain', 'Memory & rules', () => toggleMemoryPanel(chat)));
-      menu.appendChild(item('⑂', 'Fork this conversation', forkConversation));
-      menu.appendChild(item('⌨', 'Terminal tab in this folder', () => window.createSession({ cwd: chat.cwd, type: 'shell' })));
+      menu.appendChild(item('list', 'Command palette', () => openPalette(chat), { kbd: 'Ctrl+K' }));
+
+      section('Workspace');
+      const splitOn = !!document.querySelector('#main.split');
+      menu.appendChild(item('split', 'Side panel (overview, files, terminal)', () => window.toggleSplit && window.toggleSplit(), { kbd: 'Alt+V', on: splitOn }));
+      menu.appendChild(item('keyboard', 'Terminal tab in this folder', () => window.createSession({ cwd: chat.cwd, type: 'shell' })));
       menu.appendChild(item('play', 'Run build / test scripts', () => chat.runBtn.click()));
-      menu.appendChild(item('▦', 'Toggle split view', () => window.toggleSplit && window.toggleSplit()));
       if (chat.provider && chat.provider.baseUrl) {
         menu.appendChild(item('gear', 'Model manager (load / unload)',
           () => (window.ProvidersUI ? ProvidersUI.openLocalManager(chat.provider.baseUrl) : (window.openOllamaManager && window.openOllamaManager(chat.provider)))));
       }
+      menu.addEventListener('keydown', (e) => {
+        const items = [...menu.querySelectorAll('.chat-menu-item')];
+        const i = items.indexOf(document.activeElement);
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); chat.moreBtn.focus(); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
+      });
       const rect = chat.moreBtn.getBoundingClientRect();
-      menu.style.top = (rect.bottom + window.scrollY + 6) + 'px';
-      menu.style.right = '18px';
       menu.style.position = 'fixed';
+      menu.style.top = (rect.bottom + 6) + 'px';
+      menu.style.right = Math.max(8, (window.innerWidth || 1200) - rect.right) + 'px';
       document.body.appendChild(menu);
-      const away = (e) => { if (!menu || !menu.contains(e.target)) { close(); document.removeEventListener('mousedown', away); } };
-      setTimeout(() => document.addEventListener('mousedown', away), 0);
+      chat.moreBtn.setAttribute('aria-expanded', 'true');
+      setTimeout(() => document.addEventListener('mousedown', away, true), 0);
+      const first = menu.querySelector('.chat-menu-item');
+      if (first) first.focus();
     });
   }
 
@@ -956,10 +1057,9 @@ const Chat = (() => {
   /* ---------------- memory & rules editor ---------------- */
 
   async function toggleMemoryPanel(chat) {
-    if (chat.pane.querySelector('.chat-memory-panel')) { chat.pane.querySelector('.chat-memory-panel').remove(); return; }
-    const panel = el('div', 'chat-skills-panel chat-memory-panel');
-    panel.appendChild(elIcon('h4', '', CCEIcons.svg('brain', 15) + ' Memory & rules'));
-    panel.appendChild(el('p', 'hint', 'What the engine loads at session start: CLAUDE.md memory, .claude/rules/*.md, and settings.json hooks. Hooks apply to sessions started after saving.'));
+    if (panelOpen(chat, 'chat-memory-panel')) return;
+    const panel = makePanel(chat, 'chat-memory-panel', 'brain', 'Memory & rules',
+      'What the engine loads at session start: CLAUDE.md memory, .claude/rules/*.md, and settings.json hooks. Hooks apply to sessions started after saving.');
     const pick = el('select', 'skills-search');
     const editor = el('textarea', 'mem-editor');
     editor.spellcheck = false;
@@ -1114,11 +1214,12 @@ const Chat = (() => {
   /* ---------------- skills panel ---------------- */
 
   async function toggleSkillsPanel(chat) {
-    let panel = chat.pane.querySelector('.chat-skills-panel');
-    if (panel) { panel.remove(); return; }
-    panel = el('div', 'chat-skills-panel');
-    panel.appendChild(elIcon('h4', '', CCEIcons.svg('bolt', 15) + ' Skills & commands'));
-    panel.appendChild(el('p', 'hint', 'Type / in the composer to run a command; skills auto-trigger when a task matches. Click a row to use it. Esc closes.'));
+    if (panelOpen(chat, 'chat-skills-main')) return;
+    const panel = makePanel(chat, 'chat-skills-main', 'bolt', 'Skills, commands, agents & hooks',
+      'Type / in the composer to run a command; skills auto-trigger when a task matches. Click a row to use it.');
+    // Jump links: the panel is long, so each section is one click away.
+    const jump = el('div', 'panel-tabs');
+    panel.appendChild(jump);
 
     const search = el('input', 'skills-search');
     search.type = 'text';
@@ -1261,9 +1362,15 @@ const Chat = (() => {
       }
       sec5.appendChild(tlist);
       body.appendChild(sec5);
+
+      jump.innerHTML = '';
+      for (const h of body.querySelectorAll('.skills-section h5')) {
+        const b = el('button', 'panel-tab', h.textContent);
+        b.addEventListener('click', () => h.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+        jump.appendChild(b);
+      }
     };
     search.addEventListener('input', render);
-    search.addEventListener('keydown', (e) => { if (e.key === 'Escape') panel.remove(); });
     render();
 
     // Memory & rules editor (CLAUDE.md, .claude/rules, settings hooks)
@@ -1315,24 +1422,44 @@ const Chat = (() => {
   const MCP_CLS = { connected: 'mcp-ok', failed: 'mcp-err', 'needs-auth': 'mcp-warn', pending: '', disabled: 'mcp-off' };
 
   async function toggleMcpPanel(chat) {
-    if (chat.pane.querySelector('.chat-mcp-panel')) { chat.pane.querySelector('.chat-mcp-panel').remove(); return; }
-    const panel = el('div', 'chat-skills-panel chat-mcp-panel');
-    panel.appendChild(elIcon('h4', '', CCEIcons.svg('plug2', 15) + ' MCP servers'));
-    panel.appendChild(el('p', 'hint', 'Live session status. Disable/enable applies to this session only; ↻ reconnects a failed server. Server config lives in Connectors.'));
+    if (panelOpen(chat, 'chat-mcp-panel')) return;
+    const panel = makePanel(chat, 'chat-mcp-panel', 'plug2', 'MCP servers (live)',
+      'Live session status. Disable/enable applies to this session only; reconnect retries a failed server. Click a server to see its tools.');
+    const filter = el('input', 'skills-search');
+    filter.placeholder = 'Filter servers or tools…';
+    panel.appendChild(filter);
+    const summary = el('div', 'mcp-summary');
+    panel.appendChild(summary);
     const body = el('div', 'skills-list');
     body.appendChild(el('div', 'hint', 'loading…'));
     panel.appendChild(body);
+    const refresh = elIcon('button', 'btn small', CCEIcons.svg('refresh', 14) + ' refresh');
+    refresh.addEventListener('click', () => load());
     const link = elIcon('button', 'btn small', CCEIcons.svg('gear', 14) + ' open connectors');
     link.addEventListener('click', () => { panel.remove(); switchView('connectors'); });
-    panel.appendChild(link);
+    const actions = el('div', 'perm-actions');
+    actions.appendChild(refresh);
+    actions.appendChild(link);
+    panel.appendChild(actions);
     chat.pane.appendChild(panel);
 
-    const load = async () => {
-      const r = await ccx.invoke('chat:mcp', { id: chat.id, op: 'status' });
+    let cached = null;
+    const load = async (fromCache) => {
+      const r = (fromCache && cached) || await ccx.invoke('chat:mcp', { id: chat.id, op: 'status' });
+      cached = r;
       if (!panel.isConnected) return;
       body.innerHTML = '';
-      const servers = (r.ok && r.servers) || [];
-      if (!servers.length) { body.appendChild(el('div', 'hint', 'No MCP servers in this session.')); return; }
+      const all = (r.ok && r.servers) || [];
+      const count = (st) => all.filter(s => s.status === st).length;
+      summary.innerHTML = '';
+      for (const [label, n, cls] of [['connected', count('connected'), 'mcp-ok'], ['failed', count('failed'), 'mcp-err'],
+        ['needs auth', count('needs-auth'), 'mcp-warn'], ['disabled', count('disabled'), 'mcp-off']]) {
+        if (n) summary.appendChild(el('span', 'chip ' + cls, n + ' ' + label));
+      }
+      const q = filter.value.trim().toLowerCase();
+      const servers = all.filter(s => !q || s.name.toLowerCase().includes(q)
+        || (s.tools || []).some(t => String(t.name).toLowerCase().includes(q)));
+      if (!servers.length) { body.appendChild(el('div', 'hint', all.length ? 'Nothing matches.' : 'No MCP servers in this session.')); return; }
       for (const s of servers) {
         const row = el('div', 'skill-row');
         row.appendChild(el('code', '', s.name));
@@ -1340,8 +1467,24 @@ const Chat = (() => {
         // The tool list is what proves the connector has tool-calling access.
         const tools = s.tools || [];
         if (tools.length) {
-          row.appendChild(el('span', 'chip mcp-ok', tools.length + ' tools'));
-          row.title = tools.map((t) => t.name).join(', ');
+          const tchip = el('button', 'chip mcp-ok chip-btn', tools.length + ' tools ▾');
+          tchip.title = 'Show the tools';
+          let open = false;
+          const tl = el('div', 'mcp-tools wide-hint hidden');
+          for (const t of tools) {
+            const tr = el('div', 'mcp-tool');
+            tr.appendChild(el('code', '', t.name));
+            if (t.description) tr.appendChild(el('span', 'skill-desc', String(t.description).slice(0, 140)));
+            tl.appendChild(tr);
+          }
+          tchip.addEventListener('click', (e) => {
+            e.stopPropagation();
+            open = !open;
+            tl.classList.toggle('hidden', !open);
+            tchip.textContent = tools.length + ' tools ' + (open ? '▴' : '▾');
+          });
+          row.appendChild(tchip);
+          row.__tools = tl;
         }
         if (s.error) row.appendChild(el('span', 'skill-desc', String(s.error).slice(0, 120)));
         const tog = el('button', 'btn small', s.status === 'disabled' ? 'enable' : 'disable');
@@ -1381,21 +1524,22 @@ const Chat = (() => {
           row.appendChild(ask);
         }
         body.appendChild(row);
+        if (row.__tools) body.appendChild(row.__tools);
       }
     };
+    filter.addEventListener('input', () => load(true));
     load();
+    filter.focus();
   }
 
   /* ---------------- rewind (file checkpoints) ---------------- */
 
   async function toggleRewindPanel(chat) {
-    const old = chat.pane.querySelector('.chat-rewind-panel');
-    if (old) { old.remove(); return; }
+    if (panelOpen(chat, 'chat-rewind-panel')) return;
     const r = await ccx.invoke('chat:checkpoints', { id: chat.id });
     const list = (r.ok && r.checkpoints) || [];
-    const panel = el('div', 'chat-skills-panel chat-rewind-panel');
-    panel.appendChild(el('h4', '', '⏪ Rewind files'));
-    panel.appendChild(el('p', 'hint', 'Restore files written/edited by this session to an earlier checkpoint. The conversation is NOT undone. Changes made by Bash are not tracked.'));
+    const panel = makePanel(chat, 'chat-rewind-panel', 'undo', 'Rewind files',
+      'Restore files written/edited by this session to an earlier checkpoint. The conversation is NOT undone. Changes made by Bash are not tracked. First click previews, second click applies.');
     const body = el('div', 'skills-list');
     if (!list.length) body.appendChild(el('div', 'hint', 'No checkpoints yet — they start with your first prompt in this session.'));
     for (const c of [...list].reverse()) {
@@ -1458,6 +1602,16 @@ const Chat = (() => {
     chat.ctxFill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
     chat.ctxBar.title = 'context: ' + (u.totalTokens || 0).toLocaleString() + ' / '
       + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
+    chat.ctxUsage = u;
+    if (chat.compactBtn) {
+      const ring = chat.compactBtn.querySelector('.ctx-ring');
+      if (ring) ring.style.setProperty('--p', pct.toFixed(1));
+      chat.compactBtn.classList.toggle('warn', pct > 65);
+      const lbl = chat.compactBtn.querySelector('.ctx-pct');
+      if (lbl) lbl.textContent = pct.toFixed(0) + '%';
+      chat.compactBtn.title = 'Context ' + pct.toFixed(0) + '% used (' + (u.totalTokens || 0).toLocaleString()
+        + ' / ' + (u.maxTokens || 0).toLocaleString() + ' tokens). Click to compact in place.';
+    }
   }
 
   function startContextPolling(chat) {
@@ -1641,24 +1795,141 @@ const Chat = (() => {
     },
   };
 
-  function wireWorkflows(chat, send) {
-    chat.pane.querySelectorAll('.wf-chip').forEach(chip => {
-      chip.addEventListener('click', async () => {
-        const wf = WORKFLOWS[chip.dataset.wf];
-        if (!wf || !chat.alive) return;
-        // Only switch for plan (explicitly read-only) or to leave plan; never quietly
-        // downgrade the user's auto / accept edits / yolo choice.
-        if (wf.mode && wf.mode !== chat.mode && (wf.mode === 'plan' || chat.mode === 'plan')) {
-          const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode: wf.mode });
-          if (r.ok) { chat.mode = wf.mode; chat.modeSel.value = wf.mode; toast('Mode → ' + modeLabel(chat.mode)); }
-          else toast(r.error, 'err');
+  // Task flows in the spirit of multi-agent harnesses (map context → plan →
+  // build → verify → ship): each is one staged prompt. `fill` ones put the
+  // prompt in the composer and wait for your words; the rest run at once.
+  Object.assign(WORKFLOWS, {
+    map: {
+      mode: 'acceptEdits', fill: true,
+      prompt: () => `Map the code that matters for this task before touching anything.\n\n1. Find the files, functions and tests involved (search, don't guess) — spawn parallel subagents for separate areas.\n2. List each with path:line and one line on its role, plus how data flows between them.\n3. Stop there: no edits. End with the 3 riskiest places to change.\n\nThe task: `,
+    },
+    brainstorm: {
+      mode: 'plan', fill: true,
+      prompt: () => `Brainstorm with me before any code. Ask me the questions you need (one batch), then propose 2–3 approaches with trade-offs and a recommendation.\n\nThe idea: `,
+    },
+    build: {
+      mode: 'acceptEdits', fill: true,
+      prompt: () => `Implement this end to end, in stages:\n\n1. Context: find the relevant files first (search, read).\n2. Plan: a short checklist (use the task list).\n3. Build: make the changes in small steps; run the build/tests after each step.\n4. Review: re-read your own diff (git diff) for bugs, missing tests and leftovers; fix them.\n5. Report: what changed, file by file, and how you verified it.\n\nThe feature: `,
+    },
+    bugfix: {
+      mode: 'acceptEdits', fill: true,
+      prompt: () => `Debug this systematically: reproduce it first, form hypotheses, test each with evidence (logs, a failing test), fix the root cause, add a regression test, and show the passing run.\n\nThe bug / error: `,
+    },
+    refactor: {
+      mode: 'acceptEdits', fill: true,
+      prompt: () => `Refactor without changing behaviour. Run the tests first to get a baseline, make the change in small verified steps, keep public APIs stable, and run the full suite at the end.\n\nWhat to refactor: `,
+    },
+    tests: {
+      mode: 'acceptEdits', fill: false,
+      prompt: () => `Find the most important untested behaviour in this repo (read the code and the existing tests), add focused tests for it in the project's existing test style, run them, and report the coverage you added.`,
+    },
+    security: {
+      mode: 'acceptEdits', fill: false,
+      prompt: () => `Security-review this repository: secrets in code or config, injection (shell, SQL, HTML), unsafe deserialization, path traversal, auth gaps, and risky dependencies. Report each finding with severity, file:line, an exploit sketch and a fix. Do not change code.`,
+    },
+    browser: {
+      mode: 'acceptEdits', fill: true,
+      prompt: () => `Test the running app like a user: start the dev server if needed, open it in a browser tool, walk the main flows, and report what breaks (console errors, failed requests, layout issues) with steps to reproduce.\n\nThe URL or flow to test: `,
+    },
+    commit: {
+      mode: 'acceptEdits', fill: false,
+      prompt: () => `Prepare this work for review: run the tests, read git status and git diff, group the changes into sensible commits with clear messages (do not push), and draft a pull-request description with a summary and a test plan.`,
+    },
+    docs: {
+      mode: 'acceptEdits', fill: false,
+      prompt: () => `Bring the docs up to date with the code: compare README and docs/ against the actual commands, options and behaviour, fix what is stale or missing, and list what you changed.`,
+    },
+  });
+
+  // Grouped and colour-coded for the picker (the colour is the stage).
+  const WORKFLOW_MENU = [
+    ['Understand', 'wf-c-understand', [
+      ['explain', 'notebook', 'Explain repo', 'architecture, entry points, gotchas'],
+      ['map', 'search', 'Map context', 'find the files a task touches'],
+      ['research', 'globe', 'Deep research', 'code + web, with evidence'],
+    ]],
+    ['Plan', 'wf-c-plan', [
+      ['brainstorm', 'thought', 'Brainstorm', 'questions, options, a recommendation'],
+      ['plan', 'map', 'Plan feature', 'plan mode — no edits'],
+    ]],
+    ['Build', 'wf-c-build', [
+      ['build', 'bolt', 'Build feature', 'context → plan → build → review'],
+      ['bugfix', 'bug', 'Fix a bug', 'reproduce, root cause, regression test'],
+      ['refactor', 'wrench', 'Refactor', 'behaviour stays the same'],
+    ]],
+    ['Verify', 'wf-c-verify', [
+      ['testfix', 'check', 'Test & fix', 'make the suite green'],
+      ['tests', 'list', 'Add tests', 'cover what is untested'],
+      ['review', 'eye', 'Code review', 'severity-ranked findings'],
+      ['security', 'shield', 'Security review', 'report only, no edits'],
+      ['browser', 'globe', 'Test in browser', 'walk the app like a user'],
+    ]],
+    ['Ship', 'wf-c-ship', [
+      ['commit', 'branch', 'Commit & PR draft', 'tests, commits, PR text'],
+      ['docs', 'file', 'Update docs', 'README and docs vs. code'],
+    ]],
+  ];
+
+  async function runWorkflow(chat, send, key) {
+    const wf = WORKFLOWS[key];
+    if (!wf || !chat.alive) return;
+    // Only switch for plan (explicitly read-only) or to leave plan; never quietly
+    // downgrade the user's auto / accept edits / yolo choice.
+    if (wf.mode && wf.mode !== chat.mode && (wf.mode === 'plan' || chat.mode === 'plan')) {
+      const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode: wf.mode });
+      if (r.ok) { chat.mode = wf.mode; chat.modeSel.value = wf.mode; toast('Mode → ' + modeLabel(chat.mode)); }
+      else toast(r.error, 'err');
+    }
+    chat.composer.value = wf.prompt(chat.cwd);
+    autosize(chat.composer);
+    chat.composer.focus();
+    chat.composer.setSelectionRange(chat.composer.value.length, chat.composer.value.length);
+    if (!wf.fill) send();   // self-contained workflows run immediately; fill-in ones wait for the user
+  }
+
+  function wireWorkflowPicker(chat, send) {
+    if (!chat.wfBtn) return;
+    let menu = null;
+    const close = () => {
+      if (!menu) return;
+      menu.remove(); menu = null;
+      chat.wfBtn.setAttribute('aria-expanded', 'false');
+      document.removeEventListener('mousedown', away, true);
+    };
+    const away = (e) => { if (menu && !menu.contains(e.target) && !chat.wfBtn.contains(e.target)) close(); };
+    chat.wfBtn.addEventListener('click', () => {
+      if (menu) return close();
+      menu = el('div', 'wf-menu');
+      menu.setAttribute('role', 'menu');
+      for (const [group, cls, rows] of WORKFLOW_MENU) {
+        const sec = el('div', 'wf-group ' + cls);
+        sec.appendChild(el('div', 'wf-group-name', group));
+        for (const [key, icon, label, hint] of rows) {
+          const b = el('button', 'wf-item');
+          b.setAttribute('role', 'menuitem');
+          b.dataset.wf = key;
+          b.appendChild(elIcon('span', 'wf-ico', CCEIcons.svg(icon, 14)));
+          const txt = el('span', 'wf-txt');
+          txt.appendChild(el('b', '', label));
+          txt.appendChild(el('span', '', hint + (WORKFLOWS[key].fill ? ' · you add the details' : ' · runs now')));
+          b.appendChild(txt);
+          b.addEventListener('click', () => { close(); runWorkflow(chat, send, key); });
+          sec.appendChild(b);
         }
-        chat.composer.value = wf.prompt(chat.cwd);
-        autosize(chat.composer);
-        chat.composer.focus();
-        chat.composer.setSelectionRange(chat.composer.value.length, chat.composer.value.length);
-        if (!wf.fill) send();   // self-contained workflows run immediately; fill-in ones wait for the user
+        menu.appendChild(sec);
+      }
+      menu.addEventListener('keydown', (e) => {
+        const items = [...menu.querySelectorAll('.wf-item')];
+        const i = items.indexOf(document.activeElement);
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); chat.wfBtn.focus(); }
+        else if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+        else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i - 1 + items.length) % items.length].focus(); }
       });
+      chat.pane.querySelector('.chat-composer').appendChild(menu);
+      chat.wfBtn.setAttribute('aria-expanded', 'true');
+      setTimeout(() => document.addEventListener('mousedown', away, true), 0);
+      const first = menu.querySelector('.wf-item');
+      if (first) first.focus();
     });
   }
 
@@ -1845,9 +2116,9 @@ const Chat = (() => {
     chat.pane.appendChild(btn);
     chat.runBtn = btn;
     btn.addEventListener('click', async () => {
-      if (menu) return close();
-      menu = el('div', 'chat-skills-panel chat-run-menu');
-      menu.appendChild(el('h4', '', '▶ run in a terminal tab'));
+      if (menu && menu.isConnected) return close();
+      menu = makePanel(chat, 'chat-run-menu', 'play', 'Run in a terminal tab',
+        'Opens a terminal tab in this folder and runs the command there.');
       const list = el('div', 'skills-list');
       menu.appendChild(list);
       const add = (label, cmd) => {
@@ -1877,15 +2148,23 @@ const Chat = (() => {
 
 
   async function toggleHistoryPanel(chat) {
-    let panel = chat.pane.querySelector('.chat-history-panel');
-    if (panel) { panel.remove(); return; }
-    panel = el('div', 'chat-skills-panel chat-history-panel');
-    panel.appendChild(el('h4', '', 'Past conversations — ' + basename(chat.cwd)));
-    panel.appendChild(el('p', 'hint', 'From the claude engine\u2019s transcript store — includes terminal TUI sessions. Open resumes; Fork branches without touching the original.'));
+    if (panelOpen(chat, 'chat-history-panel')) return;
+    const panel = makePanel(chat, 'chat-history-panel', 'clock', 'Past conversations · ' + basename(chat.cwd),
+      'From the engine’s transcript store, terminal sessions included. Open resumes; Fork branches without touching the original.');
+    const filter = el('input', 'skills-search');
+    filter.placeholder = 'Search this folder’s conversations…';
+    panel.appendChild(filter);
     const list = el('div', 'skills-list');
     panel.appendChild(list);
-    panel.appendChild(el('div', 'hint', 'Esc closes.'));
+    const allBtn = el('button', 'btn small', 'All conversations (every folder)');
+    allBtn.addEventListener('click', () => { panel.remove(); if (window.toggleConversations) window.toggleConversations(true); });
+    panel.appendChild(allBtn);
     chat.pane.appendChild(panel);
+    filter.addEventListener('input', () => {
+      const q = filter.value.trim().toLowerCase();
+      for (const row of list.querySelectorAll('.hist-row')) row.classList.toggle('hidden', !!q && !row.textContent.toLowerCase().includes(q));
+    });
+    filter.focus();
 
     const r = await ccx.invoke('chat:history', { cwd: chat.cwd });
     const sessions = (r.ok && r.sessions) || [];
@@ -1921,18 +2200,34 @@ const Chat = (() => {
 
   const COMPACT_PROMPT = 'Summarize this conversation so far as a handoff brief for a fresh session: project state, key decisions, files changed, open tasks, and next steps. Be dense and concrete. Reply with ONLY the brief.';
 
-  async function doCompact(chat) {
+  // In-place compaction: the engine's own /compact summarizes the earlier
+  // turns into the SAME session, so the chat, its tab and its tools carry on.
+  async function doCompact(chat, focus) {
+    if (!chat.alive) return;
+    if (chat.busy) { toast('Wait for the current turn to finish, then compact', 'err'); return; }
+    chat.msgs.querySelector('.chat-empty')?.remove();
+    chat.msgs.appendChild(el('div', 'sys-note', '✂ compacting this conversation in place…'));
+    scrollDownSoft(chat);
+    if (chat.compactBtn) chat.compactBtn.disabled = true;
+    const r = await ccx.invoke('chat:send', { id: chat.id, text: '/compact' + (focus ? ' ' + focus : '') });
+    if (chat.compactBtn) chat.compactBtn.disabled = false;
+    if (!r || !r.ok) appendError(chat, 'Could not compact: ' + ((r && r.error) || 'session not running'));
+  }
+
+  // The old behaviour, kept as /handoff: a brief, then a fresh session.
+  async function doHandoff(chat) {
     if (!chat.alive) return;
     chat.compacting = true;
     chat.msgs.querySelector('.chat-empty')?.remove();
-    chat.msgs.appendChild(el('div', 'sys-note', '✂ compacting — asking the engine for a handoff brief, then continuing in a fresh session…'));
+    chat.msgs.appendChild(el('div', 'sys-note', '✂ handoff — asking for a brief, then continuing in a fresh session…'));
     scrollDownSoft(chat);
     await ccx.invoke('chat:send', { id: chat.id, text: COMPACT_PROMPT });
   }
 
   function handleBuiltin(chat, text) {
     const cmd = text.split(/\s/)[0];
-    if (cmd === '/compact') { doCompact(chat); return true; }
+    if (cmd === '/compact') { doCompact(chat, text.slice(cmd.length).trim()); return true; }
+    if (cmd === '/handoff') { doHandoff(chat); return true; }
     if (cmd === '/clear') {
       createSession({ cwd: chat.cwd, providerUid: chat.provider ? chat.provider.uid : null, model: chat.model || '', permissionMode: chat.mode });
       toast('Fresh session opened (old one stays in History)');
@@ -1947,7 +2242,7 @@ const Chat = (() => {
     }
     if (cmd === '/model') { openCustomModel(chat); return true; }
     if (cmd === '/help') {
-      toast('Built-ins: /compact (handoff to fresh session) · /clear (new session) · /cost · /model · /help — every other /command runs in the engine (skills, custom commands)', '');
+      toast('Built-ins: /compact (summarize in place) · /handoff (brief → fresh session) · /clear (new session) · /cost · /model · /help — every other /command runs in the engine (skills, custom commands)', '');
       return true;
     }
     return false; // engine-side command (skills, plugins, custom)
@@ -2177,7 +2472,11 @@ const Chat = (() => {
         if (msg.subtype === 'init') { chat.init = msg; onInit(chat); }
         else if (msg.subtype === 'compact_boundary') {
           chat.msgs.querySelector('.chat-empty')?.remove();
-          const n = el('div', 'sys-note', '✂ context auto-compacted by the engine — earlier history summarized');
+          const manual = msg.compact_metadata && msg.compact_metadata.trigger === 'manual';
+          const n = el('div', 'sys-note', manual
+            ? '✂ conversation compacted — earlier turns summarized, same chat continues'
+            : '✂ context auto-compacted by the engine — earlier history summarized');
+          setTimeout(() => pollContext(chat), 300);
           chat.msgs.appendChild(n);
           scrollDownSoft(chat);
         } else handleSystemSubtype(chat, msg);
@@ -2186,7 +2485,13 @@ const Chat = (() => {
       case 'assistant': {
         // Replace any live blocks with the finalized rendering.
         clearLive(chat, msg.parent_tool_use_id);
-        if (msg.error && msg.error !== 'unknown') { appendError(chat, msg.error); break; }
+        if (msg.error && msg.error !== 'unknown') {
+          // The error code alone ("invalid_request") hid the provider's own
+          // words ("model not found", "context too long"); show both.
+          const detail = (msg.message?.content || []).filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
+          appendError(chat, detail ? msg.error + ': ' + detail.slice(0, 600) : msg.error);
+          break;
+        }
         for (const block of (msg.message?.content || [])) renderBlock(chat, block, msg.parent_tool_use_id);
         scrollDownSoft(chat);
         break;
@@ -2244,13 +2549,19 @@ const Chat = (() => {
         const metered = !chat.provider || !chat.provider.baseUrl;
         if (metered && typeof msg.total_cost_usd === 'number') chat.spent = (chat.spent || 0) + msg.total_cost_usd;
         setStatusLine(chat);
-        setBusy(chat, false);
+        const queued = Number(msg.queued_turn_count) || 0;
+        setBusy(chat, queued > 0);   // more turns waiting: still working
         // A coalesced turn can answer several prompts at once; say which, so a
         // user who sent two messages knows both were taken.
         for (const u of (msg.user_message_uuids || (msg.user_message_uuid ? [msg.user_message_uuid] : []))) {
           if (u) (chat.answeredUuids || (chat.answeredUuids = new Set())).add(u);
         }
-        showQueued(chat, Number(msg.queued_turn_count) || 0);
+        showQueued(chat, queued);
+        // Queued chips were never cleared: drop the ones this turn answered.
+        if (chat.pendingMsgs.length) {
+          chat.pendingMsgs.splice(0, Math.max(0, chat.pendingMsgs.length - queued));
+          renderQueued(chat);
+        }
         if (chat.compacting) {
           chat.compacting = false;
           const brief = String(msg.result || '').trim();
@@ -2508,6 +2819,7 @@ const Chat = (() => {
   function onInit(chat) {
     chat.msgs.querySelector('.chat-empty')?.remove();
     fillStyles(chat);
+    pollContext(chat).catch(() => {});   // the footer ring shows usage from the start
     // A plugin that failed to load is simply absent from the tool list, which
     // used to look like "that connector does not exist". Say which ones broke.
     for (const e of (chat.init.plugin_errors || [])) {
@@ -3767,10 +4079,29 @@ const Chat = (() => {
   function hideSlash(chat) { chat.slash.classList.add('hidden'); chat.slashIdx = -1; }
 
   // The composer stays ONE line tall; long requests scroll inside the box
-  // instead of growing it over the transcript. #feat-one-line-composer
+  // instead of growing it over the transcript. Once the text is longer than a
+  // line an expand button appears; expanded, the box grows to 40% of the
+  // window. #feat-one-line-composer
+  const ONE_LINE = 20;   // one line of text (line-height); the box adds the margin
   function autosize(ta) {
+    const pane = ta.closest && ta.closest('.chat-pane');
+    const expanded = !!(pane && pane.classList.contains('composer-expanded'));
     ta.style.height = 'auto';
-    ta.style.height = Math.min(42, ta.scrollHeight) + 'px';
+    const full = ta.scrollHeight;
+    const cap = expanded ? Math.max(ONE_LINE, Math.round((window.innerHeight || 800) * 0.4)) : ONE_LINE;
+    ta.style.height = Math.min(cap, Math.max(ONE_LINE, full)) + 'px';
+    const btn = pane && pane.querySelector('.chat-expand');
+    if (btn) btn.classList.toggle('hidden', !expanded && (full <= ONE_LINE + 2 && !ta.value.includes('\n')));
+  }
+  function setExpanded(chat, on) {
+    chat.pane.classList.toggle('composer-expanded', on);
+    if (chat.expandBtn) {
+      chat.expandBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      chat.expandBtn.title = on ? 'Back to one line (Ctrl+E)' : 'Expand the composer (Ctrl+E)';
+      chat.expandBtn.innerHTML = CCEIcons.svg(on ? 'shrink' : 'expand', 15);
+    }
+    autosize(chat.composer);
+    chat.composer.focus();
   }
 
   /* ---------------- global event wiring ---------------- */
