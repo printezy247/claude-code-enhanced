@@ -225,8 +225,11 @@ const Chat = (() => {
     closeBtn.title = 'Close chat';
     closeBtn.setAttribute('aria-label', 'Close chat');
     tab.appendChild(closeBtn);
-    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeChat(id); });
-    tab.addEventListener('click', () => activateChat(id));
+    // Read chat.id at click time: a provider switch re-keys the chat onto a
+    // new engine id (the listeners' creation-time `id` would go dead and the
+    // tab could neither be viewed nor closed).
+    closeBtn.addEventListener('click', (e) => { e.stopPropagation(); closeChat(chat.id); });
+    tab.addEventListener('click', () => activateChat(chat.id));
     $('#tabs').appendChild(tab);
     chat.tabEl = tab;
 
@@ -319,6 +322,16 @@ const Chat = (() => {
       chat.follow = true;   // sending jumps back to the live end
       updateLatestBtn(chat);
       if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
+      // A finished list retires on a new prompt (no note — the next turn
+      // brings its own); unfinished work stays visible through the steer.
+      if (chat.todosList.children.length
+        && [...chat.todosList.children].every(li => li.classList.contains('done'))) {
+        clearTimeout(chat.todosCleared);
+        chat.todosCleared = null;
+        chat.todosList.innerHTML = '';
+        chat.todosEl.classList.add('hidden');
+        if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id);
+      }
       appendUser(chat, text || '(image)');
       if (chat.busy) {
         chat.pendingMsgs.push(text);
@@ -521,11 +534,24 @@ const Chat = (() => {
     if (/(?::|…|\.\.\.)\s*$/.test(last)) return intent.test(last);
     return /^(?:(?:ok(?:ay)?|now|next|so|alright|first|then)[,.]?\s+)*(?:let me|let's|i'll now|i will now|now i(?:'ll| will)|next,? i(?:'ll| will))\b/i.test(last);
   }
+  // The agent stopped to wait for CI/merge, not because it stalled — nudging
+  // would only burn a whole turn pressuring a process that cannot go faster.
+  function waitingOnExternal(text) {
+    const t = String(text || '').trim();
+    if (!t) return false;
+    const paragraph = t.split(/\n{2,}/).pop();
+    return /\b(waiting|wait for|once (it|the|this)( is| goes)? green|when (it|the)( passes| is green| goes green)|poll|checking the ci|ci (status|checks?)|merge (once|when)|will merge|pipeline)\b/i.test(paragraph);
+  }
   function maybeNudge(chat, msg) {
     const on = !state.settings || state.settings.autoNudge !== false;
     if (!on || !chat.alive || (chat.nudges || 0) >= 1) return false;
     // More turns already queued: the engine carries on by itself.
     if (Number(msg.queued_turn_count) > 0 || chat.pendingImages.length) return false;
+    // Waiting is not stalling: live background tasks, an open approval, or a
+    // result that says it will come back when CI/merge lands.
+    if (chat.bgTasks.size > 0) return false;
+    if ((chat.permCount || 0) > 0 || (chat.elicCount || 0) > 0) return false;
+    if (waitingOnExternal(msg.result)) return false;
     if (!announcedNextStep(msg.result)) return false;
     // Never overwrite a draft the user is already typing.
     if (chat.composer.value.trim()) return false;
@@ -590,7 +616,13 @@ const Chat = (() => {
     }
     if (chat.alive) await ccx.invoke('chat:close', { id });
     chat.pane.remove(); chat.tabEl.remove(); chats.delete(id);
-    if (window.__tabs) window.__tabs.delete(id);
+    if (window.__tabs) {
+      // Clear before deleting: a stale busy flag would outlive the entry in
+      // any state the nav computed from it.
+      const m = window.__tabs.get(id);
+      if (m) { m.busy = false; m.needsYou = false; }
+      window.__tabs.delete(id);
+    }
     if (typeof window.updateTabCount === 'function') window.updateTabCount();
     if (window.__activateNext) window.__activateNext(id);
   }
@@ -2200,9 +2232,14 @@ const Chat = (() => {
     chat.msgs.appendChild(el('div', 'sys-note', '✂ compacting this conversation in place…'));
     scrollDownSoft(chat);
     if (chat.compactBtn) chat.compactBtn.disabled = true;
-    const r = await ccx.invoke('chat:send', { id: chat.id, text: '/compact' + (focus ? ' ' + focus : '') });
-    if (chat.compactBtn) chat.compactBtn.disabled = false;
-    if (!r || !r.ok) appendError(chat, 'Could not compact: ' + ((r && r.error) || 'session not running'));
+    try {
+      const r = await ccx.invoke('chat:send', { id: chat.id, text: '/compact' + (focus ? ' ' + focus : '') });
+      if (!r || !r.ok) appendError(chat, 'Could not compact: ' + ((r && r.error) || 'session not running'));
+    } catch (e) {
+      appendError(chat, 'Could not compact: ' + ((e && e.message) || e));
+    } finally {
+      if (chat.compactBtn) chat.compactBtn.disabled = false;   // a rejected invoke used to strand it disabled
+    }
   }
 
   // The old behaviour, kept as /handoff: a brief, then a fresh session.
@@ -2212,7 +2249,18 @@ const Chat = (() => {
     chat.msgs.querySelector('.chat-empty')?.remove();
     chat.msgs.appendChild(el('div', 'sys-note', '✂ handoff — asking for a brief, then continuing in a fresh session…'));
     scrollDownSoft(chat);
-    await ccx.invoke('chat:send', { id: chat.id, text: COMPACT_PROMPT });
+    try {
+      const r = await ccx.invoke('chat:send', { id: chat.id, text: COMPACT_PROMPT });
+      if (!r || !r.ok) {
+        // Drop compacting or the NEXT ordinary result is misread as the brief
+        // and spawns a session nobody asked for.
+        chat.compacting = false;
+        appendError(chat, 'Could not hand off: ' + ((r && r.error) || 'session not running'));
+      }
+    } catch (e) {
+      chat.compacting = false;
+      appendError(chat, 'Could not hand off: ' + ((e && e.message) || e));
+    }
   }
 
   function handleBuiltin(chat, text) {
@@ -2394,12 +2442,18 @@ const Chat = (() => {
     else if (kind === 'error') appendError(chat, evt.error);
     else if (kind === 'exit') {
       chat.alive = false; chat.tabEl.classList.add('dead'); setBusy(chat, false);
+      // The session is gone; no spinner may survive it in the tab bar.
+      const m = window.__tabs && window.__tabs.get(chat.id);
+      if (m) { m.busy = false; m.needsYou = false; }
+      if (typeof window.updateNavState === 'function') window.updateNavState();
       const n = el('div', 'sys-note', '— chat session ended —');
       chat.msgs.appendChild(n); scrollDownSoft(chat);
     }
   }
 
   function setBusy(chat, busy) {
+    // Late status frames from the dead engine must not resurrect a handed-off tab.
+    if (chat.handedOff && busy) return;
     chat.busy = busy;
     publishTabState(chat);
     chat.dot.classList.toggle('busy', busy);
@@ -2484,6 +2538,17 @@ const Chat = (() => {
           break;
         }
         for (const block of (msg.message?.content || [])) renderBlock(chat, block, msg.parent_tool_use_id);
+        // Checklist fallback: only fresh messages count (a reconnect replays
+        // the turn), and the stream is ordered so the last writer wins —
+        // tool renders and parses simply overwrite each other.
+        const text = (msg.message?.content || []).filter(b => b.type === 'text').map(b => b.text || '').join('\n');
+        const items = parseTodoChecklist(text);
+        if (items) {
+          const seen = chat.parsedTodoUuids || (chat.parsedTodoUuids = new Set());
+          const fresh = !msg.uuid || !seen.has(msg.uuid);
+          if (msg.uuid) seen.add(msg.uuid);
+          if (fresh) renderTodos(chat, { todos: items });
+        }
         scrollDownSoft(chat);
         break;
       }
@@ -2565,6 +2630,9 @@ const Chat = (() => {
               permissionMode: chat.mode,
               initText: 'Handoff brief from the previous session (compacted):\n\n' + brief + '\n\nConfirm you have the context by replying \"ready\", then wait for my next instruction.',
             });
+            // The old engine is finished; a late status frame from it must
+            // not resurrect this tab's busy spinner.
+            chat.handedOff = true;
           } else {
             appendError(chat, 'Compaction failed (' + msg.subtype + '). The engine auto-compacts near the context limit regardless.');
           }
@@ -3279,6 +3347,28 @@ const Chat = (() => {
   }
 
   /**
+   * Secondary todo source: models that never call TodoWrite still write
+   * checklists in prose. Only assistant text counts — never tool output,
+   * which is full of literal "- [ ]" lines — and only runs of ≥2 consecutive
+   * checkboxes, so one stray checkbox in prose is not a list. Fenced code
+   * blocks are stripped first so a diff snippet never becomes a todo.
+   */
+  function parseTodoChecklist(text) {
+    const stripped = String(text || '').replace(/```[\s\S]*?```/g, '');
+    const lines = stripped.split('\n');
+    const items = [];
+    let run = [];
+    const flushRun = () => { if (run.length >= 2) items.push(...run); run = []; };
+    for (const line of lines) {
+      const m = line.match(/^\s*[-*] \[( |x|X)\] (.+)$/);
+      if (m) run.push({ content: m[2].trim(), status: m[1].toLowerCase() === 'x' ? 'completed' : 'pending' });
+      else flushRun();
+    }
+    flushRun();
+    return items.length ? items : null;
+  }
+
+  /**
    * Newer engines track work with TaskCreate / TaskUpdate / TaskList instead of
    * TodoWrite, so the drawer (and the side panel that mirrors it) stayed empty.
    * Keep a per-chat board keyed by task id and render it the same way.
@@ -3314,6 +3404,8 @@ const Chat = (() => {
   function renderTodoItems(chat, items) {
     // The side panel mirrors this list; tell it now rather than on its next tick.
     const notify = () => { if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id); };
+    clearTimeout(chat.todosCleared);
+    chat.todosCleared = null;
     if (!items.length) {
       chat.todosList.innerHTML = '';
       chat.todosEl.classList.add('hidden');
@@ -3335,6 +3427,24 @@ const Chat = (() => {
     chat.todosEl.querySelector('h4').textContent = 'todos ' + done + '/' + items.length;
     chat.todosEl.classList.remove('hidden');
     notify();
+    // Finished list: show it a beat, then retire it with a note — unless the
+    // chat is busy, in which case re-check on the next beat (a busy re-render
+    // can still land more completed items).
+    if (items.length && items.every(t => t.status === 'completed')) {
+      const clearWhenDone = () => {
+        const kids = [...chat.todosList.children];
+        if (chat.busy || !kids.length || !kids.every(li => li.classList.contains('done'))) {
+          if (chat.busy) chat.todosCleared = setTimeout(clearWhenDone, 1500);
+          return;
+        }
+        chat.todosList.innerHTML = '';
+        chat.todosEl.classList.add('hidden');
+        chat.msgs.appendChild(el('div', 'sys-note', '✓ todos finished'));
+        scrollDownSoft(chat);
+        notify();
+      };
+      chat.todosCleared = setTimeout(clearWhenDone, 1500);
+    }
   }
 
   // Left/right text for a file-modifying tool call. The pre-edit content is not in

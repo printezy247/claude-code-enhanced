@@ -78,3 +78,54 @@ describe('provider toggle in the model dropdown (#feat-provider-toggle)', () => 
     expect(chat.provider.uid).toBe('p1');
   });
 });
+
+describe('tab lifecycle after a provider switch (stale-closure fix)', () => {
+  /** Run the rekey flow and return the surviving chat object. */
+  async function switched() {
+    h = loadRenderer({
+      ipc: ipcFor({
+        'chat:set-provider': () => ({
+          ok: true, id: 'c9',
+          provider: { ...P2, display: 'Provider Two', authKind: 'api-key' },
+          model: 'm2', permissionMode: 'acceptEdits',
+        }),
+      }),
+    });
+    await flush();
+    const chat = h.window.Chat.chats.get('c1');
+    chat.modelSel.value = '__prov:p2';
+    chat.modelSel.dispatchEvent(new h.window.Event('change'));
+    await flush(6);
+    expect(chat.id).toBe('c9');
+    return chat;
+  }
+
+  it('tab click activates the chat after a provider switch', async () => {
+    const chat = await switched();
+    // Deactivate first so the click has work to do.
+    chat.pane.classList.remove('active');
+    chat.tabEl.classList.remove('active');
+    h.window.tabRegistry.get('c9').tabEl.click();
+    expect(chat.pane.classList.contains('active')).toBe(true);
+  });
+
+  it('close button removes the chat after a provider switch', async () => {
+    const chat = await switched();
+    h.window.tabRegistry.get('c9').tabEl.querySelector('.close').click();
+    await flush();
+    expect(h.window.Chat.chats.has('c9')).toBe(false);
+    expect(chat.pane.isConnected).toBe(false);
+    expect(chat.tabEl.isConnected).toBe(false);
+  });
+
+  it('events for the pre-switch id are ignored after rekey', async () => {
+    const chat = await switched();
+    const before = chat.pane.querySelectorAll('.msg, .tool-card').length;
+    expect(() => h.window.Chat.handleEvent({
+      id: 'c1', kind: 'message',
+      msg: { type: 'assistant', message: { content: [{ type: 'text', text: 'late frame' }] } },
+    })).not.toThrow();
+    await flush();
+    expect(chat.pane.querySelectorAll('.msg, .tool-card').length).toBe(before);
+  });
+});

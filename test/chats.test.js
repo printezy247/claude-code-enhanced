@@ -324,6 +324,12 @@ describe('session options', () => {
     expect(JSON.stringify(lastOptions.env)).not.toContain('sk-secret-provider-key');
   });
 
+  it('appends the todo mandate to the session system prompt', async () => {
+    await openChat();
+    expect(lastOptions.appendSystemPrompt).toMatch(/todo/i);
+    expect(lastOptions.appendSystemPrompt).toMatch(/TodoWrite/);
+  });
+
   it('points background calls at the chat model on a translated provider', async () => {
     await openChat({ anthropicBaseUrl: 'http://127.0.0.1:9999/px/uid', model: 'laguna-s-2.1', providerInstance: { uid: 'uid', model: 'nemotron' } });
     expect(lastOptions.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('laguna-s-2.1');
@@ -397,5 +403,34 @@ describe('permission decisions fail closed', () => {
     mgr.answer(id, rid, 'allow');
     await until(() => res !== null);
     expect(res.behavior).toBe('allow');
+  });
+});
+
+describe('context window display', () => {
+  it('reports the declared limit when the engine clamped to 200k', async () => {
+    mgr.contextOf = () => 400000;
+    const { id } = await openChat();
+    ctrl.getContextUsage.mockResolvedValue({ totalTokens: 10, maxTokens: 200000, percentage: 5 });
+    const c = await mgr.context(id);
+    expect(c.maxTokens).toBe(400000);
+    expect(c.declared).toBe(400000);
+  });
+
+  it('keeps a real non-default engine limit', async () => {
+    mgr.contextOf = () => 0;
+    const { id } = await openChat();
+    ctrl.getContextUsage.mockResolvedValue({ totalTokens: 10, maxTokens: 100, percentage: 10 });
+    const c = await mgr.context(id);
+    expect(c.maxTokens).toBe(100);
+    expect(c.declared).toBe(0);
+  });
+
+  it('falls back to declared when the engine reports 0', async () => {
+    mgr.contextOf = () => 131072;
+    const { id } = await openChat();
+    ctrl.getContextUsage.mockResolvedValue({ totalTokens: 0, maxTokens: 0, percentage: 0 });
+    const c = await mgr.context(id);
+    expect(c.maxTokens).toBe(131072);
+    expect(c.declared).toBe(131072);
   });
 });

@@ -26,11 +26,15 @@ describe('smaller requests on translated providers', () => {
     expect(leanEngineEnv({ provider: null })).toEqual({});
   });
 
-  it('tells the engine a model\'s real window only when it is smaller than assumed', () => {
+  it('tells the engine a model\'s real window, raising above 200k too', () => {
     const small = leanEngineEnv({ provider: QWEN, model: 'm', contextOf: () => 131072 });
     expect(small.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('131072');
     const big = leanEngineEnv({ provider: QWEN, model: 'm', contextOf: () => 1000000 });
-    expect(big.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
+    expect(big.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('1000000');
+    const same = leanEngineEnv({ provider: QWEN, model: 'm', contextOf: () => 200000 });
+    expect(same.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined(); // engine default already 200k
+    const userSet = leanEngineEnv({ provider: QWEN, model: 'm', env: { CLAUDE_CODE_MAX_CONTEXT_TOKENS: '50000' }, contextOf: () => 1000000 });
+    expect(userSet.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBe('50000'); // user value wins
     const unknown = leanEngineEnv({ provider: QWEN, model: 'm', contextOf: () => 0 });
     expect(unknown.CLAUDE_CODE_MAX_CONTEXT_TOKENS).toBeUndefined();
   });

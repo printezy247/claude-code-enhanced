@@ -1,7 +1,7 @@
 // Phase 4-7 renderer features: live tool input, todos, tool grouping, the
 // ignored engine frames, the header menu, composer extras, theme, rewind
 // preview, edit-and-resubmit, session count, shortcuts.
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -83,6 +83,106 @@ describe('todos drawer (#5)', () => {
     const drawer = pane().querySelector('.chat-todos');
     expect(drawer.querySelectorAll('.todo-item').length).toBe(2);
     expect(drawer.querySelector('h4').textContent).toBe('todos 1/2');
+  });
+
+  it('renders a checklist from assistant plain text', async () => {
+    send({
+      msg: {
+        type: 'assistant', uuid: 'u-checklist',
+        message: { content: [{ type: 'text', text: 'Plan:\n- [ ] read file\n- [x] edit it' }] },
+      },
+    });
+    await flush();
+    const drawer = pane().querySelector('.chat-todos');
+    expect(drawer.classList.contains('hidden')).toBe(false);
+    expect(drawer.querySelectorAll('.todo-item').length).toBe(2);
+    expect(drawer.querySelectorAll('.todo-item.done').length).toBe(1);
+    expect(drawer.querySelector('h4').textContent).toBe('todos 1/2');
+  });
+
+  it('ignores checkboxes inside fenced code blocks', async () => {
+    send({
+      msg: {
+        type: 'assistant', uuid: 'u-fence',
+        message: { content: [{ type: 'text', text: '```diff\n- [ ] not a todo\n```' }] },
+      },
+    });
+    await flush();
+    expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(true);
+  });
+
+  it('clears the drawer 1.5s after every item completes', async () => {
+    vi.useFakeTimers();
+    try {
+      send({
+        msg: {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'tool_use', id: 'tdc1', name: 'TodoWrite', input: { todos: [{ content: 'a', status: 'completed' }] } }],
+          },
+        },
+      });
+      expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(false);
+      vi.advanceTimersByTime(1600);
+      expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(true);
+      expect(pane().textContent).toMatch(/todos finished/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not clear while the chat is busy', async () => {
+    vi.useFakeTimers();
+    try {
+      h.window.Chat.chats.get('c1').busy = true;
+      send({
+        msg: {
+          type: 'assistant',
+          message: {
+            content: [{ type: 'tool_use', id: 'tdc2', name: 'TodoWrite', input: { todos: [{ content: 'a', status: 'completed' }] } }],
+          },
+        },
+      });
+      vi.advanceTimersByTime(1600);
+      expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(false);
+      expect(pane().textContent).not.toMatch(/todos finished/);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps unfinished todos when a new user prompt is sent', async () => {
+    send({
+      msg: {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'tdk1', name: 'TodoWrite', input: { todos: [{ content: 'a', status: 'pending' }] } }],
+        },
+      },
+    });
+    await flush();
+    h.window.Chat.chats.get('c1').composer.value = 'keep going';
+    h.window.Chat.chats.get('c1').send();
+    await flush();
+    expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(false);
+    expect(pane().querySelector('.chat-todos .todo-item').textContent).toContain('a');
+  });
+
+  it('clears finished todos on a new user prompt without the note', async () => {
+    send({
+      msg: {
+        type: 'assistant',
+        message: {
+          content: [{ type: 'tool_use', id: 'tdk2', name: 'TodoWrite', input: { todos: [{ content: 'a', status: 'completed' }] } }],
+        },
+      },
+    });
+    await flush();
+    h.window.Chat.chats.get('c1').composer.value = 'next task';
+    h.window.Chat.chats.get('c1').send();
+    await flush();
+    expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(true);
+    expect(pane().textContent).not.toMatch(/todos finished/);
   });
 });
 
