@@ -324,6 +324,12 @@ describe('session options', () => {
     expect(JSON.stringify(lastOptions.env)).not.toContain('sk-secret-provider-key');
   });
 
+  it('appends the todo mandate to the session system prompt', async () => {
+    await openChat();
+    expect(lastOptions.appendSystemPrompt).toMatch(/todo/i);
+    expect(lastOptions.appendSystemPrompt).toMatch(/TodoWrite/);
+  });
+
   it('points background calls at the chat model on a translated provider', async () => {
     await openChat({ anthropicBaseUrl: 'http://127.0.0.1:9999/px/uid', model: 'laguna-s-2.1', providerInstance: { uid: 'uid', model: 'nemotron' } });
     expect(lastOptions.env.ANTHROPIC_SMALL_FAST_MODEL).toBe('laguna-s-2.1');

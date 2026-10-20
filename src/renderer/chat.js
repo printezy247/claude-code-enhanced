@@ -319,6 +319,16 @@ const Chat = (() => {
       chat.follow = true;   // sending jumps back to the live end
       updateLatestBtn(chat);
       if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
+      // A finished list retires on a new prompt (no note — the next turn
+      // brings its own); unfinished work stays visible through the steer.
+      if (chat.todosList.children.length
+        && [...chat.todosList.children].every(li => li.classList.contains('done'))) {
+        clearTimeout(chat.todosCleared);
+        chat.todosCleared = null;
+        chat.todosList.innerHTML = '';
+        chat.todosEl.classList.add('hidden');
+        if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id);
+      }
       appendUser(chat, text || '(image)');
       if (chat.busy) {
         chat.pendingMsgs.push(text);
@@ -2497,6 +2507,17 @@ const Chat = (() => {
           break;
         }
         for (const block of (msg.message?.content || [])) renderBlock(chat, block, msg.parent_tool_use_id);
+        // Checklist fallback: only fresh messages count (a reconnect replays
+        // the turn), and the stream is ordered so the last writer wins —
+        // tool renders and parses simply overwrite each other.
+        const text = (msg.message?.content || []).filter(b => b.type === 'text').map(b => b.text || '').join('\n');
+        const items = parseTodoChecklist(text);
+        if (items) {
+          const seen = chat.parsedTodoUuids || (chat.parsedTodoUuids = new Set());
+          const fresh = !msg.uuid || !seen.has(msg.uuid);
+          if (msg.uuid) seen.add(msg.uuid);
+          if (fresh) renderTodos(chat, { todos: items });
+        }
         scrollDownSoft(chat);
         break;
       }
@@ -3292,6 +3313,28 @@ const Chat = (() => {
   }
 
   /**
+   * Secondary todo source: models that never call TodoWrite still write
+   * checklists in prose. Only assistant text counts — never tool output,
+   * which is full of literal "- [ ]" lines — and only runs of ≥2 consecutive
+   * checkboxes, so one stray checkbox in prose is not a list. Fenced code
+   * blocks are stripped first so a diff snippet never becomes a todo.
+   */
+  function parseTodoChecklist(text) {
+    const stripped = String(text || '').replace(/```[\s\S]*?```/g, '');
+    const lines = stripped.split('\n');
+    const items = [];
+    let run = [];
+    const flushRun = () => { if (run.length >= 2) items.push(...run); run = []; };
+    for (const line of lines) {
+      const m = line.match(/^\s*[-*] \[( |x|X)\] (.+)$/);
+      if (m) run.push({ content: m[2].trim(), status: m[1].toLowerCase() === 'x' ? 'completed' : 'pending' });
+      else flushRun();
+    }
+    flushRun();
+    return items.length ? items : null;
+  }
+
+  /**
    * Newer engines track work with TaskCreate / TaskUpdate / TaskList instead of
    * TodoWrite, so the drawer (and the side panel that mirrors it) stayed empty.
    * Keep a per-chat board keyed by task id and render it the same way.
@@ -3327,6 +3370,8 @@ const Chat = (() => {
   function renderTodoItems(chat, items) {
     // The side panel mirrors this list; tell it now rather than on its next tick.
     const notify = () => { if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id); };
+    clearTimeout(chat.todosCleared);
+    chat.todosCleared = null;
     if (!items.length) {
       chat.todosList.innerHTML = '';
       chat.todosEl.classList.add('hidden');
@@ -3348,6 +3393,24 @@ const Chat = (() => {
     chat.todosEl.querySelector('h4').textContent = 'todos ' + done + '/' + items.length;
     chat.todosEl.classList.remove('hidden');
     notify();
+    // Finished list: show it a beat, then retire it with a note — unless the
+    // chat is busy, in which case re-check on the next beat (a busy re-render
+    // can still land more completed items).
+    if (items.length && items.every(t => t.status === 'completed')) {
+      const clearWhenDone = () => {
+        const kids = [...chat.todosList.children];
+        if (chat.busy || !kids.length || !kids.every(li => li.classList.contains('done'))) {
+          if (chat.busy) chat.todosCleared = setTimeout(clearWhenDone, 1500);
+          return;
+        }
+        chat.todosList.innerHTML = '';
+        chat.todosEl.classList.add('hidden');
+        chat.msgs.appendChild(el('div', 'sys-note', '✓ todos finished'));
+        scrollDownSoft(chat);
+        notify();
+      };
+      chat.todosCleared = setTimeout(clearWhenDone, 1500);
+    }
   }
 
   // Left/right text for a file-modifying tool call. The pre-edit content is not in

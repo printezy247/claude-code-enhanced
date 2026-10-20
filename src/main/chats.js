@@ -373,6 +373,12 @@ class ChatManager extends EventEmitter {
         snapshot: true,
       };
     }
+    // Every model/provider gets the todo discipline, not just the ones that
+    // remember it: plan before multi-step work, update on steer, check off as
+    // items finish. Works with the object-form systemPrompt above — the SDK
+    // only ignores appendSystemPrompt when systemPrompt is a plain string.
+    // #todos-every-model
+    options.appendSystemPrompt = 'For any multi-step request, before starting: create a todo list with TodoWrite (or TaskCreate/TaskUpdate if those tools are available). Update the list when the user steers the request. Mark each item completed as soon as it finishes. When all items are finished, say the list is complete.';
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)
