@@ -51,9 +51,24 @@ describe('tasks side panel', () => {
     expect(drawer.querySelector('h4').textContent).toBe('todos 1/2');
     h.window.toggleSplit(true);
     await flush(4);
-    expect(panel()).toContain('Tasks 1/2');
-    expect(panel()).toContain('✓ Typecheck the tree');
-    expect(panel()).toContain('○ Run the tests');
+    const card = h.window.document.querySelector('#split-body [data-card="tasks"]');
+    expect(card.querySelector('.tc-badge').textContent).toBe('1/2');
+    expect(card.querySelector('li.done .task-text').textContent).toBe('Typecheck the tree');
+    expect(card.querySelector('li.todo .task-text').textContent).toBe('Run the tests');
+  });
+
+  it('shows the live step and updates the open panel without waiting for a refresh', async () => {
+    h.window.toggleSplit(true);
+    await flush(4);
+    toolUse('t1', 'TodoWrite', { todos: [
+      { content: 'Read the code', status: 'completed', activeForm: 'Reading the code' },
+      { content: 'Fix the bug', status: 'in_progress', activeForm: 'Fixing the bug' },
+    ] });
+    toolResult('t1', 'ok');
+    await new Promise((r) => setTimeout(r, 200));   // the coalescing delay
+    const card = h.window.document.querySelector('#split-body [data-card="tasks"]');
+    expect(card.querySelector('.task-now').textContent).toBe('Fixing the bug');
+    expect(card.querySelector('li.active .task-text').textContent).toBe('Fix the bug');
   });
 
   it('drops a deleted task', async () => {
