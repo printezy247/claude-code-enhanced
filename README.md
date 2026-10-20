@@ -49,6 +49,7 @@ graph TD
 
 - [x] Streaming responses with live thinking blocks
 - [x] Tool-call cards with inline diffs
+- [x] Live shell output inside the tool card while a command runs
 - [x] Permission prompts in flow
 - [x] Model selector mid-conversation
 - [x] Mode selector (normal / accept edits / plan / yolo)
@@ -57,9 +58,27 @@ graph TD
 </details>
 
 <details>
+<summary><b>🪟 Multiple Windows</b></summary>
+
+- [x] `Ctrl+Shift+N` (or the **⧉ window** button) opens a second app window
+- [x] Each window owns its own chats and terminal sessions
+- [x] A window that closes takes its engine processes and ptys with it
+
+</details>
+
+<details>
 <summary><b>⚡ Terminal Tabs</b></summary>
 
 - [x] Real PTYs with genuine `claude` TUI
+
+</details>
+
+<details>
+<summary><b>🪙 Token Saver</b></summary>
+
+- [x] Shell output is compacted before the model reads it (head + tail, repeated
+      lines collapsed) — the card still shows the full text
+- [x] Budget is configurable (Settings → Chat behaviour), 500–100000 characters
 
 </details>
 
@@ -200,8 +219,8 @@ tabs and every stored session — no separate Sessions or History tabs:
 ## Keyboard
 
 `Ctrl+Shift+T` new session · `Ctrl+Shift+W` close tab · `Ctrl+Tab` next tab ·
-`Ctrl+K` command palette · `Ctrl+B` conversation list · `Alt+V` split view ·
-`Esc` stop / close panel · `Ctrl+Shift+C/V` copy/paste (terminal tabs only)
+`Ctrl+Shift+N` new window · `Ctrl+K` command palette · `Ctrl+B` conversation list ·
+`Alt+V` split view · `Esc` stop / close panel · `Ctrl+Shift+C/V` copy/paste (terminal tabs only)
 
 ## References
 
@@ -264,6 +283,6 @@ every push to `main` via GitHub Actions (`.github/workflows/ci.yml`).
 
 ## 🚀 Roadmap
 
-- [ ] Multi-window (one engine process per window)
-- [ ] Streaming Bash output inside tool cards
-- [ ] RTK-style output filtering to cut token usage
+- [x] Multi-window (one engine process per window)
+- [x] Streaming Bash output inside tool cards
+- [x] RTK-style output filtering to cut token usage

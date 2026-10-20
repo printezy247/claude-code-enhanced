@@ -2436,6 +2436,46 @@ function renderSettings() {
   cmRow.appendChild(cmSel);
   c3b.appendChild(cmRow);
   c3b.appendChild(el('div', 'hint', 'context-mode hides command output behind a search index. Claude searches it; other models usually re-run the same command over and over. Applies to new chats.'));
+  // Shell-output filter: the main process compacts big command output before
+  // it is handed to the model, so a noisy build log stops costing tokens.
+  const ofRow = el('label', 'check');
+  ofRow.appendChild(el('span', '', 'compact shell output sent to the model'));
+  const ofSel = el('select', 'skills-search');
+  ofSel.id = 'opt-outputfilter';
+  for (const [v, t] of [['on', 'Compacted — head + tail, repeated lines collapsed'], ['off', 'Full output (engine\'s own limit)']]) {
+    const o = el('option', '', t); o.value = v; ofSel.appendChild(o);
+  }
+  ofSel.value = s.outputFilter || 'on';
+  ofSel.style.maxWidth = '340px';
+  ofSel.addEventListener('change', () => saveSettings({ outputFilter: ofSel.value }));
+  ofRow.appendChild(ofSel);
+  c3b.appendChild(ofRow);
+  const ofMaxRow = el('label', 'fld');
+  ofMaxRow.appendChild(el('span', '', 'characters of shell output the model may read'));
+  const ofMax = el('input');
+  ofMax.type = 'number';
+  ofMax.id = 'opt-outputfilter-max';
+  ofMax.min = '500';
+  ofMax.max = '100000';
+  ofMax.step = '500';
+  ofMax.value = String(s.outputFilterMaxChars || 8000);
+  // The stylesheet only dresses text/password inputs, so the number box gets
+  // the same look inline.
+  ofMax.style.width = '160px';
+  ofMax.style.background = 'var(--bg2)';
+  ofMax.style.color = 'var(--text)';
+  ofMax.style.border = '1px solid var(--border)';
+  ofMax.style.borderRadius = '8px';
+  ofMax.style.padding = '8px 10px';
+  ofMax.style.fontSize = '13px';
+  ofMax.addEventListener('change', () => {
+    const n = Math.max(500, Math.min(100000, Number(ofMax.value) || 8000));
+    ofMax.value = String(n);
+    saveSettings({ outputFilterMaxChars: n });
+  });
+  ofMaxRow.appendChild(ofMax);
+  c3b.appendChild(ofMaxRow);
+  c3b.appendChild(el('div', 'hint', 'The card in the chat still shows the full output — only what the model reads is compacted, so long build logs cost fewer tokens. The budget is how many characters of a command’s output the model may see.'));
   body.appendChild(c3b);
 
   // sandbox
@@ -2684,6 +2724,23 @@ function renderClaudeBanner() {
   } else banner.classList.add('hidden');
 }
 
+/* ================= second window ================= */
+
+// A second application window. Which chats and terminals belong to which
+// window is the main process's business, so the renderer only has to ask.
+async function openNewWindow() {
+  // The preload throws for a channel it does not allow, so a missing handler
+  // is a rejected promise, not a { ok: false } reply. Catch both.
+  let r = null;
+  try {
+    r = await ccx.invoke('window:new', {});
+  } catch (err) {
+    toast('Could not open a new window: ' + String(err && err.message || err), 'err');
+    return;
+  }
+  if (!r || !r.ok) toast((r && r.error) || 'Could not open a new window', 'err');
+}
+
 /* ================= boot ================= */
 
 function wireChrome() {
@@ -2718,6 +2775,8 @@ function wireChrome() {
 
   // Layout toggles: left sidebar (Ctrl+\) and the right tasks panel. #feat-desktop-layout
   $('#btn-sidebar')?.addEventListener('click', () => toggleSidebar());
+  // A second application window (Ctrl+Shift+N).
+  $('#btn-new-window')?.addEventListener('click', () => openNewWindow());
   $('#btn-tasks')?.addEventListener('click', () => {
     const main = document.querySelector('#main');
     if (main && main.classList.contains('split')) toggleSplit(false);
@@ -2769,6 +2828,9 @@ function wireChrome() {
     if (e.ctrlKey && e.shiftKey) {
       if (e.key === 'T') { e.preventDefault(); openNewSessionModal(); }
       else if (e.key === 'W') { e.preventDefault(); if (state.activeId) killSession(state.activeId); }
+      // A second window. Nothing else claims Ctrl+Shift+N, so it is safe here
+      // — and it must not swallow the T/W/C/V branches above.
+      else if (String(e.key).toLowerCase() === 'n') { e.preventDefault(); openNewWindow(); }
       else if (e.key === 'C' && !inChat) {
         const s = state.sessions.get(state.activeId);
         if (s && s.term.hasSelection()) {

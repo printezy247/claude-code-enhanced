@@ -62,9 +62,15 @@ const ipcMain = {
   removeAllListeners() {},
 };
 
+/** Every window gets its own id, the way Electron numbers webContents. */
+let nextWebContentsId = 1;
+
 function makeWebContents() {
   const wc = {
-    send: (channel, payload) => sent.push({ channel, payload }),
+    id: nextWebContentsId++,
+    // The receiver is recorded too: the main process routes an event to the
+    // window that owns it, and a test has to see which window got it.
+    send: (channel, payload) => sent.push({ channel, payload, wcId: wc.id }),
     on() {},
     once() {},
     executeJavaScript: async () => undefined,
@@ -89,9 +95,17 @@ class BrowserWindow extends EventEmitter {
   loadFile() { this.shown = true; return Promise.resolve(); }
   loadURL() { return Promise.resolve(); }
   show() { this.shown = true; }
-  focus() {}
+  hide() { this.shown = false; }
+  focus() { this.focused = true; }
+  restore() { this.shown = true; }
+  minimize() { this.minimized = true; this.shown = false; }
   close() { this.destroyed = true; }
   isDestroyed() { return this.destroyed; }
+  isFocused() { return !!this.focused; }
+  isMinimized() { return !!this.minimized; }
+  isVisible() { return !!this.shown; }
+  setSize() {}
+  setBounds() {}
   setMenuBarVisibility() {}
   setMenu() {}
   setTitle() {}
@@ -145,6 +159,7 @@ module.exports = {
     windows.length = 0;
     exposed.clear();
     invokeCalls.length = 0;
+    nextWebContentsId = 1;
   },
   __userDataDir: ensureUserData,
 };
