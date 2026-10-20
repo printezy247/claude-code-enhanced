@@ -1,9 +1,120 @@
-<svg width="720" height="220" viewBox="0 0 720 220" xmlns="http://www.w3.org/2000/svg" aria-label="CCE Futuristic Header">
-  <defs><linearGradient id="heroGrad" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0f0c29"/><stop offset="50%" stop-color="#302b63"/><stop offset="100%" stop-color="#24243e"/></linearGradient></defs>
-  <rect width="720" height="220" fill="url(#heroGrad)" rx="20"/>
-  <circle cx="120" cy="100" r="60" stroke="#00d4ff" stroke-width="1.5" fill="none" opacity="0.6"/>
-  <circle cx="600" cy="120" r="70" stroke="#ff6b6b" stroke-width="1.2" fill="none" opacity="0.5"/>
-  <rect x="320" y="55" width="80" height="60" rx="8" fill="#1a1a2e" stroke="#00d4ff" stroke-width="2"/>
-  <text x="360" y="85" text-anchor="middle" font-family="monospace" font-size="22" fill="#00d4ff">&gt;_ AI</text>
-  <text x="360" y="105" text-anchor="middle" font-family="sans-serif" font-size="8" fill="#a0a0c0">CC ENHANCED</text>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 480" width="1200" height="480" role="img" aria-label="Claude Code Enhanced — desktop harness for the Claude CLI: Agent SDK chat, real TUI terminals, 230+ providers">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f0c29"/><stop offset="0.5" stop-color="#302b63"/><stop offset="1" stop-color="#24243e"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#00d4ff"/><stop offset="0.5" stop-color="#6bcb77"/><stop offset="1" stop-color="#ffd166"/>
+    </linearGradient>
+    <linearGradient id="metal" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffd9a8"/><stop offset="0.5" stop-color="#ff9a3c"/><stop offset="1" stop-color="#c8561a"/>
+    </linearGradient>
+    <linearGradient id="horizon" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#00d4ff" stop-opacity="0"/><stop offset="1" stop-color="#6bcb77" stop-opacity="0.25"/>
+    </linearGradient>
+    <pattern id="dots" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="1" cy="1" r="1" fill="#ffffff" fill-opacity="0.07"/>
+    </pattern>
+    <radialGradient id="glow1" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#00d4ff" stop-opacity="0.5"/><stop offset="1" stop-color="#00d4ff" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow2" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ff6b6b" stop-opacity="0.4"/><stop offset="1" stop-color="#ff6b6b" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glow3" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffd166" stop-opacity="0.25"/><stop offset="1" stop-color="#ffd166" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="1.6"/></filter>
+    <filter id="neon" x="-40%" y="-40%" width="180%" height="180%"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <filter id="textGlow" x="-10%" y="-40%" width="120%" height="180%"><feGaussianBlur stdDeviation="7" result="b"/><feComponentTransfer in="b" result="c"><feFuncA type="linear" slope="0.55"/></feComponentTransfer><feMerge><feMergeNode in="c"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <path id="p1" d="M820 90 L940 120 L1060 80 L1160 110"/>
+    <path id="p2" d="M820 90 L880 190 L1000 170 L1060 80"/>
+    <path id="p3" d="M680 150 L780 210 L900 180 L1000 170"/>
+    <path id="p4" d="M1060 80 L1160 110 L1180 200 L1080 170"/>
+    <mask id="floorMask"><rect width="1200" height="480" fill="url(#fade)"/></mask>
+    <linearGradient id="fade" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0"/><stop offset="0.55" stop-color="#fff" stop-opacity="1"/></linearGradient>
+    <clipPath id="frame"><rect width="1200" height="480" rx="24"/></clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1200" height="480" fill="url(#bg)"/>
+    <rect width="1200" height="480" fill="url(#dots)"/>
+
+    <ellipse cx="260" cy="240" rx="340" ry="220" fill="url(#glow1)">
+      <animate attributeName="rx" values="320;360;320" dur="9s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="1020" cy="120" rx="280" ry="200" fill="url(#glow2)">
+      <animate attributeName="cx" values="1020;980;1020" dur="11s" repeatCount="indefinite"/>
+    </ellipse>
+    <ellipse cx="720" cy="480" rx="520" ry="140" fill="url(#glow3)"/>
+
+    <rect y="260" width="1200" height="220" fill="url(#horizon)" opacity="0.4"/>
+
+    <g mask="url(#floorMask)" stroke="#00d4ff" stroke-opacity="0.12" fill="none" stroke-width="1">
+      <path d="M600 240 L-200 480"/><path d="M600 240 L50 480"/><path d="M600 240 L300 480"/><path d="M600 240 L500 480"/><path d="M600 240 L600 480"/>
+      <path d="M600 240 L700 480"/><path d="M600 240 L900 480"/><path d="M600 240 L1150 480"/><path d="M600 240 L1400 480"/>
+      <g stroke="#6bcb77" stroke-opacity="0.12"><path d="M0 320 H1200"/><path d="M0 370 H1200"/><path d="M0 430 H1200"/>
+        <path d="M0 280 H1200" stroke-opacity="0.5"><animate attributeName="d" values="M0 280 H1200;M0 480 H1200" dur="7s" repeatCount="indefinite"/><animate attributeName="stroke-opacity" values="0.5;0" dur="7s" repeatCount="indefinite"/></path>
+      </g>
+    </g>
+
+    <g stroke="#ffffff" stroke-opacity="0.16" fill="none" stroke-width="1.1">
+      <use href="#p1"/><use href="#p2"/><use href="#p3"/><use href="#p4"/>
+    </g>
+    <g fill="#0a0818" stroke="url(#accent)" stroke-width="1.6">
+      <circle cx="820" cy="90" r="4.5"/><circle cx="940" cy="120" r="5.5"/><circle cx="1060" cy="80" r="4.5"/><circle cx="1160" cy="110" r="5"/>
+      <circle cx="880" cy="190" r="4.5"/><circle cx="1000" cy="170" r="4"/><circle cx="680" cy="150" r="4.5"/><circle cx="780" cy="210" r="4"/><circle cx="900" cy="180" r="4"/><circle cx="1080" cy="170" r="4"/><circle cx="1180" cy="200" r="3.5"/>
+    </g>
+    <g fill="#00d4ff" filter="url(#soft)">
+      <circle r="2.6"><animateMotion dur="5s" repeatCount="indefinite"><mpath href="#p1"/></animateMotion></circle>
+      <circle r="2.6" fill="#6bcb77"><animateMotion dur="7s" begin="1.2s" repeatCount="indefinite"><mpath href="#p2"/></animateMotion></circle>
+      <circle r="2.2" fill="#ffd166"><animateMotion dur="6s" begin="0.6s" repeatCount="indefinite"><mpath href="#p3"/></animateMotion></circle>
+      <circle r="2.2" fill="#ff6b6b"><animateMotion dur="4.5s" begin="2s" repeatCount="indefinite"><mpath href="#p4"/></animateMotion></circle>
+    </g>
+
+    <g fill="none" stroke="#00d4ff" stroke-opacity="0.55" stroke-width="1.5">
+      <path d="M32 40 V24 H48"/><path d="M1168 40 V24 H1152"/>
+      <path d="M32 440 V456 H48"/><path d="M1168 440 V456 H1152"/>
+    </g>
+    <g font-family="ui-monospace, 'JetBrains Mono', Menlo, monospace" font-size="10" fill="#00d4ff" fill-opacity="0.6" letter-spacing="2">
+      <text x="60" y="32">SYS · LOCAL · v0.9.34</text>
+      <text x="60" y="464" letter-spacing="1.5">ELECTRON · NODE-PTY · AGENT SDK · 230+ PROVIDERS</text>
+      <text x="1140" y="464" text-anchor="end" letter-spacing="1.5">MIT · LINUX · AMD64</text>
+    </g>
+
+    <g transform="translate(80 100) scale(1.9)" filter="url(#neon)">
+      <path d="M 362 168 A 136 136 0 1 0 362 344" fill="none" stroke="url(#metal)" stroke-width="56" stroke-linecap="round" transform="scale(0.42)"/>
+      <path d="M 214 206 L 270 256 L 214 306" fill="none" stroke="#ffffff" stroke-width="30" stroke-linecap="round" stroke-linejoin="round" transform="scale(0.42)"/>
+      <rect x="130" y="129" width="29" height="12" rx="4" fill="url(#metal)" transform="scale(0.42)"/>
+    </g>
+
+    <text x="270" y="170" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="62" font-weight="800" fill="#ffffff" letter-spacing="-1.5" filter="url(#textGlow)">Claude Code</text>
+    <text x="270" y="236" font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif" font-size="62" font-weight="800" fill="url(#accent)" letter-spacing="-1.5" filter="url(#textGlow)">Enhanced</text>
+    <text x="272" y="274" font-family="ui-monospace, 'JetBrains Mono', Menlo, monospace" font-size="13" fill="#a0a0c0" letter-spacing="3">DESKTOP HARNESS · AGENT SDK CHAT · REAL TUI TERMINALS · 230+ PROVIDERS</text>
+
+    <g transform="translate(60 360)">
+      <rect width="1080" height="52" rx="26" fill="#0a0818" fill-opacity="0.88" stroke="url(#accent)" stroke-opacity="0.55"/>
+      <text x="26" y="33" font-family="ui-monospace, Menlo, monospace" font-size="15" fill="#00d4ff">$</text>
+      <text x="46" y="33" font-family="ui-monospace, Menlo, monospace" font-size="15" fill="#d3d9e8">sudo apt install ./claude-code-enhanced-&lt;version&gt;-amd64.deb</text>
+      <text x="1056" y="33" text-anchor="end" font-family="ui-monospace, Menlo, monospace" font-size="12" fill="#6bcb77">v0.9.34 · MIT</text>
+      <rect x="1" y="1" width="150" height="50" rx="25" fill="url(#accent)" opacity="0.14">
+        <animate attributeName="x" values="1;928;1" dur="9s" repeatCount="indefinite"/>
+      </rect>
+    </g>
+
+    <g transform="translate(1080 100)" filter="url(#soft)">
+      <rect width="92" height="26" rx="13" fill="#0a0818" fill-opacity="0.85" stroke="#00d4ff" stroke-opacity="0.5"/>
+      <text x="46" y="17" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#00d4ff" letter-spacing="1.5">AGENT SDK</text>
+    </g>
+    <g transform="translate(1080 136)" filter="url(#soft)">
+      <rect width="92" height="26" rx="13" fill="#0a0818" fill-opacity="0.85" stroke="#6bcb77" stroke-opacity="0.5"/>
+      <text x="46" y="17" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#6bcb77" letter-spacing="1.5">REAL PTY</text>
+    </g>
+    <g transform="translate(1080 172)" filter="url(#soft)">
+      <rect width="92" height="26" rx="13" fill="#0a0818" fill-opacity="0.85" stroke="#ffd166" stroke-opacity="0.5"/>
+      <text x="46" y="17" text-anchor="middle" font-family="ui-monospace, Menlo, monospace" font-size="10" fill="#ffd166" letter-spacing="1.5">230+ PROV</text>
+    </g>
+  </g>
+
+  <rect x="0.5" y="0.5" width="1199" height="479" rx="24" fill="none" stroke="url(#accent)" stroke-opacity="0.35"/>
 </svg>
