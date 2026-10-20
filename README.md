@@ -1,14 +1,24 @@
 <div align="center">
 
-<img src="docs/banner.svg" width="720" alt="Claude Code Enhanced banner">
+<p align="center">
+  <img src="docs/banner.svg" alt="Claude Code Enhanced — desktop harness for the Claude CLI: Agent SDK chat, real TUI terminals, 230+ providers" width="100%">
+</p>
 
 # Claude Code Enhanced (CCE)
 
 <p align="center">
+  <a href="https://github.com/printezy247/claude-code-enhanced/releases/latest"><img alt="Download the .deb" src="https://img.shields.io/badge/Download-.deb%20%C2%B7%20AppImage-00d4ff?style=for-the-badge&logo=linux&logoColor=0f0c29&labelColor=0f0c29"></a>
+  <a href="https://github.com/printezy247/claude-code-enhanced/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/printezy247/claude-code-enhanced/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=302b63&color=6bcb77"></a>
   <a href="package.json"><img src="https://img.shields.io/github/package-json/v/printezy247/claude-code-enhanced?style=for-the-badge&label=VERSION&labelColor=0f0c29&color=00d4ff" alt="Version"/></a>
-  <a href="https://github.com/printezy247/claude-code-enhanced/actions/workflows/ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/printezy247/claude-code-enhanced/ci.yml?branch=main&style=for-the-badge&label=CI&labelColor=302b63" alt="CI"/></a>
+  <a href="https://github.com/printezy247/claude-code-enhanced/blob/main/LICENSE"><img src="https://img.shields.io/github/license/printezy247/claude-code-enhanced?style=for-the-badge&label=LICENSE&labelColor=302b63&color=ff6b6b" alt="License"/></a>
   <a href="https://github.com/printezy247/claude-code-enhanced"><img src="https://img.shields.io/github/stars/printezy247/claude-code-enhanced?style=for-the-badge&logo=github&label=STARS&labelColor=24243e&color=ffd166" alt="Stars"/></a>
   <a href="https://github.com/printezy247/claude-code-enhanced"><img src="https://img.shields.io/github/languages/top/printezy247/claude-code-enhanced?style=for-the-badge&label=STACK&labelColor=1a1a2e&color=6bcb77" alt="Stack"/></a>
+</p>
+
+<p align="center">
+  <b>The Claude Code you know from the terminal — now a desktop app.</b><br>
+  Agent SDK chat with tool cards and permission prompts, real <code>claude</code> TUI terminals, and a 230+ provider manager — all driving the real engine, nothing patched.<br>
+  <sub>Electron · node-pty · @anthropic-ai/claude-agent-sdk · 230+ providers via models.dev</sub>
 </p>
 
 > **Desktop harness + Agent SDK chat + real TUI terminals + 230+ provider manager — for the Claude CLI.**
