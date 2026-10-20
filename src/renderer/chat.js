@@ -134,6 +134,9 @@ const Chat = (() => {
           </div>
         </div>
         <div class="chat-todos hidden"><h4>todos</h4><ol></ol></div>
+        <button class="chat-latest hidden" title="Jump to the latest response (End)" aria-label="Jump to the latest response">
+          <span data-icon="chevron"></span><span class="chat-latest-label">latest</span>
+        </button>
       </div>
       <div class="chat-perm-slot"></div>
       <div class="chat-composer">
@@ -185,6 +188,7 @@ const Chat = (() => {
       // to overwrite the element with a number and the next send threw.
       queuedEl: pane.querySelector('.chat-queued'),
       permSlot: pane.querySelector('.chat-perm-slot'), slash: pane.querySelector('.chat-slash'),
+      latestBtn: pane.querySelector('.chat-latest'),
       todosEl: pane.querySelector('.chat-todos'), todosList: pane.querySelector('.chat-todos ol'),
       moreBtn: pane.querySelector('.hdr-more'),
       ctxBar: pane.querySelector('.chat-ctxbar'),
@@ -200,7 +204,20 @@ const Chat = (() => {
       pendingResults: new Map(),
     };
     chats.set(id, chat);
-    chat.msgs.addEventListener('scroll', () => { chat.follow = nearBottom(chat); }, { passive: true });
+    chat.msgs.addEventListener('scroll', () => {
+      chat.follow = nearBottom(chat);
+      updateLatestBtn(chat);
+    }, { passive: true });
+    // The button appears as soon as the view leaves the live end, and clicking
+    // it returns to the newest response (and re-arms auto-follow).
+    if (chat.latestBtn) {
+      chat.latestBtn.addEventListener('click', () => {
+        chat.follow = true;
+        scrollDown(chat);
+        updateLatestBtn(chat);
+        chat.msgs.focus({ preventScroll: true });
+      });
+    }
     if (window.__CCE_SMOKE) console.log('[chat-created]', id, 'map size', chats.size);
 
     // tab
@@ -305,6 +322,7 @@ const Chat = (() => {
         return;
       }
       chat.follow = true;   // sending jumps back to the live end
+      updateLatestBtn(chat);
       if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
       appendUser(chat, text || '(image)');
       if (chat.busy) {
@@ -352,6 +370,14 @@ const Chat = (() => {
         chat.histIdx--;
         chat.composer.value = chat.histIdx < 0 ? '' : chat.promptHistory[chat.histIdx];
         return;
+      }
+      // End: back to the newest response. The composer keeps focus so the
+      // next message can be typed without a click.
+      if (e.key === 'End' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        chat.follow = true;
+        scrollDown(chat);
+        updateLatestBtn(chat);
       }
     });
 
@@ -1334,16 +1360,23 @@ const Chat = (() => {
           });
           row.appendChild(rc);
         }
-        // Per-connector "ask every time" — the desktop app's tool policy. The
-        // server is re-registered with always_ask on each of its tools.
+        // Per-connector "ask every time" — the desktop app's tool policy.
+        // The SDK carries the policy on the server definition, so it can only
+        // be applied to a server this session registered itself; re-registering
+        // a config-loaded server would replace a working one with a broken
+        // copy (stale auth header). Refuse rather than break the connector.
         if (tools.length) {
           const ask = el('button', 'btn small', 'ask every time');
           ask.title = 'Require an approval for every call to this connector';
           ask.addEventListener('click', async () => {
             ask.disabled = true;
-            const nr = await ccx.invoke('chat:mcp', { id: chat.id, op: 'connect', name: s.name, alwaysAsk: true });
+            const nr = await ccx.invoke('chat:mcp', {
+              id: chat.id, op: 'policy', name: s.name, policy: 'always_ask',
+              tools: tools.map((t) => t.name),
+            });
             ask.disabled = false;
-            if (!nr.ok) toast(nr.error, 'err'); else toast('Always ask enabled for ' + s.name, 'ok');
+            if (!nr.ok) toast(nr.error || 'Could not set the policy', 'err');
+            else toast('Always ask enabled for ' + s.name, 'ok');
           });
           row.appendChild(ask);
         }
@@ -2029,7 +2062,22 @@ const Chat = (() => {
   function scrollDown(chat) { chat.msgs.scrollTop = chat.msgs.scrollHeight; }
   // New output only pulls the view down while the user is at the bottom; once
   // they scroll up to read, it stays put until they come back (or send).
-  function scrollDownSoft(chat) { if (chat.follow !== false) scrollDown(chat); }
+  function scrollDownSoft(chat) {
+    if (chat.follow !== false) scrollDown(chat);
+    else updateLatestBtn(chat);
+  }
+
+  /**
+   * Show the "jump to latest" button while the view is away from the live
+   * end. Without it, scrolling up to read an earlier answer left no way back
+   * to the newest response short of dragging the scrollbar.
+   */
+  function updateLatestBtn(chat) {
+    const btn = chat.latestBtn;
+    if (!btn) return;
+    const away = !nearBottom(chat);
+    btn.classList.toggle('hidden', !away);
+  }
 
   function handleEvent(evt) {
     if (window.__CCE_SMOKE) console.log('[chat-event]', evt && evt.id, evt && evt.kind, evt && evt.msg && evt.msg.type);

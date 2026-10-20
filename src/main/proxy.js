@@ -127,6 +127,14 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   const onClientGone = () => abortUpstream();
   res.on('close', onClientGone);
 
+  // The engine's own request headers carry the session identity
+  // (x-claude-code-session-id). Gateways that route on a session — OpenCode
+  // Go answers "400 Request is missing x-opencode-session" without one — need
+  // it, and the translated path used to build a fresh header set, dropping it.
+  // Forward the session id under both names: the engine's own (Go recognises
+  // it) and the gateway's explicit spelling.
+  prov.sessionHeaders = sessionHeaders(inHeaders, body);
+
   const call = (b) => adapters.callUpstream(prov, b, wantStream, upstreamAbort.signal).catch((err) => {
     if (upstreamGone || /abort/i.test(String(err && err.message))) {
       // Client is gone; there is nobody to answer.
@@ -471,6 +479,17 @@ function mapError(status, message) {
   if (status !== 429 && /quota (has been |is )?(exhausted|exceeded|used up)|insufficient (balance|quota|credit)|out of credits?|payment (information|method|required)|billing/i.test(msg)) {
     return { status: 402, type: 'billing_error', message: 'The provider says this account has no usage left: ' + msg };
   }
+  // A session-routed gateway that got no session id. The proxy now forwards the
+  // engine's session id, so this is either a provider that wants a header CCE
+  // does not know about yet, or the request came in without one. Say which.
+  if (/missing x-opencode-session|MissingSessionID/i.test(msg)) {
+    return {
+      status: 400,
+      type: 'invalid_request_error',
+      message: 'The provider routes per conversation and needs a session id, which CCE did not send. '
+        + 'This provider is not supported yet — pick another one or report it.',
+    };
+  }
   switch (status) {
     case 400: case 422: return { status: 400, type: 'invalid_request_error', message: msg };
     case 401: return { status: 401, type: 'authentication_error', message: msg };
@@ -526,6 +545,30 @@ function isModelProbe(body) {
 // Headers that must not be copied from the engine's request to the upstream.
 const DROP_HEADERS = new Set(['host', 'connection', 'content-length', 'authorization', 'x-api-key',
   'x-cce-proxy-token', 'accept-encoding', 'transfer-encoding', 'keep-alive', 'upgrade']);
+
+/**
+ * The session identity to forward upstream.
+ *
+ * The engine sends `x-claude-code-session-id` on every /v1/messages call. Some
+ * gateways (OpenCode Go) reject a request without a session id, because they
+ * route and cache per conversation. The translated path rebuilt the header set
+ * from scratch, so the id never arrived and every turn failed with
+ * "400 Request is missing x-opencode-session".
+ *
+ * Both spellings are sent: the engine's own name (Go recognises it) and the
+ * gateway's documented `x-opencode-session`. The value is the engine's session
+ * id, so it stays stable for the whole conversation — which is what the
+ * gateway needs for prompt caching.
+ */
+function sessionHeaders(inHeaders, body) {
+  const out = {};
+  const raw = (inHeaders || {})['x-claude-code-session-id'];
+  const sid = typeof raw === 'string' ? raw.trim() : '';
+  if (!sid) return out;
+  out['x-claude-code-session-id'] = sid;
+  out['x-opencode-session'] = sid;
+  return out;
+}
 
 /** Fill in the token counts the claude engine reads (`usage.input_tokens`). */
 function ensureUsage(u, fallbackIn) {

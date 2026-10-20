@@ -690,34 +690,41 @@ class ChatManager extends EventEmitter {
   async mcpReconnect(id, name) { return await this._chat(id).q.reconnectMcpServer(String(name)); }
 
   /**
-   * Attach a connector to a LIVE session, so its tools are callable straight
-   * away instead of after the next chat start. This is the desktop app's
-   * "connect to MCP server" path: the server definition is registered with the
-   * engine (setMcpServers), which connects it and publishes its tool schemas.
+   * Apply a per-tool permission policy to a connector (the desktop app's
+   * "always ask" for connector tools).
+   *
+   * The SDK carries the policy on the server definition, so applying it means
+   * re-registering that server. Two facts, both verified against a live
+   * session, shape this method:
+   *
+   *  - setMcpServers REPLACES the whole dynamic server set: a payload that
+   *    omits a server drops it (a working 47-tool connector went to 0 tools).
+   *    The complete accumulated set is therefore always sent.
+   *  - The re-registered copy must carry the server's own credentials. With
+   *    the real definition it stays healthy (47 tools); with a stale or
+   *    missing Authorization header the server fails and loses every tool.
+   *    The caller resolves the definition from the CLI config for that reason.
+   *
+   * @param {string} id chat id
+   * @param {string} name server name
+   * @param {object} config the server definition (SDK McpServerConfig shape)
+   * @param {string[]} tools tool names to gate
+   * @param {'always_ask'|'always_allow'|'always_deny'} policy
    */
-  async mcpConnect(id, name, config, alwaysAsk) {
+  async mcpSetPolicy(id, name, config, tools, policy) {
     const chat = this._chat(id);
-    const entry = { ...config };
-    if (alwaysAsk) {
-      // Per-tool "always ask" policy — the desktop app's connector setting.
-      // The tool list is only known after a first connect, so it is read from
-      // the live status and applied on the next registration.
-      const tools = (await this.mcpStatus(id) || [])
-        .filter((sv) => sv.name === String(name))
-        .flatMap((sv) => (sv.tools || []).map((t) => t.name));
-      if (tools.length) entry.tools = tools.map((t) => ({ name: t, permission_policy: 'always_ask' }));
-    }
-    chat.dynamicMcp = { ...(chat.dynamicMcp || {}), [String(name)]: entry };
-    return await chat.q.setMcpServers(chat.dynamicMcp);
-  }
-
-  /** Drop a dynamically attached connector from the live session. */
-  async mcpDisconnect(id, name) {
-    const chat = this._chat(id);
-    const next = { ...(chat.dynamicMcp || {}) };
-    delete next[String(name)];
+    const names = (Array.isArray(tools) ? tools : []).map(String).filter(Boolean);
+    if (!names.length) throw new Error('no tools to gate');
+    const key = String(name);
+    const updated = {
+      ...(config || {}),
+      tools: names.map((t) => ({ name: t, permission_policy: policy })),
+    };
+    // Always send the full accumulated set: a partial payload drops servers.
+    const next = { ...(chat.dynamicMcp || {}), [key]: updated };
+    const res = await chat.q.setMcpServers(next);
     chat.dynamicMcp = next;
-    return await chat.q.setMcpServers(next);
+    return res;
   }
   async agents(id) { return await this._chat(id).q.supportedAgents(); }
   async applyFlags(id, patch) { return await this._chat(id).q.applyFlagSettings(patch || {}); }

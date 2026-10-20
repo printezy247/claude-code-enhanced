@@ -152,8 +152,8 @@ percentage ring, `Plan usage` / `Usage limits`, and a per-category breakdown
 
 | # | gap | evidence | fix |
 |---|---|---|---|
-| 1 | Connectors were CLI-only. The panel added servers to the CLI config, but a **running chat could not use them** and their tool list was never shown. | desktop: `setSessionConnectorEnabled`, `connectorToolsBySession`, `getProxiedConnectorCall` | `connectors.js` now parses `claude mcp get` into an SDK `McpServerConfig`; `chats.mcpConnect` registers it with `setMcpServers` so the tools are live in the open session; the panel shows the tool count and a per-connector **ask every time** policy (`always_ask`). |
-| 2 | The right rail only ever rendered the **Context** card. Environment, Changes and Connectors were dropped. | `git:info` returned no `ok` field; `renderTasks` bailed on `!r.ok` | `git:info` now answers `{ ok: true, … }`; the rail renders Environment, Context (with the category breakdown), Connectors and Tasks. |
+| 1 | Connectors were CLI-only. The panel added servers to the CLI config, but the **tool list was never shown** and there was no per-connector control. | desktop: `setSessionConnectorEnabled`, `connectorToolsBySession`, `getProxiedConnectorCall` | the rail renders a **Connectors** card with each session server's status, tool count and an enable/disable switch; the chat MCP panel shows the tool count and a per-connector **ask every time** policy (`always_ask`). |
+| 2 | The right rail rendered only the **Context** card in practice. Environment, Changes and Connectors were dropped. | `git:info` returned no `ok` field; `renderTasks` bailed on `!r.ok` | `git:info` now answers `{ ok: true, … }`; the rail renders Environment, Context (with the category breakdown), Connectors and Tasks. |
 | 3 | The right-rail **Terminal** was an empty xterm with no PTY behind it — nothing rendered, nothing could be typed. | `renderSplit` created a `Terminal` and never attached a session | the rail now spawns a real `session:create` shell and routes `pty:data` / `session:write` for it. |
 | 4 | The rail had no **Files** view and no way to see the folder. | desktop: `Files` pane | added a Files pane (project file list) and a Files entry in the pane selector. |
 | 5 | The context card showed one number. The desktop shows a per-category breakdown. | desktop: `categories[]` with `kind` | the card now lists the categories with their colour and token count. |
@@ -166,16 +166,28 @@ percentage ring, `Plan usage` / `Usage limits`, and a per-category breakdown
 
 - `src/main/connectors.js`
   - `parseMcpDefinition(output)` → `{type:'http'|'sse'|'stdio', url|command, args, headers}`
-  - `definition(claudePath, name)` / `definitions(claudePath)`
+  - `definition(claudePath, name)` — the server definition, credentials included
 - `src/main/chats.js`
-  - `mcpConnect(id, name, config, alwaysAsk)` — registers the connector with the
-    live session via `setMcpServers`; `alwaysAsk` attaches the SDK's
-    per-tool `permission_policy: 'always_ask'`.
-  - `mcpDisconnect(id, name)`
-- `src/main/main.js` — `chat:mcp` gains `op: 'connect' | 'disconnect'`.
-- Renderer — the Connectors list gets **connect to chat**; the chat MCP panel
-  shows the tool count and an **ask every time** button; the rail has a
-  **Connectors** card with a per-server enable switch.
+  - `mcpSetPolicy(id, name, config, tools, policy)` — applies the SDK's
+    per-tool `permission_policy` to a connector's tools.
+    The definition must carry the server's own credentials, and the **complete**
+    server set is always sent: `setMcpServers` replaces the whole dynamic set,
+    so a partial payload drops the servers it omits.
+- `src/main/main.js` — `chat:mcp` gains `op: 'policy'`.
+- Renderer — the chat MCP panel shows the tool count and an **ask every time**
+  button; the rail has a **Connectors** card with a per-server enable switch.
+
+Measured on a live session (111 MCP servers, `github` with 47 tools):
+
+| operation | result |
+|---|---|
+| `toggleMcpServer` disable → enable | server goes `disabled` (0 tools) → back to `connected` (47 tools); every other server untouched |
+| `reconnectMcpServer` | reconnects; no other server affected |
+| `setMcpServers` with a partial payload | **drops** the servers it omits — a 47-tool connector went to 0 |
+| `setMcpServers` re-registering a config server with a stale/missing `Authorization` | server fails, tools go to 0 |
+
+So the policy path re-registers a server with the definition read from
+`claude mcp get` (never a hand-built one), and always sends the full set.
 
 ### 3.2 Right rail
 
@@ -185,14 +197,27 @@ percentage ring, `Plan usage` / `Usage limits`, and a per-category breakdown
 - New panes: `Files`, and a `Terminal` pane with a real PTY.
 - Pane selector renamed `Tasks` → `Overview`; `Files` added.
 
-### 3.3 Minimalist UI
+### 3.3 Jump to the latest response
+
+Scrolling up to read an earlier answer left no way back to the newest
+response except dragging the scrollbar.
+
+- `src/renderer/chat.js` — a **latest** button floats over the transcript
+  (bottom-right, clear of the todos drawer). It appears as soon as the view
+  leaves the live end and disappears when it returns. Clicking it scrolls to
+  the newest response and re-arms auto-follow, so new output keeps pulling
+  the view down. `End` in the composer does the same.
+- The button mirrors the follow state exactly: it is driven by the same
+  `nearBottom()` test that decides whether new output scrolls the view.
+
+### 3.4 Minimalist UI
 
 - All nine large drop-shadows removed; surfaces are separated by 1px borders.
 - `--metal` is a flat colour instead of a brushed gradient.
 - Nothing else moved: contrast tokens, focus rings and the reduced-motion
   block are untouched (the a11y and motion suites still pass).
 
-### 3.4 Chat bootstrap
+### 3.5 Chat bootstrap
 
 - `src/main/bootstrap.js` — `detect()`, `capabilities()`, `promptAppend()`.
   Detection is disk-based (`~/.claude/skills`, `~/.claude/plugins/**`), trashed
@@ -204,6 +229,31 @@ percentage ring, `Plan usage` / `Usage limits`, and a per-category breakdown
 On this machine it resolves to: caveman `~/.claude/skills/synced/…/caveman`,
 superpowers `~/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1`
 (brainstorming present), rtk **not installed** — so rtk is not announced.
+
+### 3.6 Session identity for session-routed providers
+
+Gateways that route and cache per conversation require a session id on every
+request. OpenCode Go answers `400 Request is missing x-opencode-session and
+cannot be routed efficiently` without one.
+
+The claude engine **does** send one — `x-claude-code-session-id`, stable for
+the whole conversation — but the translated (Anthropic→OpenAI) proxy path
+rebuilt the header set from scratch and dropped it, so every turn against a Go
+provider failed mid-turn.
+
+- `src/main/proxy.js` — `sessionHeaders(inHeaders, body)` reads the engine's
+  session id and emits it under both the engine's name and the gateway's
+  documented `x-opencode-session`.
+- `src/main/adapters.js` — `upHeaders()` merges it into the upstream request
+  (a user-configured header still wins).
+
+Measured against the live endpoint:
+
+| request | result |
+|---|---|
+| no session header | `400 MissingSessionID` — the reported failure |
+| `x-opencode-session` | passes routing (fails later on the credential) |
+| `x-claude-code-session-id` | passes routing (Go recognises its own spelling) |
 
 ## 4. Still open (deliberately not built)
 
@@ -217,9 +267,12 @@ superpowers `~/.claude/plugins/cache/claude-plugins-official/superpowers/6.4.1`
 
 ## 5. Verification
 
-- `npm test` — 500 tests / 40 files, all green.
+- `npm test` — all green.
   New suites: `test/bootstrap.test.js` (detection + prompt),
   `test/connector-definitions.test.js` (`claude mcp get` parsing),
   `test/session-rail.test.js` (rail cards, context breakdown, connector card,
-  live terminal PTY).
+  live terminal PTY), `test/connector-policy.test.js` (the policy path keeps
+  the full server set and the credentials), `test/session-identity.test.js`
+  (header forwarding) and `test/proxy-session-id.test.js` (the header really
+  reaches the upstream).
 - `test/renderer-connectors.test.js` extended for the connect-to-chat action.

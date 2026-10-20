@@ -66,6 +66,11 @@ function upHeaders(prov) {
     else h.Authorization = 'Bearer ' + key;
   }
   if (prov.headers && typeof prov.headers === 'object') Object.assign(h, prov.headers);
+  // Session identity, when the proxy resolved one (see proxy.js
+  // sessionHeaders). Applied last so a user-supplied header still wins.
+  if (prov.sessionHeaders && typeof prov.sessionHeaders === 'object') {
+    for (const [k, v] of Object.entries(prov.sessionHeaders)) if (!h[k]) h[k] = v;
+  }
   return h;
 }
 

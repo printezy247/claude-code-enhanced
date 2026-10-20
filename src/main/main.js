@@ -1393,21 +1393,20 @@ function registerIpc() {
   handle('chat:context', async ({ id }) => ({ usage: await chats.context(id) }));
   handle('chat:checkpoints', async ({ id }) => ({ checkpoints: chats.checkpoints(id) }));
   handle('chat:rewind', async ({ id, uuid, dryRun }) => await chats.rewind(id, uuid, { dryRun: !!dryRun }));
-  handle('chat:mcp', async ({ id, op, name, enabled, alwaysAsk }) => {
+  handle('chat:mcp', async ({ id, op, name, enabled, tools, policy }) => {
     if (op === 'status') return { servers: await chats.mcpStatus(id) };
     if (op === 'toggle') return { server: await chats.mcpToggle(id, name, enabled) };
     if (op === 'reconnect') return { server: await chats.mcpReconnect(id, name) };
-    // Connect a connector to the running session: its tools become callable
-    // immediately, the way the desktop app's connector panel behaves.
-    if (op === 'connect') {
+    // Per-tool approval policy for a connector (the desktop app's
+    // "always ask" for destructive connector tools). The SDK carries the
+    // policy on the server definition, so the definition is resolved from the
+    // CLI config — the re-registered copy must keep the server's own
+    // credentials or it fails and loses every tool.
+    if (op === 'policy') {
       const def = await connectors.definition(claudePath(), name);
       if (!def) throw new Error('no definition for MCP server: ' + name);
-      const res = await chats.mcpConnect(id, def.name, def.config, !!alwaysAsk);
+      const res = await chats.mcpSetPolicy(id, def.name, def.config, tools, policy || 'always_ask');
       return { server: await chats.mcpStatus(id), added: res && res.added, errors: (res && res.errors) || [] };
-    }
-    if (op === 'disconnect') {
-      const res = await chats.mcpDisconnect(id, name);
-      return { server: await chats.mcpStatus(id), removed: res && res.removed, errors: (res && res.errors) || [] };
     }
     throw new Error('unknown mcp op: ' + op);
   });

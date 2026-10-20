@@ -1759,34 +1759,6 @@ function mcpRow(s, removable, { quiet = false } = {}) {
   if ((s.state === 'failed' || s.state === 'degraded') && s.detail) row.appendChild(el('span', 'meta mcp-why', s.detail));
   // In the sign-in group the summary already says how; one line per row was noise.
   if (s.state === 'auth' && !quiet) row.appendChild(el('span', 'meta mcp-why', 'run /mcp in a session → Authenticate'));
-  // Attach to the open chat: the server's tools become callable straight away,
-  // the way the desktop app's connector panel behaves. #feat-connector-tools
-  if (removable) {
-    const link = el('button', 'btn small', 'connect to chat');
-    link.title = 'Attach this connector to the open chat so its tools can be called';
-    link.addEventListener('click', async () => {
-      link.disabled = true;
-      link.textContent = 'connecting…';
-      const chatId = state.activeId;
-      const chat = window.Chat && Chat.chats.get(chatId);
-      if (!chat) {
-        link.disabled = false; link.textContent = 'connect to chat';
-        toast('Open a chat first, then connect the connector.', 'err');
-        return;
-      }
-      const r = await ccx.invoke('chat:mcp', { id: chat.id, op: 'connect', name: s.name });
-      link.disabled = false; link.textContent = 'connect to chat';
-      if (r && r.ok) {
-        const added = (r.added || []).length;
-        const errs = (r.errors || []).length;
-        toast(added ? 'Connected ' + s.name + ' — tools are live' : (errs ? 'Could not connect ' + s.name : 'Already connected'), errs ? 'err' : 'ok');
-        refreshMcpList();
-      } else {
-        toast((r && r.error) || 'Failed to connect ' + s.name, 'err');
-      }
-    });
-    row.appendChild(link);
-  }
   if (removable) {
     const rm = el('button', 'btn small danger', 'Remove');
     rm.addEventListener('click', async () => {

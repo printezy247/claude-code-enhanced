@@ -92,18 +92,7 @@ describe('your connectors list', () => {
     const rows = [...h.window.document.querySelectorAll('#mcp-list > .mcp-row')];
     expect(rows.map(r => r.querySelector('b').textContent)).toEqual(['github', 'supabase', 'brave']);
     expect(rows[2].textContent).toMatch(/CONNECTION_CLOSED/);
-    // "connect to chat" attaches the connector to the open session so its
-    // tools are callable; Remove deletes it from the CLI config.
-    expect([...rows[0].querySelectorAll('button')].map(b => b.textContent)).toEqual(['connect to chat', 'Remove']);
-  });
-
-  it('connects a connector to the open chat on click', async () => {
-    const h = await open({ 'chat:mcp': { ok: true, added: ['github'], servers: [] } });
-    const rows = [...h.window.document.querySelectorAll('#mcp-list > .mcp-row')];
-    [...rows[0].querySelectorAll('button')].find(b => b.textContent === 'connect to chat').click();
-    await flush();
-    const call = h.calls.find(c => c.channel === 'chat:mcp' && c.payload.op === 'connect');
-    expect(call.payload).toEqual({ id: 'c1', op: 'connect', name: 'github' });
+    expect([...rows[0].querySelectorAll('button')].map(b => b.textContent)).toEqual(['Remove']);
   });
 
   it('tucks plugin servers away without a Remove button', async () => {
