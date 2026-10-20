@@ -40,6 +40,7 @@ const { startProxy } = require('./proxy');
 const proxyToken = require('crypto').randomBytes(24).toString('hex');
 let proxyPort = null;
 const ChatManager = require('./chats');
+const { modelContext } = require('./modelcontext');
 
 const store = new Store();
 const auth = new AuthStore();
@@ -47,17 +48,6 @@ const sessions = new SessionManager();
 // The manager needs the proxy token so proxied chats authenticate.
 const chats = new ChatManager({ proxyToken, contextOf: modelContext });
 
-/**
- * Context window of a provider's model from models.dev, or 0 when unknown.
- * Dated variants (qwen3.5-plus-2026-02-15) fall back to the undated entry.
- */
-function modelContext(provider, model) {
-  const pid = provider && provider.presetId;
-  const id = String(model || (provider && provider.model) || '');
-  if (!pid || !id) return 0;
-  const hit = modelsdev.model(pid, id) || modelsdev.model(pid, id.replace(/-\d{4}-\d{2}-\d{2}$/, ''));
-  return (hit && hit.limit && Number(hit.limit.context)) || 0;
-}
 providers.useAuth(auth);
 let win = null;
 let tray = null;

@@ -42,7 +42,7 @@ const PERM_TIMEOUT_MESSAGE = 'The user did not answer this permission request wi
   + 'the user exactly which action is waiting for their approval.';
 
 /** Chat models are assumed to have this window unless told otherwise. */
-const ENGINE_DEFAULT_WINDOW = 200_000;
+const { ENGINE_DEFAULT_WINDOW } = require('./modelcontext');
 
 /**
  * Engine settings that shrink every request on a translated provider, where
@@ -53,8 +53,10 @@ const ENGINE_DEFAULT_WINDOW = 200_000;
  *   servers) on every request. The engine turns it off for non-Anthropic base
  *   URLs because most proxies drop its `tool_reference` results; this proxy
  *   translates them.
- * - Context window: a model with a smaller window than the engine assumes is
- *   compacted in time instead of failing with "prompt is too long".
+ * - Context window: the engine's 200k default is overridden whenever the
+ *   model's real window differs — smaller so compaction happens in time
+ *   instead of failing with "prompt is too long", larger so 1M models
+ *   actually get 1M.
  *
  * Values the user set themselves are left alone.
  */
@@ -62,9 +64,11 @@ function leanEngineEnv({ env = {}, provider, model, settings = {}, contextOf } =
   const out = {};
   if (!provider || (provider.protocol || 'openai') === 'anthropic') return out;
   if (settings.toolSearch !== false && env.ENABLE_TOOL_SEARCH == null) out.ENABLE_TOOL_SEARCH = 'true';
-  if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS == null && typeof contextOf === 'function') {
+  if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS != null) {
+    out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS); // user's own choice wins
+  } else if (typeof contextOf === 'function') {
     const ctx = Number(contextOf(provider, model)) || 0;
-    if (ctx > 0 && ctx < ENGINE_DEFAULT_WINDOW) out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(ctx);
+    if (ctx > 0 && ctx !== ENGINE_DEFAULT_WINDOW) out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(ctx);
   }
   return out;
 }
@@ -689,9 +693,19 @@ class ChatManager extends EventEmitter {
     return c;
   }
 
-  // Context-window usage: { totalTokens, maxTokens, percentage, categories }.
+  // Context-window usage: { totalTokens, maxTokens, percentage, categories,
+  // declared }. The engine may report its 200k default when the model's real
+  // window differs (a chat started before env took effect, or a clamped
+  // proxy) — report the declared limit instead so the UI shows the truth.
   async context(id) {
-    return await this._chat(id).q.getContextUsage();
+    const chat = this._chat(id);
+    const u = await chat.q.getContextUsage();
+    const provider = chat.providerInstance || chat.provider;
+    const model = chat.model || (provider && provider.model) || '';
+    const declared = (typeof this.contextOf === 'function' && Number(this.contextOf(provider, model))) || 0;
+    let maxTokens = u.maxTokens || declared || ENGINE_DEFAULT_WINDOW;
+    if (u.maxTokens === ENGINE_DEFAULT_WINDOW && declared > 0 && declared !== ENGINE_DEFAULT_WINDOW) maxTokens = declared;
+    return { ...u, maxTokens, declared };
   }
 
   // File checkpointing: restore every tracked file to the state at a user
