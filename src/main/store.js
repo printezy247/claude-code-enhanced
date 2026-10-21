@@ -6,6 +6,7 @@ const path = require('path');
 const os = require('os');
 const { app } = require('electron');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
+const { clampMaxChars } = require('./toolfilter');
 
 const DEFAULT_SETTINGS = {
   claudePath: '',            // empty = auto-detect
@@ -60,6 +61,13 @@ class Store {
     this.data.providers ??= [];
     this.data.configVersion ??= 2;
     this.data.settings = { ...DEFAULT_SETTINGS, ...(this.data.settings || {}) };
+    // The budget is a promise about what the model may read: 500…100000. A
+    // hand-edited config.json must not keep an out-of-range value in the
+    // store, where the Settings box would show it. #R3
+    if ('outputFilterMaxChars' in this.data.settings) {
+      this.data.settings.outputFilterMaxChars =
+        clampMaxChars(this.data.settings.outputFilterMaxChars);
+    }
     this.save();
   }
 
