@@ -58,6 +58,10 @@ async function fetchUpstream(url, opts, signal, tries = 2) {
   throw last;
 }
 
+const isGoogle = (prov) => String((prov && prov.baseUrl) || '').includes('generativelanguage.googleapis.com');
+/** Google's native route reads the key from x-goog-api-key and 401s on any Authorization header. */
+const usesGoogHeader = (prov) => prov.keyHeader === 'x-goog-api-key' || (prov.protocol === 'gemini' && isGoogle(prov));
+
 function upHeaders(prov) {
   const h = { 'content-type': 'application/json' };
   // Gateways that fingerprint the client (OpenCode Go) reject a request with
@@ -70,6 +74,7 @@ function upHeaders(prov) {
   const key = prov.apiKey || '';
   if (key) {
     if (prov.keyHeader === 'x-api-key') h['x-api-key'] = key;
+    else if (usesGoogHeader(prov)) h['x-goog-api-key'] = key;
     else h.Authorization = 'Bearer ' + key;
   }
   if (prov.headers && typeof prov.headers === 'object') Object.assign(h, prov.headers);
@@ -84,7 +89,7 @@ function upHeaders(prov) {
 /** Append the key as a query param for providers that want it there (Google). */
 function withQueryKey(url, prov) {
   const key = prov.apiKey || '';
-  const wantsQuery = prov.keyHeader === 'query' || String(prov.baseUrl || '').includes('generativelanguage.googleapis.com');
+  const wantsQuery = prov.keyHeader === 'query' || (isGoogle(prov) && !usesGoogHeader(prov));
   if (!wantsQuery || !key) return url;
   return url + (url.includes('?') ? '&' : '?') + 'key=' + encodeURIComponent(key);
 }

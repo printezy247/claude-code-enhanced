@@ -688,7 +688,7 @@ const ProvidersUI = (() => {
     const keyHeader = el('label', 'fld wide');
     keyHeader.appendChild(el('span', '', 'Auth header'));
     const khSel = el('select');
-    [['bearer', 'Authorization: Bearer'], ['x-api-key', 'x-api-key'], ['query', 'query param (?key=)'], ['api-key', 'api-key (Azure)']].forEach(([v, n]) => { const o = el('option', '', n); o.value = v; khSel.appendChild(o); });
+    [['bearer', 'Authorization: Bearer'], ['x-api-key', 'x-api-key'], ['query', 'query param (?key=)'], ['x-goog-api-key', 'x-goog-api-key (Google native)'], ['api-key', 'api-key (Azure)']].forEach(([v, n]) => { const o = el('option', '', n); o.value = v; khSel.appendChild(o); });
     khSel.value = p.keyHeader || 'bearer';
     keyHeader.appendChild(khSel);
 
