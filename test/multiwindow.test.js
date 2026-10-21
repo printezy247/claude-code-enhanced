@@ -5,7 +5,7 @@
 // windows apart is a record of which window opened what, and the routing
 // built on it. These tests pin that routing: a session's output goes to the
 // window that opened it, and a window cannot touch another window's chat.
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -96,5 +96,111 @@ describe('multi-window', () => {
     const w1 = stub.__state.windows[0];
     const res = await stub.__state.handlers.get('chat:close')(sender(w1), { id: 'cForeign' });
     expect(res.ok).toBe(true);
+  });
+
+  it('raises the window that owns the finished chat, not the newest one', () => {
+    // The notification click used to show `win` — the NEWEST window — so with
+    // two windows open, "Claude finished" could raise the wrong one.
+    const w1 = stub.__state.windows[0];
+    const w2 = stub.__state.windows[1];
+    windowRegistry.claim(w1.webContents.id, 'chats', 'cNotify');
+    const show1 = vi.spyOn(w1, 'show');
+    const show2 = vi.spyOn(w2, 'show');
+    stub.__state.notifications.length = 0;
+
+    main.chats.emit('event', 'cNotify', { kind: 'status', busy: false });
+
+    const notes = stub.__state.notifications;
+    expect(notes.length, 'no notification was raised').toBe(1);
+    notes[0].emit('click');
+    expect(show1, 'the owning window was not raised').toHaveBeenCalled();
+    expect(show2, 'the wrong window was raised').not.toHaveBeenCalled();
+  });
+
+  it('raises no notification for a chat the user closed', async () => {
+    const w2 = stub.__state.windows[1];
+    windowRegistry.claim(w2.webContents.id, 'chats', 'cClosed');
+    // Blur EVERY window, not just the owner. On the UNFIXED code the owner
+    // falls back to the NEWEST window (the fallback `win`), and that one was
+    // focused by `window:new` — so no notification is raised on the unfixed
+    // code either, and the RED would be a false one.
+    for (const w of stub.__state.windows) w.blur();
+    stub.__state.notifications.length = 0;
+
+    // The user closed the chat: its late frames are ghosts.
+    await stub.__state.handlers.get('chat:close')(sender(w2), { id: 'cClosed' });
+
+    main.chats.emit('event', 'cClosed', { kind: 'status', busy: false });
+    expect(stub.__state.notifications.length, 'a closed chat still raised a notification').toBe(0);
+  });
+
+  it('brings a hidden window back from the tray', async () => {
+    // Close-to-tray hides a window; with two windows open, closing the newest
+    // left the older, hidden one with no way back.
+    const w1 = stub.__state.windows[0];
+    const w2 = stub.__state.windows[1];
+    const set = stub.__state.handlers.get('settings:set');
+    const res = await set(null, { settings: { closeToTray: true } });
+    expect(res.ok, 'close-to-tray could not be turned on').toBe(true);
+    const tray = stub.__state.tray;
+    expect(tray, 'no tray item was created').toBeTruthy();
+    const show = (tray.menu && tray.menu.t || []).find((i) => i.label === 'Show');
+    expect(show, 'the tray has no Show item').toBeTruthy();
+
+    w1.hide();
+    expect(w1.isVisible(), 'the window did not hide').toBe(false);
+    show.click();
+    expect(w1.isVisible(), 'the tray did not bring the hidden window back').toBe(true);
+
+    // Leave the app as the test found it.
+    await set(null, { settings: { closeToTray: false } });
+    if (tray && !tray.isDestroyed()) tray.destroy();
+  });
+
+  it('tears a closed window down, and drops its chat’s later frames', () => {
+    // The plan's Review Focus #1: a window closes while a chat is running.
+    // The engine process and the pty must go with it, and the dead chat's
+    // frames must not show up in another window.
+    const w1 = stub.__state.windows[0];
+    const w2 = stub.__state.windows[1];
+    const closeSpy = vi.spyOn(main.chats, 'close');
+    const killSpy = vi.spyOn(main.sessions, 'kill');
+    windowRegistry.claim(w1.webContents.id, 'chats', 'cTear');
+    windowRegistry.claim(w1.webContents.id, 'sessions', 'sTear');
+
+    w1.close();
+
+    expect(closeSpy, 'the chat was not closed with its window').toHaveBeenCalledWith('cTear');
+    expect(killSpy, 'the session was not killed with its window').toHaveBeenCalledWith('sTear');
+
+    stub.__state.sent.length = 0;
+    main.chats.emit('event', 'cTear', { kind: 'status', busy: true });
+    const toW2 = stub.__state.sent.filter((s) => s.channel === 'chat:event'
+      && s.payload.id === 'cTear' && s.wcId === w2.webContents.id);
+    expect(toW2.length, 'the dead chat’s frames were delivered to another window').toBe(0);
+  });
+
+  it('raises the newest window when the owner is gone by the time it is clicked', async () => {
+    // The notification is raised for the window that OWNS the chat, but that
+    // window may be closed between the raise and the click. The click must
+    // then fall back to the newest window rather than doing nothing. #N1
+    const open = stub.__state.handlers.get('window:new');
+    await open(null, {});
+    await open(null, {});
+    const all = stub.__state.windows;
+    const owner = all[all.length - 2];
+    const newest = all[all.length - 1];
+    owner.blur();                    // the user is looking at another window
+    const show = vi.spyOn(newest, 'show');
+    windowRegistry.claim(owner.webContents.id, 'chats', 'cGoneWin');
+    stub.__state.notifications.length = 0;
+
+    main.chats.emit('event', 'cGoneWin', { kind: 'status', busy: false });
+    const notes = stub.__state.notifications;
+    expect(notes.length, 'no notification was raised').toBe(1);
+
+    owner.close();                   // the owner goes away before the click
+    notes[0].emit('click');
+    expect(show, 'the click raised no window at all').toHaveBeenCalled();
   });
 });

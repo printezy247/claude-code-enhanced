@@ -12,7 +12,7 @@ const { EventEmitter } = require('events');
 const providers = require('./providers');
 const { promptAppend: bootstrapPrompt } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
-const { compactBashOutput, toolResultText, DEFAULT_MAX_CHARS } = require('./toolfilter');
+const { compactBashOutput, toolResultText, clampMaxChars } = require('./toolfilter');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
@@ -310,7 +310,11 @@ class ChatManager extends EventEmitter {
     // Shell-output filter. The model reads a compacted result; the card in the
     // UI keeps the original, so nothing is hidden from the user. #feat-output-filter
     if (!settings || settings.outputFilter !== 'off') {
-      const maxChars = Number(settings && settings.outputFilterMaxChars) || DEFAULT_MAX_CHARS;
+      // The budget is clamped to the range the Settings row promises, in the
+      // main process: this is the code that uses the number, and a
+      // hand-edited config.json must not hand the model an unbounded result.
+      // #F1
+      const maxChars = clampMaxChars(settings && settings.outputFilterMaxChars);
       options.hooks = {
         PostToolUse: [{
           matcher: 'Bash',
@@ -631,6 +635,10 @@ class ChatManager extends EventEmitter {
         // before the first frame would otherwise fire a phantom "engine did
         // not start" error into a removed chat. #sec
         clearTimeout(chat.watchdog);
+        // The loop is over (it ended, or it threw): the live tail stops with
+        // it, so no timer outlives the chat and no dead engine is polled. The
+        // chat is gone, so no end-of-stream event is needed. #F2
+        this._stopTasksForChat(id, false);
         stream.close();
       }
     })();
@@ -720,6 +728,10 @@ class ChatManager extends EventEmitter {
   async interrupt(id) {
     const chat = this.chats.get(id);
     if (!chat) return;
+    // The Stop button ends the turn: the live tail must stop with it, or the
+    // card keeps updating and the engine is polled every 700 ms for a turn
+    // the user already ended. #F2
+    this._stopTasksForChat(id, true);
     let stillQueued = 0;
     try {
       const r = await chat.q.interrupt();
@@ -1164,12 +1176,30 @@ class ChatManager extends EventEmitter {
     if (msg.subtype === 'task_started') {
       // Without a tool_use_id there is no card to write into.
       if (!msg.tool_use_id) return;
+      // The live tail needs the engine's get_task_output control request. It
+      // exists at runtime (sdk.mjs: getTaskOutput) and its wire types are
+      // declared, but the method is NOT declared on the published Query
+      // interface — so an upstream rename is expected to fail soft here
+      // instead of throwing. #F4
       if (!chat || !chat.q || typeof chat.q.getTaskOutput !== 'function') return;
-      this._followTask(id, chat, taskId, msg.tool_use_id);
+      // A backgrounded task's tool_result is only a placeholder: the real
+      // result arrives later as a task_notification, so the live tail must
+      // keep running. #F7
+      this._followTask(id, chat, taskId, msg.tool_use_id, !!msg.is_backgrounded);
       return;
     }
     // The task is over: the tool_result that follows carries the real text.
     if (msg.subtype === 'task_notification') this._endTask(id, taskId, true);
+    if (msg.subtype === 'task_updated') {
+      // A task that moves to the background later says so here: from then on
+      // its tool_result is only a placeholder, so the live tail must keep
+      // running until the task_notification ends it. #R2
+      const entry = this.taskPolls.get(taskId);
+      if (entry && msg.patch && typeof msg.patch.is_backgrounded === 'boolean') {
+        entry.backgrounded = msg.patch.is_backgrounded;
+      }
+      return;
+    }
   }
 
   /**
@@ -1179,9 +1209,9 @@ class ChatManager extends EventEmitter {
    * rest are steady. One poll per task: a second start for the same task
    * would double the control requests the engine sees.
    */
-  _followTask(id, chat, taskId, toolUseId) {
+  _followTask(id, chat, taskId, toolUseId, backgrounded) {
     if (this.taskPolls.has(taskId)) return;
-    const entry = { chatId: id, taskId, toolUseId, timer: null, text: '', stopped: false };
+    const entry = { chatId: id, taskId, toolUseId, timer: null, text: '', stopped: false, backgrounded: !!backgrounded };
     this.taskPolls.set(taskId, entry);
     this.taskByTool.set(toolUseId, taskId);
 
@@ -1231,17 +1261,37 @@ class ChatManager extends EventEmitter {
   _endTaskByTool(id, toolUseId) {
     const taskId = this.taskByTool.get(toolUseId);
     if (!taskId) return;
+    const entry = this.taskPolls.get(taskId);
+    // A backgrounded task's tool_result is only a PLACEHOLDER — the real
+    // result arrives later as a task_notification. Stopping the poll here
+    // would cut the live tail short, so the task_notification ends it. #F7
+    if (entry && entry.backgrounded) return;
     this._endTask(id, taskId, true);
+  }
+
+  /**
+   * Stop every live-output poll belonging to one chat.
+   *
+   * A poll that outlives its chat keeps a timer alive and keeps asking a dead
+   * engine for output nobody is watching. `emitDone` tells the cards that the
+   * live stream is over, so they stop auto-expanding and stop showing a stale
+   * tail as if it were still live.
+   *
+   * @param {string} id chat id
+   * @param {boolean} emitDone  emit the end-of-stream event for each tool call
+   */
+  _stopTasksForChat(id, emitDone) {
+    for (const [taskId, entry] of [...this.taskPolls]) {
+      if (entry.chatId !== id) continue;
+      this._endTask(id, taskId, emitDone);
+    }
   }
 
   close(id) {
     const chat = this.chats.get(id);
     // A poll that outlives its chat would keep asking the engine for output
     // nobody is watching. #feat-live-output
-    for (const [taskId, entry] of [...this.taskPolls]) {
-      if (entry.chatId !== id) continue;
-      this._endTask(id, taskId, false);
-    }
+    this._stopTasksForChat(id, false);
     // Deny anything still waiting so no promise is left hanging after close. #20
     for (const entry of this._permsOf(id)) {
       if (this._dropPerm(entry.requestId)) {

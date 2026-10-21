@@ -42,6 +42,7 @@ let proxyPort = null;
 const ChatManager = require('./chats');
 const { modelContext } = require('./modelcontext');
 const { WindowRegistry, route } = require('./windows');
+const { clampMaxChars } = require('./toolfilter');
 
 const store = new Store();
 const auth = new AuthStore();
@@ -151,6 +152,22 @@ function trayUsable() {
 }
 let trayHasIcon = false;
 
+/**
+ * Show every window that is not visible, and focus the newest one.
+ *
+ * The tray must not strand a window: with two windows open, closing the
+ * newest one left the older, hidden one with no way back at all. #F9
+ */
+function showWindows() {
+  const wins = windowRegistry.windows().filter((w) => w && !w.isDestroyed());
+  for (const w of wins) {
+    if (typeof w.isVisible === 'function' && w.isVisible()) continue;
+    try { w.show(); } catch { /* the window may be gone */ }
+  }
+  const newest = wins[wins.length - 1];
+  if (newest) { try { newest.focus(); } catch { /* not ready yet */ } }
+}
+
 /** Build the tray icon + menu (close-to-tray). #46 */
 function createTray() {
   if (tray && !tray.isDestroyed()) return tray;
@@ -161,12 +178,12 @@ function createTray() {
     tray = new Tray(icon);
     tray.setToolTip('Claude Code Enhanced');
     const menu = Menu.buildFromTemplate([
-      { label: 'Show', click: () => { if (win && !win.isDestroyed()) win.show(); } },
+      { label: 'Show', click: () => showWindows() },
       { type: 'separator' },
       { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
     ]);
     tray.setContextMenu(menu);
-    tray.on('click', () => { if (win && !win.isDestroyed()) win.show(); });
+    tray.on('click', () => showWindows());
   } catch (err) {
     console.error('[cce] tray unavailable:', String(err.message || err));
     tray = null;
@@ -417,15 +434,18 @@ function createWindow() {
     // A window that goes away takes its chats and its terminals with it: the
     // engine processes and the ptys would otherwise outlive their owner and
     // keep burning tokens nobody sees. #feat-multi-window
-    for (const chatId of windowRegistry.itemsOf(wcId, 'chats')) {
-      try { chats.close(chatId); } catch { /* already gone */ }
-      windowRegistry.release('chats', chatId);
-    }
-    for (const sid of windowRegistry.itemsOf(wcId, 'sessions')) {
-      try { sessions.kill(sid); } catch { /* already gone */ }
-      windowRegistry.release('sessions', sid);
-    }
+    const chatIds = windowRegistry.itemsOf(wcId, 'chats');
+    const sessionIds = windowRegistry.itemsOf(wcId, 'sessions');
+    // The registry forgets the window, but remembers that these items died
+    // with it: a late frame for one of them is dropped instead of falling
+    // back to whichever window happens to be newest. #F3
     windowRegistry.remove(wcId);
+    for (const chatId of chatIds) {
+      try { chats.close(chatId); } catch { /* already gone */ }
+    }
+    for (const sid of sessionIds) {
+      try { sessions.kill(sid); } catch { /* already gone */ }
+    }
   });
   // Close-to-tray: the engine processes keep running, so closing the window
   // should not kill a 40-minute turn. Opt-in in Settings. #46
@@ -1317,37 +1337,52 @@ function registerIpc() {
     if (process.env.CCE_SMOKE && evt && (evt.kind === 'error' || evt.kind === 'status')) {
       console.log('CCE_SMOKE: chat-' + evt.kind, id, evt.kind === 'error' ? String(evt.error).slice(0, 200) : 'busy=' + evt.busy);
     }
+    // The window that owns the chat: the event belongs to it, and a
+    // notification about that chat must raise THAT window — not the newest
+    // one, which with two windows open is a different chat's window. #F8
+    const owner = route(windowRegistry, 'chats', id, win);
     // Desktop notification for permission prompts — the card is easy to miss
     // behind a terminal window, and an unanswered one silently times out.
     if (evt && evt.kind === 'permission') {
       notify('Claude needs permission: ' + (evt.toolName || 'tool'),
-        'Open Claude Code Enhanced to answer (auto-denies in 6 minutes).');
+        'Open Claude Code Enhanced to answer (auto-denies in 6 minutes).', owner);
     }
     // Finished turns, but only when the window is in the background: a
     // notification for work the user is already watching is noise. #36
     if (evt && evt.kind === 'status' && evt.busy === false && store.settings.notifyOnDone !== false) {
       // The window that owns the chat decides whether the user is watching.
       // #feat-multi-window
-      const owner = route(windowRegistry, 'chats', id, win);
       const focused = owner && !owner.isDestroyed() && owner.isFocused();
-      if (!focused && !finished.has(id)) {
+      // A chat whose window is gone — closed by the user, or taken down with
+      // its window — has nobody to raise: the notification would be a ghost. #R1
+      if (owner && !owner.isDestroyed() && !focused && !finished.has(id)) {
         finished.add(id);
-        notify('Claude finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.');
+        notify('Claude finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.', owner);
       }
     }
     if (evt && evt.kind === 'status' && evt.busy === true) finished.delete(id);
     // The event belongs to the window that owns the chat. #feat-multi-window
-    const target = route(windowRegistry, 'chats', id, win);
-    if (target && !target.isDestroyed()) target.webContents.send('chat:event', { id, ...evt });
+    if (owner && !owner.isDestroyed()) owner.webContents.send('chat:event', { id, ...evt });
   });
   // Chats already busy when the window loses focus must not notify on finish.
   const finished = new Set();
 
-  function notify(title, body) {
+  /**
+   * A desktop notification.
+   *
+   * `target` is the window that must come up when the notification is
+   * clicked: the one that owns the chat, not the newest window. #F8
+   */
+  function notify(title, body, target) {
     if (process.env.CCE_QUIET_NOTIFY) return;
     try {
       const n = new Notification({ title, body });
-      n.on('click', () => { if (win && !win.isDestroyed()) win.show(); });
+      n.on('click', () => {
+        // The owning window may be gone by the time the notification is
+        // clicked: fall back to the newest window rather than doing nothing. #N1
+        const w = (target && !target.isDestroyed()) ? target : win;
+        if (w && !w.isDestroyed()) w.show();
+      });
       n.show();
     } catch { /* notifications unavailable */ }
   }
@@ -2035,6 +2070,14 @@ function registerIpc() {
       const preset = LEAN_PRESETS[incoming.leanToolsPreset];
       incoming.leanTools = preset ? preset.tools.slice() : null;
       delete incoming.leanToolsPreset;
+    }
+    // The output-filter budget is a promise about what the model may read:
+    // 500…100000. The renderer clamps what the user types, but the main
+    // process is where the number is used, so it normalises it before it is
+    // persisted — a hand-edited config.json or any other writer cannot store
+    // an unbounded budget. #F1
+    if ('outputFilterMaxChars' in incoming) {
+      incoming.outputFilterMaxChars = clampMaxChars(incoming.outputFilterMaxChars);
     }
     store.settings = { ...store.settings, ...incoming };
     // loginEnv is derived, never persisted.

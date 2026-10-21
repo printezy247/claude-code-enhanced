@@ -18,6 +18,10 @@ let lastOptions = null;
 let getTaskOutputCalls = 0;
 let getTaskOutputFails = false;
 let taskOutput = { output: 'building...\n', total_bytes: 12, truncated: false };
+// False makes the fake engine look like an SDK build that does not expose
+// getTaskOutput at all. #F4
+let engineHasGetTaskOutput = true;
+let streamEnded = false;
 
 const fakeSdk = {
   query: ({ options }) => {
@@ -27,15 +31,21 @@ const fakeSdk = {
       setModel: vi.fn(async () => {}),
       setPermissionMode: vi.fn(async () => {}),
       getContextUsage: vi.fn(async () => ({ totalTokens: 10, maxTokens: 100, percentage: 10 })),
-      getTaskOutput: vi.fn(async () => {
+    };
+    if (engineHasGetTaskOutput) {
+      ctrl.getTaskOutput = vi.fn(async () => {
         getTaskOutputCalls++;
         if (getTaskOutputFails) throw new Error('refused: not a shell task');
         return taskOutput;
-      }),
-    };
+      });
+    }
     const gen = (async function* () {
       for (;;) {
-        if (!queue.length) { await new Promise((r) => { wake = r; }); continue; }
+        if (!queue.length) {
+          if (streamEnded) return;   // the engine's stream is over
+          await new Promise((r) => { wake = r; });
+          continue;
+        }
         yield queue.shift();
       }
     })();
@@ -47,6 +57,12 @@ const fakeSdk = {
 
 function pushFrame(frame) {
   queue.push(frame);
+  if (wake) { const w = wake; wake = null; w(); }
+}
+
+/** End the engine's message stream, as an engine process exit does. */
+function endStream() {
+  streamEnded = true;
   if (wake) { const w = wake; wake = null; w(); }
 }
 
@@ -66,6 +82,8 @@ beforeEach(() => {
   getTaskOutputCalls = 0;
   getTaskOutputFails = false;
   taskOutput = { output: 'building...\n', total_bytes: 12, truncated: false };
+  engineHasGetTaskOutput = true;
+  streamEnded = false;
   vi.useFakeTimers();
 });
 
@@ -117,6 +135,23 @@ describe('the shell-output filter', () => {
     });
     expect(!out.hookSpecificOutput).toBe(true);
     expect(events.find((e) => e.kind === 'tool-original')).toBeFalsy();
+  });
+
+  it('clamps the budget it reads out of the settings', async () => {
+    await boot({ outputFilter: 'on', outputFilterMaxChars: 999999 });
+    const hook = lastOptions.hooks.PostToolUse[0].hooks[0];
+    const big = 'x'.repeat(200000);
+    const out = await hook({
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+      tool_response: { stdout: big, stderr: '' },
+      tool_use_id: 'tu4',
+    });
+    // 999999 is out of range (500…100000), so the main process must clamp it
+    // before it hands the result to the model.
+    expect(out.hookSpecificOutput).toBeTruthy();
+    expect(out.hookSpecificOutput.updatedToolOutput.length).toBeLessThanOrEqual(100000);
   });
 
   it('does not touch tools that are not shell commands', async () => {
@@ -201,5 +236,150 @@ describe('live shell output', () => {
     await vi.advanceTimersByTimeAsync(3000);
     expect(getTaskOutputCalls).toBe(after);
     expect(events.some((e) => e.kind === 'tool-output')).toBe(true);
+  });
+
+  it('stops the live poll when the user interrupts the chat', async () => {
+    // The Stop button: the card must not keep auto-expanding with a stale
+    // tail, and the engine must not be polled every 700 ms for a turn the
+    // user already ended.
+    const { mgr, events, id } = await boot();
+    pushFrame({
+      type: 'system', subtype: 'task_started',
+      task_id: 'tk5', tool_use_id: 'tu5', task_type: 'local_bash', description: 'npm test',
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(getTaskOutputCalls).toBeGreaterThan(0);
+    await mgr.interrupt(id);
+    const after = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls, 'the poll kept running after the interrupt').toBe(after);
+    const done = events.find((e) => e.kind === 'tool-output' && e.done === true);
+    expect(done, 'the card was never told the live stream ended').toBeTruthy();
+    expect(done.toolUseId).toBe('tu5');
+  });
+
+  it('stops the live poll when the engine loop ends', async () => {
+    // A poll that outlives its chat keeps a timer alive and keeps asking a
+    // dead engine for output.
+    await boot();
+    pushFrame({
+      type: 'system', subtype: 'task_started',
+      task_id: 'tk6', tool_use_id: 'tu6', task_type: 'local_bash', description: 'npm test',
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(getTaskOutputCalls).toBeGreaterThan(0);
+    endStream();
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(20);
+    const after = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls, 'the poll kept running after the chat ended').toBe(after);
+  });
+
+  it('keeps polling a backgrounded task after its placeholder tool result', async () => {
+    // A backgrounded command's tool_result is only a placeholder; the real
+    // result arrives later as a task_notification.
+    const { events } = await boot();
+    pushFrame({
+      type: 'system', subtype: 'task_started',
+      task_id: 'tk7', tool_use_id: 'tu7', task_type: 'local_bash', description: 'npm test',
+      is_backgrounded: true,
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(getTaskOutputCalls).toBeGreaterThan(0);
+    pushFrame({
+      type: 'user', uuid: 'u7', parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu7', content: 'Command running in background' }] },
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(
+      events.some((e) => e.kind === 'tool-output' && e.done === true),
+      'the placeholder result ended the live tail of a backgrounded task',
+    ).toBe(false);
+    const after = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls, 'the poll stopped at the placeholder result').toBeGreaterThan(after);
+    // The real result arrives as a task_notification: now the tail ends.
+    pushFrame({ type: 'system', subtype: 'task_notification', task_id: 'tk7', status: 'completed', output_file: '/tmp/x', summary: 'done' });
+    await vi.advanceTimersByTimeAsync(20);
+    const stopped = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls).toBe(stopped);
+    expect(events.some((e) => e.kind === 'tool-output' && e.done === true)).toBe(true);
+  });
+
+  it('keeps polling a task that moves to the background after it started', async () => {
+    // The SDK documents a later move to the background:
+    // SDKTaskUpdatedMessage.patch.is_backgrounded. From that moment the
+    // tool_result is only a placeholder, so the live tail must keep running
+    // until the task_notification ends it. #R2
+    const { events } = await boot();
+    pushFrame({
+      type: 'system', subtype: 'task_started',
+      task_id: 'tk9', tool_use_id: 'tu9', task_type: 'local_bash', description: 'npm test',
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(getTaskOutputCalls).toBeGreaterThan(0);
+
+    // The task is moved to the background.
+    pushFrame({
+      type: 'system', subtype: 'task_updated', task_id: 'tk9',
+      patch: { is_backgrounded: true },
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    // The placeholder result arrives: it must not end the live tail.
+    pushFrame({
+      type: 'user', uuid: 'u9', parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu9', content: 'Command running in background' }] },
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(
+      events.some((e) => e.kind === 'tool-output' && e.done === true),
+      'the placeholder result ended the live tail of a task moved to the background',
+    ).toBe(false);
+    const after = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls, 'the poll stopped at the placeholder result').toBeGreaterThan(after);
+
+    // The real result arrives as a task_notification: now the tail ends.
+    pushFrame({ type: 'system', subtype: 'task_notification', task_id: 'tk9', status: 'completed', output_file: '/tmp/x', summary: 'done' });
+    await vi.advanceTimersByTimeAsync(20);
+    const stopped = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls).toBe(stopped);
+    expect(events.some((e) => e.kind === 'tool-output' && e.done === true)).toBe(true);
+  });
+
+  it('does nothing when the engine has no getTaskOutput', async () => {
+    // An SDK build that does not expose the control request: the live tail
+    // must fail soft, not throw and not emit a tool-output event.
+    engineHasGetTaskOutput = false;
+    const { events } = await boot();
+    expect(() => pushFrame({
+      type: 'system', subtype: 'task_started',
+      task_id: 'tk8', tool_use_id: 'tu8', task_type: 'local_bash', description: 'npm test',
+    })).not.toThrow();
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(events.find((e) => e.kind === 'tool-output')).toBeFalsy();
+    expect(events.find((e) => e.kind === 'error'), 'the frame killed the chat loop').toBeFalsy();
+  });
+
+  it('documents the undeclared SDK surface the live tail depends on', () => {
+    // getTaskOutput exists at runtime (sdk.mjs sends a get_task_output control
+    // request) but is NOT declared on the published Query interface, so a
+    // rename upstream would silently kill the feature. The guard must say so.
+    const src = require('fs').readFileSync(
+      require('path').join(__dirname, '..', 'src', 'main', 'chats.js'), 'utf8');
+    const guard = /typeof chat\.q\.getTaskOutput !== 'function'/.exec(src);
+    expect(guard, 'the getTaskOutput guard is gone').toBeTruthy();
+    const around = src.slice(Math.max(0, guard.index - 900), guard.index);
+    expect(around, 'the guard names no upstream surface').toMatch(/get_task_output/);
+    expect(around, 'the guard does not say the method is undeclared').toMatch(/not declared|not on the published|undeclared/i);
   });
 });

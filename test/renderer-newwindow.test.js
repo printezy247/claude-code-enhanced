@@ -169,4 +169,17 @@ describe('shell-output filter settings', () => {
     expect(hint, 'no hint explains the filter; card had: ' + hints.join(' | ')).toBeTruthy();
     h.window.close();
   });
+
+  it('says the filter applies to new chats', async () => {
+    // The filter is read when a chat is created, so turning it off mid-session
+    // changes nothing. The neighbouring rows say so; this one did not.
+    const h = await boot();
+    h.window.switchView('settings');
+    const card = doc(h).querySelector('#opt-outputfilter').closest('.settings-card');
+    const hints = [...card.querySelectorAll('.hint')].map(n => n.textContent);
+    const hint = hints.find(t => /model may see/i.test(t));
+    expect(hint, 'no output-filter hint; card had: ' + hints.join(' | ')).toBeTruthy();
+    expect(hint, 'the hint does not say it applies to new chats').toMatch(/applies to new chats/i);
+    h.window.close();
+  });
 });

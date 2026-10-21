@@ -97,9 +97,10 @@ class BrowserWindow extends EventEmitter {
   show() { this.shown = true; }
   hide() { this.shown = false; }
   focus() { this.focused = true; }
+  blur() { this.focused = false; }
   restore() { this.shown = true; }
   minimize() { this.minimized = true; this.shown = false; }
-  close() { this.destroyed = true; }
+  close() { this.destroyed = true; this.emit('closed'); }
   isDestroyed() { return this.destroyed; }
   isFocused() { return !!this.focused; }
   isMinimized() { return !!this.minimized; }
@@ -115,14 +116,26 @@ class BrowserWindow extends EventEmitter {
 }
 
 class Notification extends EventEmitter {
-  constructor(opts) { super(); this.opts = opts; notifications.push(opts); }
+  constructor(opts) { super(); this.opts = opts; notifications.push(this); }
   show() {}
   close() {}
 }
 
+/** The last tray item created, so a test can click its menu. */
+let lastTray = null;
 class Tray extends EventEmitter {
-  constructor() { super(); this.setToolTip = () => {}; this.setContextMenu = () => {}; }
-  destroy() {}
+  constructor(icon) {
+    super();
+    this.icon = icon;
+    this.menu = null;
+    this.destroyed = false;
+    this.setToolTip = () => {};
+    this.setContextMenu = (m) => { this.menu = m; };
+    this.displayBalloon = () => {};
+    lastTray = this;
+  }
+  destroy() { this.destroyed = true; }
+  isDestroyed() { return this.destroyed; }
 }
 
 const Menu = { buildFromTemplate: (t) => ({ t }), setApplicationMenu() {}, createPopup: () => ({ popup() {} }) };
@@ -137,7 +150,22 @@ const ipcRenderer = {
   send: (channel, payload) => { invokeCalls.push({ channel, payload, send: true }); },
   on() {}, once() {}, removeListener() {},
 };
-const nativeImage = { createFromPath: () => ({ isEmpty: () => true }), createFromDataURL: () => ({ isEmpty: () => true }) };
+// A real icon file makes a real image; a missing one makes an empty image.
+// The tray path depends on this: a stub that always said "empty" made the
+// whole close-to-tray branch unreachable from a test.
+const nativeImage = {
+  createFromPath: (file) => {
+    let empty = true;
+    try { empty = !fs.existsSync(file); } catch { empty = true; }
+    const img = {
+      isEmpty: () => empty,
+      resize: () => img,
+      toPNG: () => Buffer.alloc(0),
+    };
+    return img;
+  },
+  createFromDataURL: () => ({ isEmpty: () => true, resize: () => ({ isEmpty: () => true }) }),
+};
 const dialog = { showOpenDialog: async () => ({ canceled: true, filePaths: [] }), showMessageBox: async () => ({ response: 0 }) };
 const shell = {
   openExternal: async (url) => { opened.push(url); },
@@ -149,7 +177,10 @@ module.exports = {
   app, ipcMain, BrowserWindow, Notification, Tray, Menu, nativeImage, dialog, shell,
   contextBridge, ipcRenderer,
   // --- test helpers -------------------------------------------------------
-  __state: { handlers, sent, notifications, opened, appEvents, windows, exposed, invokeCalls },
+  __state: {
+    handlers, sent, notifications, opened, appEvents, windows, exposed, invokeCalls,
+    get tray() { return lastTray; },
+  },
   __reset() {
     handlers.clear();
     sent.length = 0;
@@ -160,6 +191,7 @@ module.exports = {
     exposed.clear();
     invokeCalls.length = 0;
     nextWebContentsId = 1;
+    lastTray = null;
   },
   __userDataDir: ensureUserData,
 };

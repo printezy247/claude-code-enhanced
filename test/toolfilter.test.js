@@ -65,7 +65,7 @@ describe('compacting shell output', () => {
   it('stays inside the budget', () => {
     const body = 'x'.repeat(50000);
     const r = compactBashOutput({ output: body, maxChars: 2000 });
-    expect(r.text.length).toBeLessThanOrEqual(2400);
+    expect(r.text.length).toBeLessThanOrEqual(2000);
   });
 
   it('collapses a repetitive build log before cutting it', () => {
@@ -76,12 +76,65 @@ describe('compacting shell output', () => {
 
   it('never returns more than the budget, even with a huge header', () => {
     const r = compactBashOutput({ output: 'y'.repeat(100000), command: 'z'.repeat(5000), maxChars: 1000 });
-    expect(r.text.length).toBeLessThanOrEqual(1400);
+    expect(r.text.length).toBeLessThanOrEqual(1000);
+  });
+
+  it('never hands the model more than the budget, even with a long command', () => {
+    // The budget is a promise: the text the model reads never exceeds it —
+    // not at the smallest budget, where a long command in the header leaves
+    // the body almost nothing. #N2
+    for (const limit of [500, 800, 2000, 20000]) {
+      for (const cmdLen of [0, 40, 200, 600]) {
+        const r = compactBashOutput({
+          output: 'y'.repeat(200000),
+          command: 'x'.repeat(cmdLen),
+          maxChars: limit,
+        });
+        expect(r.text.length,
+          'over the budget at ' + limit + ' with a ' + cmdLen + '-char command')
+          .toBeLessThanOrEqual(limit);
+      }
+    }
   });
 
   it('has a default budget', () => {
     expect(DEFAULT_MAX_CHARS).toBe(8000);
     const r = compactBashOutput({ output: 'q'.repeat(DEFAULT_MAX_CHARS + 100) });
     expect(r.compacted).toBe(true);
+  });
+
+  it('clamps a budget that is out of range', () => {
+    // 999999 is out of range: the promise the Settings row makes is 500…100000.
+    // A 200k output must not be handed to the model whole.
+    const r = compactBashOutput({ output: 'x'.repeat(200000), maxChars: 999999 });
+    expect(r.compacted).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(100000);
+  });
+
+  it('clamps a budget that is below the range', () => {
+    const r = compactBashOutput({ output: 'x'.repeat(2000), maxChars: 10 });
+    expect(r.compacted).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(2000);
+  });
+
+  it('gives the model more text when the budget is raised', () => {
+    // The knob said "characters of shell output the model may read" and did
+    // nothing above ~2700: the head and the tail were capped at 1200 each.
+    const body = 'x'.repeat(50000);
+    const small = compactBashOutput({ output: body, maxChars: 2000 });
+    const big = compactBashOutput({ output: body, maxChars: 20000 });
+    expect(small.text.length, 'the budget did not change the text').toBeLessThan(big.text.length);
+    expect(big.text.length, 'a 20000 budget still gave the model ~2500 chars').toBeGreaterThan(15000);
+    // And the text the model reads never leaves the budget.
+    expect(small.text.length).toBeLessThanOrEqual(2000);
+    expect(big.text.length).toBeLessThanOrEqual(20000);
+  });
+
+  it('states the real size of the text the model reads', () => {
+    const r = compactBashOutput({ output: 'z'.repeat(50000), command: 'npm test', maxChars: 4000 });
+    const m = /model sees (\d+) chars/.exec(r.text);
+    expect(m, 'the header states no size: ' + r.text.slice(0, 140)).toBeTruthy();
+    expect(Number(m[1]), 'the header lies about the size').toBe(r.text.length);
+    expect(r.text.length).toBeLessThanOrEqual(4000);
   });
 });
