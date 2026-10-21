@@ -18,6 +18,10 @@ class WindowRegistry {
   constructor() {
     // webContents.id -> { win, chats:Set<string>, sessions:Set<string> }
     this.entries = new Map();
+    // "chats:c1" -> true: the item died with its window. Its frames are
+    // dropped, NOT routed to another window: a dead chat's output must not
+    // appear in a live one. #F3
+    this.dead = new Set();
   }
 
   /** Register a window. Returns the id that identifies it. */
@@ -27,9 +31,27 @@ class WindowRegistry {
     return id;
   }
 
-  /** Forget a window. Its chats and sessions are the caller's problem. */
+  /**
+   * Forget a window. Its chats and sessions are the caller's problem.
+   *
+   * The items the window owned are remembered as dead: they are gone with it,
+   * so a late frame for one of them is dropped instead of falling back to
+   * whichever window happens to be newest. #F3
+   */
   remove(id) {
+    const e = this.entries.get(id);
+    if (e) {
+      for (const c of e.chats) this.dead.add('chats:' + c);
+      for (const s of e.sessions) this.dead.add('sessions:' + s);
+    }
     this.entries.delete(id);
+    // The dead list only grows with closed windows; keep it bounded.
+    while (this.dead.size > 500) this.dead.delete(this.dead.values().next().value);
+  }
+
+  /** True when the item's window went away and took the item with it. */
+  isDead(kind, itemId) {
+    return this.dead.has(kind + ':' + itemId);
   }
 
   entry(id) { return this.entries.get(id) || null; }
@@ -85,9 +107,11 @@ class WindowRegistry {
  * The window an event for a chat or a session belongs to.
  *
  * Returns null when the owner is gone (its window was closed), so the event
- * is dropped instead of leaking into another window.
+ * is dropped instead of leaking into another window. An item that died with
+ * its window is dropped even though nobody owns it any more. #F3
  */
 function route(registry, kind, itemId, fallback) {
+  if (registry.isDead && registry.isDead(kind, itemId)) return null;
   const owner = registry.ownerOf(kind, itemId);
   if (owner == null) return fallback || null;
   const w = registry.winOf(owner);

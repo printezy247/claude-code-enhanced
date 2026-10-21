@@ -5,7 +5,7 @@
 // windows apart is a record of which window opened what, and the routing
 // built on it. These tests pin that routing: a session's output goes to the
 // window that opened it, and a window cannot touch another window's chat.
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -96,5 +96,28 @@ describe('multi-window', () => {
     const w1 = stub.__state.windows[0];
     const res = await stub.__state.handlers.get('chat:close')(sender(w1), { id: 'cForeign' });
     expect(res.ok).toBe(true);
+  });
+
+  it('tears a closed window down, and drops its chat’s later frames', () => {
+    // The plan's Review Focus #1: a window closes while a chat is running.
+    // The engine process and the pty must go with it, and the dead chat's
+    // frames must not show up in another window.
+    const w1 = stub.__state.windows[0];
+    const w2 = stub.__state.windows[1];
+    const closeSpy = vi.spyOn(main.chats, 'close');
+    const killSpy = vi.spyOn(main.sessions, 'kill');
+    windowRegistry.claim(w1.webContents.id, 'chats', 'cTear');
+    windowRegistry.claim(w1.webContents.id, 'sessions', 'sTear');
+
+    w1.close();
+
+    expect(closeSpy, 'the chat was not closed with its window').toHaveBeenCalledWith('cTear');
+    expect(killSpy, 'the session was not killed with its window').toHaveBeenCalledWith('sTear');
+
+    stub.__state.sent.length = 0;
+    main.chats.emit('event', 'cTear', { kind: 'status', busy: true });
+    const toW2 = stub.__state.sent.filter((s) => s.channel === 'chat:event'
+      && s.payload.id === 'cTear' && s.wcId === w2.webContents.id);
+    expect(toW2.length, 'the dead chat’s frames were delivered to another window').toBe(0);
   });
 });

@@ -418,15 +418,18 @@ function createWindow() {
     // A window that goes away takes its chats and its terminals with it: the
     // engine processes and the ptys would otherwise outlive their owner and
     // keep burning tokens nobody sees. #feat-multi-window
-    for (const chatId of windowRegistry.itemsOf(wcId, 'chats')) {
-      try { chats.close(chatId); } catch { /* already gone */ }
-      windowRegistry.release('chats', chatId);
-    }
-    for (const sid of windowRegistry.itemsOf(wcId, 'sessions')) {
-      try { sessions.kill(sid); } catch { /* already gone */ }
-      windowRegistry.release('sessions', sid);
-    }
+    const chatIds = windowRegistry.itemsOf(wcId, 'chats');
+    const sessionIds = windowRegistry.itemsOf(wcId, 'sessions');
+    // The registry forgets the window, but remembers that these items died
+    // with it: a late frame for one of them is dropped instead of falling
+    // back to whichever window happens to be newest. #F3
     windowRegistry.remove(wcId);
+    for (const chatId of chatIds) {
+      try { chats.close(chatId); } catch { /* already gone */ }
+    }
+    for (const sid of sessionIds) {
+      try { sessions.kill(sid); } catch { /* already gone */ }
+    }
   });
   // Close-to-tray: the engine processes keep running, so closing the window
   // should not kill a 40-minute turn. Opt-in in Settings. #46
