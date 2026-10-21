@@ -1183,6 +1183,13 @@ function renderTasks(target, cwd, only) {
         const hint = el('div', 'task-row hint', connected.length + ' connectors live — each adds MCP preamble to every turn. Disconnect unused ones in Providers.');
         connRows.appendChild(hint);
       }
+      // Warn about tool-name collisions across connectors (#wrong-tool-calls).
+      const names = [];
+      for (const s of connected) for (const t of (s.tools || [])) names.push(t.name);
+      const dupes = names.filter((n, i) => names.indexOf(n) !== i);
+      if (dupes.length) {
+        const uniq = [...new Set(dupes)];
+        connRows.appendChild(el('div', 'task-row hint', 'Duplicate tool names across connectors: ' + uniq.join(', ') + '. Prefer the server matching the task.'));
       for (const sv of servers) {
         const row = el('div', 'task-row hint conn-row');
         row.appendChild(el('span', 'st-dot st-' + String(sv.status || 'pending').replace(/[^a-z-]/g, '')));
