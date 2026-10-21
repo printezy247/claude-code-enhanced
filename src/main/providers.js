@@ -9,6 +9,7 @@
 'use strict';
 const crypto = require('crypto');
 const catalog = require('./catalog');
+const modelsdev = require('./modelsdev');
 
 let authRef = null;
 /** Wire the AuthStore so instances can resolve their secrets. */
@@ -43,17 +44,34 @@ function ensureDefaults(store) {
   }
 }
 
+function normalizeBaseUrl(baseUrl, protocol) {
+  let b = String(baseUrl || '').trim();
+  if (!b) return '';
+  b = b.replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(b)) {
+    b = (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(b) ? 'http://' : 'https://') + b;
+  }
+  if ((protocol || 'openai') === 'openai') {
+    if (/api\.openai\.com$/i.test(b)) b += '/v1';
+    else if (/openrouter\.ai\/api$/i.test(b)) b += '/v1';
+    else if (/api\.groq\.com\/openai$/i.test(b)) b += '/v1';
+  }
+  return b;
+}
+
 /** Build a fresh instance record from a catalog entry + user values. */
 function makeInstance(entry, values = {}) {
   const placeholders = values.placeholders || {};
   const tpl = entry.baseUrlTemplate || entry.baseUrl || '';
   const resolved = entry.baseUrlTemplate ? catalog.resolveTemplate(tpl, placeholders) : tpl;
+  const proto = values.protocol || entry.protocol || 'anthropic';
+  const rawBase = values.baseUrl !== undefined ? values.baseUrl : resolved;
   return {
     uid: values.uid || newUid(),
     presetId: entry.id,
     name: values.name || entry.display || entry.name || 'Provider',
-    protocol: values.protocol || entry.protocol || 'anthropic',
-    baseUrl: values.baseUrl !== undefined ? values.baseUrl : resolved,
+    protocol: proto,
+    baseUrl: normalizeBaseUrl(rawBase, proto),
     keyHeader: values.keyHeader || entry.keyHeader || 'bearer',
     placeholders: entry.baseUrlTemplate ? placeholders : undefined,
     model: values.model || entry.defaultModel || '',
@@ -91,11 +109,20 @@ function resolveApiKey(instance, auth, env) {
   const fromStore = store ? store.resolve(instance.uid) : {};
   if (fromStore.apiKey) return fromStore.apiKey;
   if (fromStore.authToken) return '';
-  const entry = entryFor(instance);
-  const name = entry && entry.envVar;
-  if (!name) return '';
+  const entry = entryFor(instance) || {};
+  const md = modelsdev.get(instance && (instance.presetId || instance.modelsDevId || entry.modelsDevId));
+  const names = [
+    instance && instance.envVar,
+    entry.envVar,
+    ...(Array.isArray(entry.env) ? entry.env : []),
+    ...(md && Array.isArray(md.env) ? md.env : []),
+  ].filter(Boolean);
+  if (!names.length) return '';
   const source = env || process.env;
-  return String(source[name] || '').trim();
+  for (const name of names) {
+    if (source[name]) return String(source[name]).trim();
+  }
+  return '';
 }
 
 /** The env a session needs for the selected provider. */
@@ -175,7 +202,7 @@ function publicInstance(p) {
     authType: auth.type || null,
     authHint: auth.hint || '',
     authExpires: auth.expires || 0,
-    authExpired: !!auth.expired,
+    authExpired: !!auth.expired || !!(auth.expires && auth.expires < Date.now()),
   };
 }
 
@@ -273,19 +300,47 @@ function migrateModels(store) {
  * @returns {string} what to change, or '' when nothing is known to be wrong
  */
 function keyUrlMismatch(baseUrl, key) {
-  const base = String(baseUrl || '');
+  const base = String(baseUrl || '').trim();
   const k = String(key || '').trim();
-  if (!/xiaomimimo\.com/i.test(base) || !k) return '';
-  const tokenPlanHost = /token-plan-/i.test(base);
-  if (/^tp-/i.test(k) && !tokenPlanHost) {
-    return 'This is a Xiaomi Token Plan key (tp-…), but the base URL is the pay-as-you-go one. '
-      + 'In Edit, set the URL to the Token Plan base URL shown on your Token Plan page, '
-      + 'e.g. https://token-plan-cn.xiaomimimo.com/v1 (other regions: token-plan-sgp, token-plan-ams).';
+  if (!k || !base) return '';
+
+  // Xiaomi MiMo
+  if (/xiaomimimo\.com/i.test(base)) {
+    const tokenPlanHost = /token-plan-/i.test(base);
+    if (/^tp-/i.test(k) && !tokenPlanHost) {
+      return 'This is a Xiaomi Token Plan key (tp-…), but the base URL is the pay-as-you-go one. '
+        + 'In Edit, set the URL to the Token Plan base URL shown on your Token Plan page, '
+        + 'e.g. https://token-plan-cn.xiaomimimo.com/v1 (other regions: token-plan-sgp, token-plan-ams).';
+    }
+    if (/^sk-/i.test(k) && tokenPlanHost) {
+      return 'This is a Xiaomi pay-as-you-go key (sk-…), but the base URL is a Token Plan one. '
+        + 'In Edit, set the URL to https://api.xiaomimimo.com/v1, or paste your tp-… Token Plan key instead.';
+    }
   }
-  if (/^sk-/i.test(k) && tokenPlanHost) {
-    return 'This is a Xiaomi pay-as-you-go key (sk-…), but the base URL is a Token Plan one. '
-      + 'In Edit, set the URL to https://api.xiaomimimo.com/v1, or paste your tp-… Token Plan key instead.';
+
+  // Anthropic key on non-Anthropic OpenAI-style host
+  if (/^sk-ant-/i.test(k) && /api\.openai\.com|azure\.com|groq\.com|deepseek\.com/i.test(base)) {
+    return 'This appears to be an Anthropic API key (sk-ant-…), but the provider URL points to ' + base + '. '
+      + 'Use the official Anthropic provider or set the base URL to https://api.anthropic.com.';
   }
+
+  // OpenAI project key on Anthropic host
+  if (/^sk-proj-/i.test(k) && /api\.anthropic\.com/i.test(base)) {
+    return 'This appears to be an OpenAI project key (sk-proj-…), but the base URL is Anthropic. '
+      + 'Set the base URL to https://api.openai.com/v1 and protocol to OpenAI.';
+  }
+
+  // Google API key on non-Google host
+  if (/^AIzaSy/i.test(k) && /api\.openai\.com|api\.anthropic\.com/i.test(base)) {
+    return 'This appears to be a Google API key (AIzaSy…), but the provider is pointed at an Anthropic or OpenAI host. '
+      + 'Connect Google AI Studio via Providers → Connect or set the base URL to https://generativelanguage.googleapis.com.';
+  }
+
+  // Azure resource missing deployments
+  if (/openai\.azure\.com/i.test(base) && !/deployments/i.test(base)) {
+    return 'Azure OpenAI endpoints require a deployment path, e.g. https://<resource>.openai.azure.com/openai/deployments/<deployment>.';
+  }
+
   return '';
 }
 
@@ -320,7 +375,7 @@ function chatModelFor(instance, picked) {
 
 module.exports = {
   normalizeModelFields, chatModelFor,
-  keyUrlMismatch,
+  keyUrlMismatch, normalizeBaseUrl,
   PRESETS, ensureDefaults, envFor, publicInstance, newUid,
   useAuth, catalogEntries, makeInstance, entryFor, resolveApiKey,
   migrateUrls, migrateModels,

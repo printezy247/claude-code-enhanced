@@ -80,9 +80,12 @@ function refreshSecretCache() {
     // at all ("Go requires a credential").
     let apiKey = r.apiKey || '';
     if (!apiKey) {
-      const name = (providers.entryFor(p) || {}).envVar;
-      const fromEnv = name && (process.env[name] || (loginEnv() || {})[name]);
-      if (fromEnv) apiKey = String(fromEnv).trim();
+      const entry = providers.entryFor(p) || {};
+      const names = [p.envVar, entry.envVar, ...(Array.isArray(entry.env) ? entry.env : [])].filter(Boolean);
+      const source = { ...(loginEnv() || {}), ...process.env };
+      for (const name of names) {
+        if (source[name]) { apiKey = String(source[name]).trim(); break; }
+      }
     }
     secretCache.set(p.uid, { apiKey, authToken: r.authToken || '' });
   }
@@ -117,22 +120,53 @@ async function ensureFreshAuth(inst) {
   const rec = auth.get(inst.uid);
   if (!rec || rec.type !== 'oauth') return;
   const soon = rec.expires && rec.expires - Date.now() < 120_000;
-  if (!soon) return;
+  if (!soon && !rec.expired) return;
   const entry = providers.entryFor(inst) || {};
   const cfg = entry.oauth || {};
-  try {
-    let tokens;
+  
+  const doRefresh = async () => {
     if (cfg.exchange === 'copilot' || (rec.meta && rec.meta.copilot)) {
-      tokens = await oauth.refreshCopilot(rec.refresh);
+      return await oauth.refreshCopilot(rec.refresh);
     } else if (rec.refresh && cfg.tokenUrl) {
-      tokens = await oauth.refreshTokens(cfg, rec.refresh);
-    } else {
-      return;
+      return await oauth.refreshTokens(cfg, rec.refresh);
     }
-    auth.setOAuth(inst.uid, { access: tokens.access, refresh: tokens.refresh || rec.refresh, expires: tokens.expires, meta: { ...rec.meta, ...(tokens.meta || {}) } });
+    return null;
+  };
+
+  try {
+    let tokens = await doRefresh();
+    if (!tokens) return;
+    auth.setOAuth(inst.uid, {
+      access: tokens.access,
+      refresh: tokens.refresh || rec.refresh,
+      expires: tokens.expires,
+      meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
+    });
+    inst.authExpired = false;
     refreshSecretCache();
   } catch (err) {
+    // Retry once with a brief backoff
+    try {
+      await new Promise(r => setTimeout(r, 600));
+      const tokens = await doRefresh();
+      if (tokens) {
+        auth.setOAuth(inst.uid, {
+          access: tokens.access,
+          refresh: tokens.refresh || rec.refresh,
+          expires: tokens.expires,
+          meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
+        });
+        inst.authExpired = false;
+        refreshSecretCache();
+        return;
+      }
+    } catch { /* second attempt failed */ }
+
     console.error('[auth] refresh failed for ' + inst.name + ':', String((err && err.message) || err));
+    inst.authExpired = true;
+    if (rec.expires && rec.expires < Date.now()) {
+      auth.setOAuth(inst.uid, { ...rec, meta: { ...(rec.meta || {}), expired: true } });
+    }
   }
 }
 
@@ -717,8 +751,17 @@ function createWindow() {
 // The event is passed on to the handler: only the sender's webContents id
 // proves which window a call came from, and ownership is what makes a
 // cross-window call refuseable. #feat-multi-window
+function isValidSender(e) {
+  if (!e || !e.senderFrame || !e.senderFrame.url) return true;
+  const url = String(e.senderFrame.url);
+  return url.startsWith('file://') || url.startsWith('devtools://');
+}
+
 function handle(channel, fn) {
   ipcMain.handle(channel, async (e, payload) => {
+    if (!isValidSender(e)) {
+      return { ok: false, error: 'Blocked IPC from unauthorized origin: ' + (e.senderFrame && e.senderFrame.url) };
+    }
     try { return { ok: true, ...(await fn(payload || {}, e)) }; }
     catch (err) { return { ok: false, error: String(err.message || err) }; }
   });
@@ -957,31 +1000,41 @@ function registerIpc() {
     if (!base) return { models: [] };
     if (protocol !== 'anthropic') {
       try {
-        const prov = { baseUrl: base, apiKey: key, protocol, keyHeader: (p && p.keyHeader) || 'bearer', headers: (p && p.headers) || {} };
+        const prov = {
+          baseUrl: base,
+          apiKey: key,
+          protocol,
+          keyHeader: (p && p.keyHeader) || 'bearer',
+          headers: (p && p.headers) || {},
+          presetId: p && p.presetId,
+          modelsDevId: p && p.modelsDevId,
+          id: p && p.id,
+        };
         const res = await adapters.listModels(prov);
         const j = await res.json();
         const raw = j.data || j.models || [];
-        const models = raw.map(m => ({ id: m.id || m.name, ctx: m.context_length || m.inputTokenLimit || null }))
+        const models = raw.map(m => ({ id: m.id || m.name, ctx: m.context_length || m.inputTokenLimit || null, catalog: m.catalog || false }))
           .filter(m => m.id).map(m => ({ ...m, id: String(m.id).replace(/^models\//, '') }))
           .sort((a, b) => a.id.localeCompare(b.id));
         if (models.length) return { models, curated: p ? (p.models || []) : [] };
-        // bedrock-runtime implements no GET /models (always empty/404): fall
-        // back to the models.dev catalog so the picker still has real ids.
-        if (bedrock.isBedrockUrl(base)) {
-          const cat = modelsdev.modelsFor('amazon-bedrock').map(m => ({
+        // If upstream has no models or failed, fall back to the models.dev catalog
+        const targetId = (p && (p.presetId || p.modelsDevId || p.id)) || (bedrock.isBedrockUrl(base) ? 'amazon-bedrock' : '');
+        if (targetId) {
+          const cat = modelsdev.modelsFor(targetId).map(m => ({
             id: m.id, name: m.name, ctx: (m.limit && m.limit.context) || null,
             cost: m.cost, tool_call: m.tool_call, catalog: true,
           })).sort((a, b) => a.id.localeCompare(b.id));
-          if (cat.length) return { models: cat, curated: p ? (p.models || []) : [], source: 'models.dev (no live listing on Bedrock)' };
+          if (cat.length) return { models: cat, curated: p ? (p.models || []) : [], source: 'models.dev catalog' };
         }
         return { models, curated: p ? (p.models || []) : [] };
       } catch (err) {
-        if (bedrock.isBedrockUrl(base)) {
-          const cat = modelsdev.modelsFor('amazon-bedrock').map(m => ({
+        const targetId = (p && (p.presetId || p.modelsDevId || p.id)) || (bedrock.isBedrockUrl(base) ? 'amazon-bedrock' : '');
+        if (targetId) {
+          const cat = modelsdev.modelsFor(targetId).map(m => ({
             id: m.id, name: m.name, ctx: (m.limit && m.limit.context) || null,
             cost: m.cost, tool_call: m.tool_call, catalog: true,
           })).sort((a, b) => a.id.localeCompare(b.id));
-          if (cat.length) return { models: cat, curated: p ? (p.models || []) : [], source: 'models.dev (no live listing on Bedrock)' };
+          if (cat.length) return { models: cat, curated: p ? (p.models || []) : [], source: 'models.dev catalog' };
         }
         return { models: [], error: String((err && err.message) || err) };
       }
@@ -1040,9 +1093,13 @@ function registerIpc() {
     if (Array.isArray(r.models)) r.models = r.models.filter(m => !localmodels.isCtxVariant(m.id));
     const p = store.providers.find(x => x.uid === args.uid);
     const entry = p ? providers.entryFor(p) : null;
-    const declared = p ? [...(p.models || []), ...(entry && entry.recommendedModels || [])] : [];
+    const catModels = (p && (p.presetId || p.modelsDevId)) ? modelsdev.modelsFor(p.presetId || p.modelsDevId) : [];
+    const declared = p ? [...(p.models || []), ...(entry && entry.recommendedModels || []), ...catModels.map(m => m.id)] : [];
     const have = new Set((r.models || []).map(m => m.id));
-    const extra = [...new Set(declared)].filter(id => id && !have.has(id)).map(id => ({ id, ctx: null, declared: true }));
+    const extra = [...new Set(declared)].filter(id => id && !have.has(id)).map(id => {
+      const cm = catModels.find(m => m.id === id);
+      return { id, ctx: (cm && cm.limit && cm.limit.context) || null, declared: true };
+    });
     // Say what to do when a local runtime is simply not running.
     const base = args.baseUrl || (p && p.baseUrl) || '';
     if (r.error && isLocalBase(base) && !(r.models || []).length) {
@@ -2143,6 +2200,7 @@ if (!gotLock) {
         // Stand-ins for a model name this provider does not serve.
         model: inst.model || '',
         smallFastModel: inst.smallFastModel || '',
+        fallbackModel: inst.fallbackModel || (providers.entryFor(inst) || {}).fallbackModel || store.settings.fallbackModel || '',
       };
     }, { token: proxyToken, port: Number(process.env.CCE_PROXY_PORT || 0) });
     proxyPort = proxy.port;

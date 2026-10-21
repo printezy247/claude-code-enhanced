@@ -9,6 +9,8 @@
 // Exports `callUpstream(prov, body, wantStream, signal) -> Response-like`.
 'use strict';
 const { parsedDataEvents } = require('./sse');
+const bedrock = require('./bedrock.js');
+const modelsdev = require('./modelsdev.js');
 
 /** OpenAI-compatible root for a provider base URL (bare Ollama roots get /v1). */
 function openaiBase(baseUrl) {
@@ -24,6 +26,16 @@ function openaiBase(baseUrl) {
  * slightly slower first byte. Never retries aborts (user interrupt / timeout).
  */
 const RETRY_STATUS = new Set([429, 502, 504]);
+const providerCooldown = new Map();
+
+function isCoolingDown(url) {
+  try {
+    const host = new URL(url).host;
+    const exp = providerCooldown.get(host);
+    return exp ? exp > Date.now() : false;
+  } catch { return false; }
+}
+
 async function fetchUpstream(url, opts, signal, tries = 2) {
   // Callers pass the abort signal either positionally or inside opts —
   // honour both, or interrupts never reach the upstream (leaked turns).
@@ -41,7 +53,14 @@ async function fetchUpstream(url, opts, signal, tries = 2) {
       // wrong model id, which no amount of waiting fixes.
       if (RETRY_STATUS.has(res.status) && rateTries < 2 && !withTimeout.aborted) {
         const ra = Number(res.headers.get('retry-after'));
-        const wait = Number.isFinite(ra) && res.headers.get('retry-after') !== null ? Math.min(ra, 15) * 1000 : 1000 * (2 * rateTries + 1);
+        const maxWait = res.status === 429 ? 60 : 15;
+        const wait = Number.isFinite(ra) && res.headers.get('retry-after') !== null ? Math.min(ra, maxWait) * 1000 : 1000 * (2 * rateTries + 1);
+        if (res.status === 429) {
+          try {
+            const host = new URL(url).host;
+            providerCooldown.set(host, Date.now() + wait);
+          } catch { /* ignore */ }
+        }
         rateTries++; i--;
         try { await res.body?.cancel(); } catch { /* body already consumed */ }
         await new Promise(r => setTimeout(r, wait));
@@ -517,20 +536,46 @@ function callUpstream(prov, body, wantStream, signal) {
 
 /** Model list for an adapter-managed provider (used by the proxy GET path). */
 async function listModels(prov) {
+  if (bedrock.isBedrockUrl(prov.baseUrl) || prov.protocol === 'bedrock') {
+    const cat = modelsdev.modelsFor(prov.presetId || prov.modelsDevId || 'amazon-bedrock').map(m => ({
+      id: m.id, context_length: (m.limit && m.limit.context) || null, catalog: true,
+    }));
+    return syntheticJson({ data: cat });
+  }
   if ((prov.protocol || 'openai') === 'gemini') {
-    const url = withQueryKey(geminiBase(prov.baseUrl) + '/models', prov);
-    const r = await fetchUpstream(url, { headers: upHeaders(prov) }, AbortSignal.timeout(15000));
-    if (!r.ok) return r;
-    const j = await r.json();
-    const data = (j.models || []).map(m => ({ id: String(m.name || '').replace(/^models\//, ''), context_length: m.inputTokenLimit || null }));
-    return syntheticJson({ data });
+    try {
+      const url = withQueryKey(geminiBase(prov.baseUrl) + '/models', prov);
+      const r = await fetchUpstream(url, { headers: upHeaders(prov) }, AbortSignal.timeout(15000));
+      if (r.ok) {
+        const j = await r.json();
+        const data = (j.models || []).map(m => ({ id: String(m.name || '').replace(/^models\//, ''), context_length: m.inputTokenLimit || null }));
+        return syntheticJson({ data });
+      }
+    } catch {}
+    const cat = modelsdev.modelsFor(prov.presetId || prov.modelsDevId || 'google').map(m => ({
+      id: m.id, context_length: (m.limit && m.limit.context) || null, catalog: true,
+    }));
+    if (cat.length) return syntheticJson({ data: cat });
+    return syntheticJson({ data: [] });
   }
   const url = openaiBase(prov.baseUrl) + '/models';
-  return fetchUpstream(url, { headers: upHeaders(prov) }, AbortSignal.timeout(15000));
+  try {
+    const r = await fetchUpstream(url, { headers: upHeaders(prov) }, AbortSignal.timeout(15000));
+    if (r.ok) return r;
+  } catch {}
+  const targetId = prov.presetId || prov.modelsDevId || prov.id;
+  if (targetId) {
+    const cat = modelsdev.modelsFor(targetId).map(m => ({
+      id: m.id, context_length: (m.limit && m.limit.context) || null, catalog: true,
+    }));
+    if (cat.length) return syntheticJson({ data: cat });
+  }
+  return syntheticJson({ data: [] });
 }
 
 module.exports = {
   callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream,
+  providerCooldown, isCoolingDown,
   buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink,
   responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE, responsesChunks, geminiChunks,
 };

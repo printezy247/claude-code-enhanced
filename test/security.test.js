@@ -222,4 +222,14 @@ describe('main-process IPC guards', () => {
       expect(stub.__state.handlers.has(ch), 'preload lists ' + ch + ' but main never handles it').toBe(true);
     }
   });
+
+  it('rejects IPC requests from unauthorized origins', async () => {
+    const stub = require('electron');
+    require('../src/main/main.js');
+    await new Promise(r => setTimeout(r, 200));
+    const info = stub.__state.handlers.get('app:info');
+    const res = await info({ senderFrame: { url: 'https://malicious.example.com/exploit' } }, {});
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unauthorized origin/);
+  });
 });

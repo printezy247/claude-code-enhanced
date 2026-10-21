@@ -235,6 +235,7 @@ const { resolveTemplate, placeholdersIn } = require('../shared/tpl.js');
 /** A generic catalog entry derived from a models.dev provider record. */
 function derive(md) {
   const best = modelsdev.bestModel(md.id);
+  const small = modelsdev.smallModel ? modelsdev.smallModel(md.id) : null;
   const envVar = (md.env && md.env[0]) || null;
   return {
     id: md.id, md: md.id, modelsDevId: md.id, name: md.name, display: md.name, docsUrl: md.doc || '',
@@ -242,7 +243,8 @@ function derive(md) {
     authKind: 'api-key',
     baseUrl: md.api || '',
     envVar, keyHeader: 'bearer',
-    defaultModel: best ? best.id : '', defaultSmall: '',
+    defaultModel: best ? best.id : '',
+    defaultSmall: small ? small.id : (best ? best.id : ''),
     derived: true,
     capabilities: ['openai-compat'],
     blurb: md.api

@@ -494,7 +494,7 @@ function isModelMissing(err) {
 /** A model this provider can serve in place of `missing`, or '' if none is known. */
 function fallbackModel(prov, missing) {
   const want = String(missing || '');
-  return [prov.smallFastModel, lastGoodModel.get(prov._uid), prov.model].find(x => x && x !== want) || '';
+  return [prov.fallbackModel, prov.smallFastModel, lastGoodModel.get(prov._uid), prov.model].find(x => x && x !== want) || '';
 }
 
 const CONTEXT_RE = /context.{0,20}(length|window|size)|maximum context|prompt is too long|(input|prompt|request).{0,24}too (long|large)|too many (input )?tokens|exceed.{0,40}(context|max.{0,12}tokens)/i;

@@ -493,7 +493,10 @@ describe('models.dev refresh', () => {
       const r = await md.refresh();
       expect(r.source).toBe('live');
       expect(r.providers).toBeGreaterThan(0);
-    } finally { globalThis.fetch = real; }
+    } finally {
+      globalThis.fetch = real;
+      md.init('');
+    }
   });
 });
 
@@ -531,17 +534,43 @@ describe('local context default', () => {
 });
 
 describe('key that cannot work at this URL', () => {
-  const { keyUrlMismatch } = require('../src/main/providers.js');
+  const { keyUrlMismatch, normalizeBaseUrl } = require('../src/main/providers.js');
   it('says a Xiaomi Token Plan key needs the Token Plan URL', () => {
     expect(keyUrlMismatch('https://api.xiaomimimo.com/v1', 'tp-slx123rge5')).toMatch(/Token Plan key.*token-plan-cn\.xiaomimimo\.com\/v1/);
   });
   it('says a pay-as-you-go key needs the pay-as-you-go URL', () => {
     expect(keyUrlMismatch('https://token-plan-sgp.xiaomimimo.com/v1', 'sk-abc')).toMatch(/api\.xiaomimimo\.com\/v1/);
   });
+  it('spots Anthropic key on OpenAI URL', () => {
+    expect(keyUrlMismatch('https://api.openai.com/v1', 'sk-ant-api03-xxx')).toMatch(/Anthropic API key/);
+  });
+  it('spots OpenAI key on Anthropic URL', () => {
+    expect(keyUrlMismatch('https://api.anthropic.com/v1', 'sk-proj-xxx')).toMatch(/OpenAI project key/);
+  });
+  it('spots Google key on OpenAI/Anthropic URL', () => {
+    expect(keyUrlMismatch('https://api.openai.com/v1', 'AIzaSyXXX')).toMatch(/Google API key/);
+  });
+  it('spots Azure OpenAI missing deployments path', () => {
+    expect(keyUrlMismatch('https://myresource.openai.azure.com/openai', 'my-key')).toMatch(/deployment path/);
+  });
   it('stays quiet when key and URL match, or for other providers', () => {
     expect(keyUrlMismatch('https://token-plan-sgp.xiaomimimo.com/v1', 'tp-abc')).toBe('');
     expect(keyUrlMismatch('https://api.xiaomimimo.com/v1', 'sk-abc')).toBe('');
     expect(keyUrlMismatch('https://router.bynara.id/v1', 'tp-abc')).toBe('');
     expect(keyUrlMismatch('https://api.xiaomimimo.com/v1', '')).toBe('');
+  });
+  it('normalizes base URLs correctly', () => {
+    expect(normalizeBaseUrl('https://api.openai.com/', 'openai')).toBe('https://api.openai.com/v1');
+    expect(normalizeBaseUrl('openrouter.ai/api', 'openai')).toBe('https://openrouter.ai/api/v1');
+    expect(normalizeBaseUrl('http://localhost:11434', 'openai')).toBe('http://localhost:11434');
+  });
+
+  it('falls back to catalog models when an endpoint has no /models route', async () => {
+    const prov = { baseUrl: 'http://127.0.0.1:9', presetId: 'groq', protocol: 'openai' };
+    const res = await adapters.listModels(prov);
+    expect(res.ok).toBe(true);
+    const j = await res.json();
+    expect(j.data.length).toBeGreaterThan(0);
+    expect(j.data.some(m => m.catalog)).toBe(true);
   });
 });
