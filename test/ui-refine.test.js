@@ -40,25 +40,23 @@ const click = (n) => n.dispatchEvent(new h.window.MouseEvent('click', { bubbles:
 const chat = () => h.window.Chat.chats.get('c1');
 
 describe('composer', () => {
-  it('holds attach, text, expand and send in one box', () => {
+  it('holds attach, text, and send in one box without expand button', () => {
     const row = pane().querySelector('.chat-input-row');
-    for (const sel of ['.chat-attach', '.chat-input', '.chat-expand', '.chat-send']) {
+    for (const sel of ['.chat-attach', '.chat-input', '.chat-send']) {
       expect(row.querySelector(sel), sel).toBeTruthy();
     }
+    expect(row.querySelector('.chat-expand')).toBeNull();
     expect(pane().querySelector('.chat-workflows')).toBeNull();   // the chip row is gone
   });
 
-  it('shows expand only once the text is longer than a line, and toggles it', () => {
+  it('auto expands textarea when new lines formed and shrinks when cleared', () => {
     const c = chat();
-    expect(c.expandBtn.classList.contains('hidden')).toBe(true);
-    c.composer.value = 'line one\nline two';
+    c.composer.value = 'line one\nline two\nline three';
     c.composer.dispatchEvent(new h.window.Event('input'));
-    expect(c.expandBtn.classList.contains('hidden')).toBe(false);
-    click(c.expandBtn);
-    expect(pane().classList.contains('composer-expanded')).toBe(true);
-    expect(c.expandBtn.getAttribute('aria-pressed')).toBe('true');
-    click(c.expandBtn);
-    expect(pane().classList.contains('composer-expanded')).toBe(false);
+    expect(parseInt(c.composer.style.height, 10)).toBeGreaterThan(20);
+    c.composer.value = 'single line';
+    c.composer.dispatchEvent(new h.window.Event('input'));
+    expect(parseInt(c.composer.style.height, 10)).toBe(20);
   });
 });
 
@@ -259,10 +257,8 @@ describe('chat shortcuts work wherever focus is', () => {
     expect(doc().querySelector('.palette-back')).toBeNull();
   });
 
-  it('Ctrl+E toggles the expanded composer from anywhere in the chat', () => {
+  it('Ctrl+E is removed from expanding composer and does not toggle composer-expanded', () => {
     chat().composer.blur();
-    key('e');
-    expect(pane().classList.contains('composer-expanded')).toBe(true);
     key('e');
     expect(pane().classList.contains('composer-expanded')).toBe(false);
   });

@@ -2926,11 +2926,10 @@ function wireChrome() {
         if (c) { e.preventDefault(); Chat.showFind(c); }
       }
     }
-    // Command palette and composer expand, from anywhere in a chat tab. Terminal
-    // tabs keep Ctrl+K / Ctrl+E for the shell (kill line, end of line).
+    // Command palette from anywhere in a chat tab.
     const mod = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
     const k = String(e.key).toLowerCase();
-    if (mod && (k === 'k' || k === 'e') && inChat && window.Chat && state.view === 'conversations') {
+    if (mod && k === 'k' && inChat && window.Chat && state.view === 'conversations') {
       const c = Chat.chats.get(state.activeId);
       // Only when focus is in the chat itself (or nowhere). The side-panel
       // shell, the diff editor, other views and dialogs keep their own keys.
@@ -2940,8 +2939,7 @@ function wireChrome() {
       const own = !!(t && t.closest && t.closest('.xterm, .monaco-editor'));
       if (c && home && !own) {
         e.preventDefault();
-        if (k === 'k') Chat.openPalette(c);
-        else Chat.toggleExpanded(c);
+        Chat.openPalette(c);
       }
     }
   });

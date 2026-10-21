@@ -65,9 +65,12 @@ function targetFilePath(toolName, input) {
 function isOutsideDirs(filePath, allowedDirs) {
   if (!filePath || !allowedDirs || !allowedDirs.length) return false;
   try {
-    const resolved = path.resolve(filePath);
+    const home = os.homedir();
+    const resolved = path.resolve(filePath.replace(/^~(?=\/|$)/, home));
+    const claudeDir = path.resolve(home, '.claude');
+    if (resolved === claudeDir || resolved.startsWith(claudeDir + path.sep)) return false;
     return !allowedDirs.some((dir) => {
-      const rDir = path.resolve(dir);
+      const rDir = path.resolve(String(dir).replace(/^~(?=\/|$)/, home));
       return resolved === rDir || resolved.startsWith(rDir + path.sep);
     });
   } catch { return false; }
@@ -314,6 +317,11 @@ class ChatManager extends EventEmitter {
       // tool in a terminal tab had no effect on chat tabs. #12
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,          // stream_event frames for live typing
+      allowedTools: Array.from(new Set([
+        'WebFetch',
+        'WebSearch',
+        ...(Array.isArray(settings?.allowedTools) ? settings.allowedTools : []),
+      ])),
       // Desktop-parity surface: file checkpoints (rewind), nested subagent
       // transcript, hook lifecycle frames, questions that never AFK-timeout.
       enableFileCheckpointing: true,
@@ -390,7 +398,7 @@ class ChatManager extends EventEmitter {
       // Auto-lean for small-context models when explicitly configured in settings
       const ctx = (typeof this.contextOf === 'function' && Number(this.contextOf(providerInstance, model))) || 0;
       if (ctx > 0 && ctx < 131072) {
-        options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob'];
+        options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
         isLean = true;
       }
     }
@@ -539,6 +547,19 @@ class ChatManager extends EventEmitter {
         if (pol === 'always_ask') {
           ctx.suppressAlwaysAllowRule = true;
         }
+      }
+
+      // 6. Auto-allow safe inspection / web tools and bypass modes
+      if (effMode === 'bypassPermissions' || !!yolo) {
+        return { behavior: 'allow' };
+      }
+      if (['WebFetch', 'WebSearch'].includes(toolName)) {
+        if (!settings || !Array.isArray(settings.blockedTools) || !settings.blockedTools.includes(toolName)) {
+          return { behavior: 'allow' };
+        }
+      }
+      if (settings && Array.isArray(settings.allowedTools) && settings.allowedTools.includes(toolName)) {
+        return { behavior: 'allow' };
       }
 
       const requestId = 'r' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
@@ -809,6 +830,17 @@ class ChatManager extends EventEmitter {
     chat.busy = true;
     this.emit('event', id, { kind: 'status', busy: true });
     return { ok: true };
+  }
+
+  async steer(id, text, blocks) {
+    const chat = this.chats.get(id);
+    if (!chat || (!text && !(blocks && blocks.length))) return { ok: false };
+    if (chat.busy) {
+      // Interrupt active thinking / tool loop immediately so Claude redirects
+      await this.interrupt(id);
+      await new Promise(r => setTimeout(r, 60));
+    }
+    return this.send(id, text, blocks);
   }
 
   async interrupt(id) {

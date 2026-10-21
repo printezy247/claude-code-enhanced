@@ -31,11 +31,11 @@ describe('queued element vs queue counter', () => {
     send({ type: 'result', subtype: 'success', result: 'All done for now.', queued_turn_count: 0 });
     chat.busy = true;
     chat.composer.value = 'steer it';
-    chat.send();
+    chat.send('steer');
     await flush();
     // Before the fix, renderQueued threw on the number that showQueued had
     // stored in chat.queued and the message never left the composer.
-    expect(h.calls.some(c => c.channel === 'chat:send')).toBe(true);
+    expect(h.calls.some(c => c.channel === 'chat:send' || c.channel === 'chat:steer')).toBe(true);
   });
 });
 

@@ -288,8 +288,8 @@ function envWithLoginPath(base = {}) {
 // costs context, and the engine's own prompt plus skills is already ~68K, so
 // cutting the tool list is the only real lever for a 3-4B model. #41
 const LEAN_PRESETS = {
-  readOnly: { label: 'Read-only (no writes)', tools: ['Read', 'Grep', 'Glob', 'NotebookRead', 'WebFetch', 'TodoWrite'] },
-  lean: { label: 'Lean coding', tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'TodoWrite'] },
+  readOnly: { label: 'Read-only (no writes)', tools: ['Read', 'Grep', 'Glob', 'NotebookRead', 'WebFetch', 'WebSearch', 'TodoWrite'] },
+  lean: { label: 'Lean coding', tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch', 'TodoWrite'] },
   minimal: { label: 'Minimal (read + bash)', tools: ['Read', 'Grep', 'Bash'] },
 };
 
@@ -1536,6 +1536,7 @@ function registerIpc() {
   });
   handle('chat:last', async ({ cwd }) => ({ sessionId: chats.lastChatFor(cwd) }));
   handle('chat:send', owned('chats', async ({ id, text, blocks }) => chats.send(id, text, blocks)));
+  handle('chat:steer', owned('chats', async ({ id, text, blocks }) => chats.steer(id, text, blocks)));
   handle('chat:interrupt', owned('chats', async ({ id }) => { await chats.interrupt(id); return {}; }));
   handle('chat:set-model', owned('chats', async ({ id, model }) => {
     // Mid-chat model switches need the same local pre-warm as chat creation:

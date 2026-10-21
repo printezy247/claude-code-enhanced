@@ -21,7 +21,7 @@ const INVOKE_CHANNELS = new Set([
   'connectors:presets', 'connectors:status',
   'settings:get', 'settings:set', 'env:refresh', 'tools:check', 'usage:scan',
   'window:new',
-  'chat:create', 'chat:send', 'chat:interrupt', 'chat:close', 'chat:history',
+  'chat:create', 'chat:send', 'chat:steer', 'chat:interrupt', 'chat:close', 'chat:history',
   'chat:transcript', 'chat:delete', 'chat:deleteFolder', 'chat:fork', 'chat:last',
   'chat:set-model', 'chat:set-provider', 'chat:set-mode', 'chat:effort', 'chat:context', 'chat:flags',
   'chat:mcp', 'chat:agents', 'chat:styles', 'chat:skills', 'chat:commands', 'chat:checkpoints',
