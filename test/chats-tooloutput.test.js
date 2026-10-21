@@ -311,6 +311,50 @@ describe('live shell output', () => {
     expect(events.some((e) => e.kind === 'tool-output' && e.done === true)).toBe(true);
   });
 
+  it('keeps polling a task that moves to the background after it started', async () => {
+    // The SDK documents a later move to the background:
+    // SDKTaskUpdatedMessage.patch.is_backgrounded. From that moment the
+    // tool_result is only a placeholder, so the live tail must keep running
+    // until the task_notification ends it. #R2
+    const { events } = await boot();
+    pushFrame({
+      type: 'system', subtype: 'task_started',
+      task_id: 'tk9', tool_use_id: 'tu9', task_type: 'local_bash', description: 'npm test',
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    await vi.advanceTimersByTimeAsync(800);
+    expect(getTaskOutputCalls).toBeGreaterThan(0);
+
+    // The task is moved to the background.
+    pushFrame({
+      type: 'system', subtype: 'task_updated', task_id: 'tk9',
+      patch: { is_backgrounded: true },
+    });
+    await vi.advanceTimersByTimeAsync(20);
+
+    // The placeholder result arrives: it must not end the live tail.
+    pushFrame({
+      type: 'user', uuid: 'u9', parent_tool_use_id: null,
+      message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'tu9', content: 'Command running in background' }] },
+    });
+    await vi.advanceTimersByTimeAsync(20);
+    expect(
+      events.some((e) => e.kind === 'tool-output' && e.done === true),
+      'the placeholder result ended the live tail of a task moved to the background',
+    ).toBe(false);
+    const after = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls, 'the poll stopped at the placeholder result').toBeGreaterThan(after);
+
+    // The real result arrives as a task_notification: now the tail ends.
+    pushFrame({ type: 'system', subtype: 'task_notification', task_id: 'tk9', status: 'completed', output_file: '/tmp/x', summary: 'done' });
+    await vi.advanceTimersByTimeAsync(20);
+    const stopped = getTaskOutputCalls;
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(getTaskOutputCalls).toBe(stopped);
+    expect(events.some((e) => e.kind === 'tool-output' && e.done === true)).toBe(true);
+  });
+
   it('does nothing when the engine has no getTaskOutput', async () => {
     // An SDK build that does not expose the control request: the live tail
     // must fail soft, not throw and not emit a tool-output event.

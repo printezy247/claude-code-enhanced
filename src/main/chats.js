@@ -1190,6 +1190,16 @@ class ChatManager extends EventEmitter {
     }
     // The task is over: the tool_result that follows carries the real text.
     if (msg.subtype === 'task_notification') this._endTask(id, taskId, true);
+    if (msg.subtype === 'task_updated') {
+      // A task that moves to the background later says so here: from then on
+      // its tool_result is only a placeholder, so the live tail must keep
+      // running until the task_notification ends it. #R2
+      const entry = this.taskPolls.get(taskId);
+      if (entry && msg.patch && typeof msg.patch.is_backgrounded === 'boolean') {
+        entry.backgrounded = msg.patch.is_backgrounded;
+      }
+      return;
+    }
   }
 
   /**
