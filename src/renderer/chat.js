@@ -331,6 +331,10 @@ const Chat = (() => {
       chat.follow = true;   // sending jumps back to the live end
       updateLatestBtn(chat);
       if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
+      // Warn before sending into a nearly-full context window. #token-budget
+      if (chat.ctxUsage && Number(chat.ctxUsage.percentage) >= 80) {
+        toast('Context is ' + Number(chat.ctxUsage.percentage).toFixed(0) + '% full — consider /compact', 'warn');
+      }
       // A finished list retires on a new prompt (no note — the next turn
       // brings its own); unfinished work stays visible through the steer.
       if (chat.todosList.children.length
@@ -606,6 +610,7 @@ const Chat = (() => {
   function activateChat(id) {
     const chat = chats.get(id);
     if (!chat) return;
+    window.__activeChatId = id;
     if (window.__activate) window.__activate(id);
     else {
       for (const [, c] of chats) {
@@ -1657,9 +1662,9 @@ const Chat = (() => {
     pollContext(chat);
     chat.ctxTimer = setInterval(() => {
       if (!chat.alive) { stopContextPolling(chat); return; }
-      // Don't poll background/hidden tabs — keeps the meter fresh only for
-      // the tab the user is actually looking at. #perf-context
       if (document.visibilityState !== 'visible') return;
+      // Only poll the active tab. #perf-context
+      if (window.__activeChatId && window.__activeChatId !== chat.id) return;
       pollContext(chat);
     }, 5000);
   }
@@ -1671,6 +1676,11 @@ const Chat = (() => {
   /* ---------------- background tasks ---------------- */
 
   function onTaskEvent(chat, msg) {
+    // Bound the live task map so a long session cannot grow it forever.
+    if (chat.bgTasks && chat.bgTasks.size > 50) {
+      const oldest = chat.bgTasks.keys().next().value;
+      chat.bgTasks.delete(oldest);
+    }
     // background_tasks_changed is a LEVEL, not an edge: every payload is the
     // complete set of live tasks. Pairing task_started/task_notification edges
     // instead meant one dropped frame left a task card spinning forever — this
