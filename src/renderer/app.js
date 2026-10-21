@@ -1168,7 +1168,18 @@ function renderTasks(target, cwd, only) {
   const connRows = el('div', 'task-rows');
   conn.inner.appendChild(connRows);
   if (chat) {
-    pending.push(ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).then((r) => {
+    // Cache connector status per chat for 10s to avoid hammering the engine
+    // on repeated rail redraws. #perf-connectors
+    const cacheKey = 'conn:' + chat.id;
+    const cached = window.__connCache && window.__connCache[cacheKey];
+    const fetcher = (cached && (Date.now() - cached.at < 10000))
+      ? Promise.resolve(cached.r)
+      : ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).then((r) => {
+          window.__connCache = window.__connCache || {};
+          window.__connCache[cacheKey] = { at: Date.now(), r };
+          return r;
+        });
+    pending.push(fetcher.then((r) => {
       if (!(conn.isConnected || body.contains(conn))) return;
       const servers = (r && r.ok && r.servers) || [];
       connRows.innerHTML = '';
