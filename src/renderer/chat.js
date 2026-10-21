@@ -206,6 +206,7 @@ const Chat = (() => {
       statusRight: pane.querySelector('.chat-statusline .sl-right'),
       dot: pane.querySelector('.chat-dot'), providerEl: pane.querySelector('.chat-provider'),
       projEl: pane.querySelector('.chat-project'),
+      headerEl: pane.querySelector('.chat-header'),
       modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
       styleSel: pane.querySelector('.chat-style-foot'),
@@ -660,6 +661,8 @@ const Chat = (() => {
   async function closeChat(id) {
     const chat = chats.get(id);
     if (!chat) return;
+    // Its header may be parked in the top bar: put it back so it goes with the pane.
+    if (chat.headerEl && chat.headerEl.parentElement && chat.headerEl.parentElement.id === 'qa-chat-slot') chat.pane.prepend(chat.headerEl);
     // Stop every pending countdown, not just one shared interval. #2
     for (const card of chat.permSlot.querySelectorAll('.perm-card')) endPermCountdown(card);
     clearInterval(chat.ctxTimer);
@@ -980,7 +983,7 @@ const Chat = (() => {
     chat.alive = true;
     chat.tabEl.classList.remove('dead');
     chat.providerEl.textContent = basename(chat.provider.name);
-    const mgr = chat.pane.querySelector('.chat-mgr-btn');
+    const mgr = chat.headerEl.querySelector('.chat-mgr-btn');
     if (mgr) mgr.classList.toggle('hidden', !(chat.provider && chat.provider.baseUrl));
     fillModelSelector(chat);
     fillModeSelect(chat.modeSel, chat.provider);
@@ -3128,17 +3131,9 @@ const Chat = (() => {
     }).catch(() => {});
   }
 
+  // The per-server chips were retired: the Connectors card in the side panel shows them.
   function renderMcpChips(chat) {
-    const old = chat.pane.querySelector('.chat-mcp-chips'); old && old.remove();
-    const servers = (chat.init && chat.init.mcp_servers) || [];
-    if (!servers.length) return;
-    const row = el('div', 'chat-mcp-chips');
-    for (const s of servers) {
-      const chip = elIcon('span', 'chip mcp-chip ' + (s.status === 'connected' ? 'mcp-ok' : ''), CCEIcons.svg('plug2', 13) + ' ' + esc(s.name));
-      chip.title = 'MCP server: ' + s.name + ' (' + s.status + ')';
-      row.appendChild(chip);
-    }
-    chat.pane.querySelector('.chat-header').insertBefore(row, chat.pane.querySelector('.chat-header-sep:last-of-type'));
+    chat.headerEl.querySelector('.chat-mcp-chips')?.remove();
   }
 
   /* ---------------- streaming (per-thread: main + each subagent) ---------------- */

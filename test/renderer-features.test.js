@@ -229,14 +229,14 @@ describe('previously ignored engine frames (#26)', () => {
 
 describe('header overflow menu (#33)', () => {
   it('moves the secondary actions behind one button', () => {
-    const head = pane().querySelector('.chat-header');
+    const head = h.window.document.querySelector('.chat-header');
     expect(head.querySelector('.hdr-more')).toBeTruthy();
     // No more 13-button row.
     expect(head.querySelectorAll('.chat-btn').length).toBeLessThanOrEqual(5);
   });
 
   it('lists the moved actions in the menu', () => {
-    pane().querySelector('.hdr-more').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    h.window.document.querySelector('.hdr-more').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
     const menu = h.window.document.querySelector('.chat-menu');
     expect(menu).toBeTruthy();
     const labels = [...menu.querySelectorAll('.chat-menu-item')].map(b => b.textContent);
@@ -251,7 +251,7 @@ describe('composer (#32)', () => {
     const chat = h.window.Chat.chats.get('c1');
     expect(chat.modelSel.classList.contains('chat-model-foot')).toBe(true);
     expect(chat.modeSel.classList.contains('chat-mode-foot')).toBe(true);
-    expect(pane().querySelector('.chat-header .chat-model')).toBeNull();
+    expect(h.window.document.querySelector('.chat-header .chat-model')).toBeNull();
   });
 
   it('turns the send button into stop while busy', () => {

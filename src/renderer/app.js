@@ -165,6 +165,16 @@ window.__activate = (id) => {
     meta.pane.classList.toggle('active', sid === id);
     meta.tabEl.classList.toggle('active', sid === id);
   }
+  // The active chat's header (folder, repo, branch, provider, actions) sits in the
+  // quick row beside "Closed tab", so the top is two lines: tabs, then actions + chat.
+  const slot = document.querySelector('#qa-chat-slot');
+  if (slot) {
+    const out = slot.firstElementChild;
+    if (out && out.__pane) out.__pane.prepend(out);
+    const meta = tabRegistry.get(id);
+    const head = meta && meta.pane.querySelector('.chat-header');
+    if (head) { head.__pane = meta.pane; slot.appendChild(head); }
+  }
   // Chat tabs activate through here too, not activateSession, so this is the one
   // place that knows the active tab. Without it the side panel kept showing the
   // home folder and "start a chat" while a chat was open.
