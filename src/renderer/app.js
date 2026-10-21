@@ -2475,7 +2475,7 @@ function renderSettings() {
   });
   ofMaxRow.appendChild(ofMax);
   c3b.appendChild(ofMaxRow);
-  c3b.appendChild(el('div', 'hint', 'The card in the chat still shows the full output — only what the model reads is compacted, so long build logs cost fewer tokens. The budget is how many characters of a command’s output the model may see.'));
+  c3b.appendChild(el('div', 'hint', 'The card in the chat still shows the full output — only what the model reads is compacted, so long build logs cost fewer tokens. The budget is how many characters of a command’s output the model may see. Applies to new chats.'));
   body.appendChild(c3b);
 
   // sandbox
