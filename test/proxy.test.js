@@ -197,6 +197,29 @@ describe('streamed translation end to end (#1, #9)', () => {
     expect(text).toContain('Let me look');
   });
 
+  it('says so when the provider drops the stream mid-sentence (no finish_reason, no [DONE])', async () => {
+    const dropped = await withProxy((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'Now the second close path still needs' } }] }) + '\n\n');
+      res.end();   // closed without a finish_reason
+    });
+    const text = await (await dropped.call('/v1/messages', { model: 'm', max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'go' }] })).text();
+    await dropped.close();
+    expect(text).toContain('still needs');
+    expect(text).toContain('closed the stream before the reply was finished');
+  });
+
+  it('adds no note to a reply that finished normally', async () => {
+    const ok = await withProxy((_q, res) => {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.write('data: ' + JSON.stringify({ choices: [{ delta: { content: 'All done.' }, finish_reason: 'stop' }] }) + '\n\n');
+      res.end('data: [DONE]\n\n');
+    });
+    const text = await (await ok.call('/v1/messages', { model: 'm', max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'go' }] })).text();
+    await ok.close();
+    expect(text).not.toContain('closed the stream');
+  });
+
   it('reports non-zero input tokens so the context meter works (#9)', async () => {
     h = await withProxy((_q, res) => {
       res.writeHead(200, { 'content-type': 'text/event-stream' });

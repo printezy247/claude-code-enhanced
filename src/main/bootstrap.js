@@ -125,6 +125,40 @@ async function capabilities() {
 }
 
 /**
+ * Skills synced from Claude Desktop sit in ~/.claude/skills/synced/<id>/<name>,
+ * one level deeper than the engine scans, so `Skill(caveman)` fails with
+ * "Unknown skill". Build a small local plugin of symlinks to them (outside
+ * ~/.claude, which stays untouched) and hand it to the engine via `plugins`.
+ * @returns {string|null} plugin directory, or null when nothing is synced
+ */
+function syncedSkillsPlugin() {
+  const root = path.join(homeDir(), '.claude', 'skills', 'synced');
+  const found = new Map();
+  let sets = [];
+  try { sets = fs.readdirSync(root, { withFileTypes: true }); } catch { return null; }
+  for (const set of sets) {
+    if (!set.isDirectory() || set.name.startsWith('.')) continue;
+    let names = [];
+    try { names = fs.readdirSync(path.join(root, set.name), { withFileTypes: true }); } catch { continue; }
+    for (const n of names) {
+      const dir = path.join(root, set.name, n.name);
+      if (n.isDirectory() && !n.name.startsWith('.') && fs.existsSync(path.join(dir, 'SKILL.md'))) found.set(n.name, dir);
+    }
+  }
+  if (!found.size) return null;
+  const plugin = path.join(homeDir(), '.cache', 'claude-code-enhanced', 'synced-skills');
+  try {
+    fs.rmSync(plugin, { recursive: true, force: true });
+    fs.mkdirSync(path.join(plugin, '.claude-plugin'), { recursive: true });
+    fs.mkdirSync(path.join(plugin, 'skills'), { recursive: true });
+    fs.writeFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'),
+      JSON.stringify({ name: 'cce-synced', description: 'Skills synced from Claude Desktop', version: '1.0.0' }));
+    for (const [name, dir] of found) fs.symlinkSync(dir, path.join(plugin, 'skills', name), 'dir');
+  } catch { return null; }
+  return plugin;
+}
+
+/**
  * The system-prompt append for a new chat. Empty when none of the toolkits
  * are installed, so the prompt stays clean on a bare machine.
  */
@@ -133,7 +167,8 @@ async function promptAppend(cwd) {
   const lines = ['CCE session bootstrap (always active):'];
   if (caps.caveman) {
     lines.push('- Voice: caveman (lite) — concise, no filler, professional but tight. '
-      + 'Invoke the `caveman` skill and keep it at lite level.');
+      + 'Invoke the `' + (caps.caveman.includes(path.sep + 'synced' + path.sep) ? 'cce-synced:' : '')
+      + 'caveman` skill and keep it at lite level.');
   }
   if (caps.rtk) {
     lines.push('- Shell output: rtk is installed (' + caps.rtk + '). Prefix shell commands with '
@@ -169,7 +204,7 @@ async function promptAppend(cwd) {
 }
 
 module.exports = {
-  capabilities, detect, promptAppend, findSkillDir, findSuperpowersPlugin,
+  capabilities, detect, promptAppend, findSkillDir, findSuperpowersPlugin, syncedSkillsPlugin,
   // Test seam: the detection cache is keyed on HOME, so a test that repoints
   // HOME has to be able to drop it.
   __resetCacheForTests: () => { cache = { at: 0, value: null }; },

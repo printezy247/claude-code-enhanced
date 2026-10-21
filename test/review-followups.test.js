@@ -122,6 +122,27 @@ describe('a fenced example inside a fenced block stays in one block', () => {
   });
 });
 
+describe('context meter', () => {
+  it('a slow older poll cannot overwrite a newer answer', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    const answers = [];
+    const slow = open();
+    let n = 0;
+    h.window.ccx.invoke = async (ch) => {
+      if (ch !== 'chat:context') return { ok: true };
+      const mine = ++n;
+      if (mine === 1) await slow;   // first call answers last
+      return { ok: true, usage: { totalTokens: mine === 1 ? 90000 : 10000, maxTokens: 100000, percentage: mine === 1 ? 90 : 10 } };
+    };
+    h.window.Chat.pollContext(chat); h.window.Chat.pollContext(chat);
+    await flush(4);
+    slow.go();
+    await flush(4);
+    answers.push(doc().querySelector('.ctx-pct').textContent);
+    expect(answers[0]).toBe('10%');
+  });
+});
+
 describe('side panel renders', () => {
   it('an Overview still waiting on git does not land on the Terminal tab', async () => {
     gate = open();
@@ -138,7 +159,7 @@ describe('side panel renders', () => {
     h.window.toggleSplit(true);
     await flush(6);
     const before = { git: calls('git:info'), ctx: calls('chat:context'), mcp: calls('chat:mcp') };
-    const sessionCard = doc().querySelector('[data-card="session"]');
+    const sessionCard = doc().querySelector('[data-card="environment"]');
     h.window.Chat.handleEvent({ id: 'c1', kind: 'message', msg: { type: 'assistant', message: { content: [
       { type: 'tool_use', id: 't1', name: 'TodoWrite', input: { todos: [{ content: 'Do it', status: 'in_progress', activeForm: 'Doing it' }] } }] } } });
     await new Promise((r) => setTimeout(r, 250));
@@ -146,7 +167,7 @@ describe('side panel renders', () => {
     expect(calls('git:info')).toBe(before.git);
     expect(calls('chat:context')).toBe(before.ctx);
     expect(calls('chat:mcp')).toBe(before.mcp);
-    expect(doc().querySelector('[data-card="session"]')).toBe(sessionCard);   // untouched
+    expect(doc().querySelector('[data-card="environment"]')).toBe(sessionCard);   // untouched
   });
 
   it('the chat window has no to-do drawer; the list shows only in the Tasks card', async () => {

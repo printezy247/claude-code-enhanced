@@ -996,15 +996,15 @@ window.toggleSplit = toggleSplit;
 window.renderSplit = renderSplit;
 // The agent's task list changed: redraw the Overview now (coalesced, so a burst
 // of TaskUpdate calls is one redraw), but only for the tab that is on screen.
-let railTimer = null;
-window.refreshTasksRail = (chatId) => {
+const railTimers = {};
+window.refreshTasksRail = (chatId, only = 'tasks') => {
   if (chatId && chatId !== state.activeId) return;
   if (!document.querySelector('#main.split')) return;
   if ((document.querySelector('#split-kind')?.value || 'tasks') !== 'tasks') return;
-  clearTimeout(railTimer);
-  railTimer = setTimeout(() => {
+  clearTimeout(railTimers[only]);
+  railTimers[only] = setTimeout(() => {
     const body = document.querySelector('#split-body');
-    if (body) renderTasks(body, activeCwd(), 'tasks');
+    if (body) renderTasks(body, activeCwd(), only);
   }, 150);
 };
 
@@ -1056,13 +1056,9 @@ function renderTasks(target, cwd, only) {
   // desktop app: a progress line, the live step spelled out, then the checklist.
   // Reads chat.todos (normalized by the chat), not the drawer's markup.
   const buildTasks = () => {
-    const tasks = card('tasks', 'Tasks', 'check');
     const items = (chat && chat.todos) || [];
-    if (!items.length) {
-      tasks.inner.appendChild(el('div', 'task-row hint',
-        chat && chat.busy ? 'The agent has not made a task list for this turn' : 'Task lists appear here when the agent plans multi-step work'));
-      return;
-    }
+    if (!items.length) return;   // the four fixed cards stay; Tasks only joins with a list
+    const tasks = card('tasks', 'Tasks', 'check');
     const doneN = items.filter(t => t.status === 'completed').length;
     tasks.badge.textContent = doneN + '/' + items.length;
     tasks.badge.classList.toggle('busy', doneN < items.length);
@@ -1085,52 +1081,64 @@ function renderTasks(target, cwd, only) {
     tasks.inner.appendChild(ol);
   };
 
+  // Background work the engine runs for this chat (subagents, shells): a card only while there is some.
+  const buildBackground = () => {
+    if (!(chat && chat.bgTasks && chat.bgTasks.size)) return;
+    const bg = card('background', 'Background', 'clock');
+    bg.badge.textContent = String(chat.bgTasks.size);
+    bg.badge.classList.add('busy');
+    for (const [, row] of chat.bgTasks) {
+      bg.inner.appendChild(el('div', 'task-row hint', '◌ ' + (row.label || 'task')));
+    }
+  };
+  if (only === 'background') {
+    buildBackground();
+    const cur = target.querySelector('[data-card="background"]');
+    const next = body.firstElementChild;
+    if (target.isConnected && (document.querySelector('#split-kind')?.value || 'tasks') === 'tasks') {
+      if (cur && !next) cur.remove();
+      else if (!cur && next) target.appendChild(next);      // last card, after Changes
+      else if (cur && cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
+      target.__taskHtml = null;
+    }
+    return;
+  }
+
   // A task-list change redraws only that card: no git spawn, no engine calls.
   if (only === 'tasks') {
     buildTasks();
     const cur = target.querySelector('[data-card="tasks"]');
     const next = body.firstElementChild;
-    if (cur && next && target.isConnected && (document.querySelector('#split-kind')?.value || 'tasks') === 'tasks') {
-      if (cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
+    if (target.isConnected && (document.querySelector('#split-kind')?.value || 'tasks') === 'tasks') {
+      if (cur && !next) cur.remove();                 // list emptied
+      else if (!cur && next) target.prepend(next);    // first list: Tasks sits on top
+      else if (cur && cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
       target.__taskHtml = null;   // the next full render compares afresh
     }
     return;
   }
 
-  // Session: what this chat is running on, at a glance.
-  const sess = card('session', 'Session', 'bot');
+  buildTasks();   // first, when there is a list (the desktop app's progress block)
+
+  // Environment: where the chat runs and on what, plus the git state.
+  const env = card('environment', 'Environment', 'folder');
   if (chat) {
-    const r = chat.lastResult || {};
-    const u = r.usage || {};
     const rows = [
       ['status', chat.busy ? 'working…' : (chat.alive ? 'idle' : 'ended')],
       ['provider', chat.provider ? chat.provider.name : 'default (Claude account)'],
       ['model', chat.model || (chat.init && chat.init.model) || 'provider default'],
-      ['mode', (chat.modeSel && chat.modeSel.selectedOptions[0]) ? chat.modeSel.selectedOptions[0].textContent : (chat.mode || '')],
     ];
-    if (r.num_turns != null) rows.push(['last turn', r.num_turns + ' turns · ' + Math.round((r.duration_ms || 0) / 1000) + 's']);
-    if (u.input_tokens != null) rows.push(['tokens', '↑' + fmtTokShort(u.input_tokens) + ' ↓' + fmtTokShort(u.output_tokens || 0)]);
-    if ((!chat.provider || !chat.provider.baseUrl) && chat.spent > 0.0001) rows.push(['spent', '$' + chat.spent.toFixed(4)]);
     for (const [k, v] of rows) {
       const row = el('div', 'kv-row');
       row.appendChild(el('span', 'kv-k', k));
       row.appendChild(el('span', 'kv-v', String(v)));
-      sess.inner.appendChild(row);
+      env.inner.appendChild(row);
     }
-    sess.badge.textContent = chat.busy ? 'working' : 'idle';
-    sess.badge.classList.toggle('busy', !!chat.busy);
-  } else {
-    sess.inner.appendChild(el('div', 'task-row hint', 'no chat in this tab'));
   }
-
-  // Environment + Changes share one git:info call.
-  const env = card('environment', 'Environment', 'folder');
   const envRow = el('div', 'task-row hint', '⌂ ' + cwd);
   envRow.title = cwd;
   env.inner.appendChild(envRow);
-  const ch = card('changes', 'Changes', 'branch');
-  const chList = el('div', 'task-rows');
-  ch.inner.appendChild(chList);
+  let ch, chList;   // created after Connectors so the cards read in the desktop order
   pending.push(ccx.invoke('git:info', { cwd }).then((r) => {
     if (!r || !r.ok) return;
     env.inner.appendChild(el('div', 'task-row hint',
@@ -1148,20 +1156,19 @@ function renderTasks(target, cwd, only) {
     }
   }));
 
-  // Context: usage of the active chat, as a ring plus a per-category bar.
+  // Context: like the desktop card. "N% used" with compact totals, a thin
+  // segmented bar, then one row per category with its share of the window.
+  const fmtK = (n) => fmtTokShort(n).replace(/\.0(?=[kMB]$)/, '');
   const ctx = card('context', 'Context', 'chart');
-  const ctxTop = el('div', 'ctx-top');
-  const ring = el('span', 'ctx-ring big');
-  ring.style.setProperty('--p', '0');
-  ctxTop.appendChild(ring);
-  const ctxRow = el('div', 'task-row hint', chat ? '…' : 'start a chat to see usage');
-  ctxTop.appendChild(ctxRow);
-  ctx.inner.appendChild(ctxTop);
-  const bar = el('div', 'task-bar stacked');
-  bar.appendChild(el('i'));
+  const ctxHead = el('div', 'ctx-head');
+  const ctxPct = el('span', 'ctx-used', chat ? '…' : 'start a chat to see usage');
+  const ctxTot = el('span', 'ctx-total', '');
+  ctxHead.appendChild(ctxPct);
+  ctxHead.appendChild(ctxTot);
+  ctx.inner.appendChild(ctxHead);
+  const bar = el('div', 'ctx-seg');
   ctx.inner.appendChild(bar);
-  // Category breakdown, like the desktop app's context panel.
-  const ctxBreak = el('div', 'task-rows');
+  const ctxBreak = el('div', 'task-rows ctx-rows');
   ctx.inner.appendChild(ctxBreak);
   if (chat) {
     const compact = el('button', 'btn small', 'Compact in place');
@@ -1173,34 +1180,37 @@ function renderTasks(target, cwd, only) {
     pending.push(ccx.invoke('chat:context', { id: chat.id }).then((r) => {
       if (!r || !r.ok || !r.usage) return;
       const u = r.usage;
+      const total = Number(u.totalTokens) || 0;
+      const max = Math.max(1, Number(u.maxTokens) || 1);
       const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
-      ring.style.setProperty('--p', pct.toFixed(1));
-      ring.classList.toggle('warn', pct > 65);
-      const fill = bar.querySelector('i');
-      fill.style.width = pct.toFixed(1) + '%';
-      fill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
-      ctxRow.textContent = (u.totalTokens || 0).toLocaleString() + ' / '
-        + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
+      ctxPct.textContent = pct.toFixed(0) + '% used';
+      ctxPct.classList.toggle('warn', pct > 65);
+      ctxTot.textContent = fmtK(total) + ' / ' + fmtK(max);
+      ctxHead.title = total.toLocaleString() + ' / ' + max.toLocaleString() + ' tokens';
       ctx.badge.textContent = pct.toFixed(0) + '%';
       ctx.badge.classList.toggle('warn', pct > 65);
+      bar.innerHTML = '';
       ctxBreak.innerHTML = '';
-      // Bars are relative to the largest category, so they read as a ranking
-      // (against the whole window most would be invisible slivers).
-      const max = Math.max(1, ...(u.categories || []).filter((c) => c && c.kind !== 'free').map((c) => Number(c.tokens) || 0));
       for (const c of (u.categories || [])) {
-        if (!c || c.kind === 'free') continue;
-        const row = el('div', 'task-row hint ctx-cat');
+        if (!c) continue;
+        const tokens = Number(c.tokens) || 0;
+        const deferred = c.kind === 'deferred' || c.isDeferred;
+        const free = c.kind === 'free';
+        if (!deferred && !free && tokens > 0) {
+          const seg = el('i');
+          seg.style.width = Math.min(100, tokens / max * 100).toFixed(2) + '%';
+          if (c.color) seg.style.background = c.color;
+          bar.appendChild(seg);
+        }
+        const row = el('div', 'task-row hint ctx-cat' + (deferred ? ' deferred' : ''));
         const dot = el('span', 'ctx-dot');
-        if (c.color) dot.style.background = c.color;
+        if (c.color && !free) dot.style.background = c.color;
+        if (free) dot.classList.add('free');
         row.appendChild(dot);
-        row.appendChild(el('span', '', c.name || 'other'));
-        const mini = el('span', 'ctx-mini');
-        const mf = el('i');
-        mf.style.width = Math.min(100, (Number(c.tokens) || 0) / max * 100).toFixed(1) + '%';
-        if (c.color) mf.style.background = c.color;
-        mini.appendChild(mf);
-        row.appendChild(mini);
-        row.appendChild(el('span', 'ctx-tokens', (Number(c.tokens) || 0).toLocaleString()));
+        row.appendChild(el('span', 'ctx-name', c.name || 'other'));
+        row.appendChild(el('span', 'ctx-tokens', fmtK(tokens)));
+        row.appendChild(el('span', 'ctx-share', deferred ? '—' : (tokens / max * 100).toFixed(1) + '%'));
+        row.title = tokens.toLocaleString() + ' tokens';
         ctxBreak.appendChild(row);
       }
     }));
@@ -1276,16 +1286,11 @@ function renderTasks(target, cwd, only) {
     connRows.appendChild(el('div', 'task-row hint', 'start a chat to see connectors'));
   }
 
-  buildTasks();
+  ch = card('changes', 'Changes', 'branch');
+  chList = el('div', 'task-rows');
+  ch.inner.appendChild(chList);
 
-  // Background work the engine is running for this chat (subagents, shells).
-  if (chat && chat.bgTasks && chat.bgTasks.size) {
-    const bg = card('background', 'Background', 'clock');
-    bg.badge.textContent = String(chat.bgTasks.size);
-    for (const [, row] of chat.bgTasks) {
-      bg.inner.appendChild(el('div', 'task-row hint', '◌ ' + (row.label || 'task')));
-    }
-  }
+  buildBackground();
   const swap = () => {
     // A newer render started meanwhile, or the panel was closed: drop this one.
     if (seq !== target.__taskSeq || !target.isConnected) return;
