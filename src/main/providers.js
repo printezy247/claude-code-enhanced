@@ -152,6 +152,7 @@ function publicInstance(p) {
     protocol: p.protocol || entry.protocol || 'anthropic',
     authKind: p.authKind || entry.authKind || (auth.type === 'oauth' ? 'oauth' : 'api-key'),
     baseUrl: p.baseUrl || '',
+    keyHeader: p.keyHeader || entry.keyHeader || 'bearer',
     placeholders: p.placeholders || undefined,
     modelsDevId: entry.modelsDevId || entry.id || p.presetId,
     envVar: entry.envVar || null,
@@ -245,7 +246,14 @@ function migrateModels(store) {
       changed = true;
       flags.agentModel = true;
     }
+    // Google AI Studio: the first preset shipped a model id that 404s and a pro
+    // default with no free-tier quota. Swap those two, once; leave other picks.
+    if ((p.presetId === 'google' || p.presetId === 'google-native') && !flags.googleModels) {
+      if (p.smallFastModel === 'gemini-3.1-flash') { p.smallFastModel = 'gemini-3.5-flash-lite'; changed = true; }
+      if (p.model === 'gemini-3.1-pro-preview') { p.model = 'gemini-3.5-flash'; changed = true; }
+    }
   }
+  flags.googleModels = true;
   // 128K was the old default; it needs ~14 GB for a 4B model and swaps a 16 GB
   // machine to a crawl. One-time move to the 72K default (users can re-pick).
   if (!flags.localCtx72k) {
