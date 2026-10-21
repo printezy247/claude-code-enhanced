@@ -1135,6 +1135,46 @@ const Chat = (() => {
 
   /* ---------------- memory & rules editor ---------------- */
 
+  /* ---------------- auto-memory proposals (opt-in) ---------------- */
+
+  // Once per chat, after a few finished turns: ask the same model for lasting
+  // facts. They only wait for review; nothing reaches MEMORY.md unapproved.
+  async function maybeProbeMemory(chat) {
+    if (!chat.alive || chat.busy || chat.memProbed || chat.compacting || chat.memProbe) return;
+    const s = await ccx.invoke('settings:get');
+    if (!s || !s.ok || !s.settings || !s.settings.autoMemory) return;
+    const p = await ccx.invoke('memory:probe-prompt');
+    if (!p || !p.ok) return;
+    chat.memProbed = true;
+    chat.memProbe = true;
+    chat.msgs.appendChild(el('div', 'sys-note', 'memory: checking this chat for lasting notes (auto memory is on)…'));
+    scrollDownSoft(chat);
+    const r = await ccx.invoke('chat:send', { id: chat.id, text: p.prompt });
+    if (!r || !r.ok) chat.memProbe = false;
+  }
+
+  async function collectMemoryProbe(chat, msg) {
+    const text = msg.subtype === 'success' ? String(msg.result || '') : '';
+    const r = text ? await ccx.invoke('memory:propose', { cwd: chat.cwd, text }) : null;
+    const n = r && r.ok ? r.queued : 0;
+    chat.msgs.appendChild(el('div', 'sys-note', n
+      ? 'memory: ' + n + ' note' + (n > 1 ? 's' : '') + ' to review: open memory & rules, then accept or reject each'
+      : 'memory: nothing new worth remembering'));
+    scrollDownSoft(chat);
+    showPendingChip(chat);
+  }
+
+  /** A chip on the project bar while notes wait for review; click opens the Memory panel. */
+  async function showPendingChip(chat) {
+    const r = await ccx.invoke('memory:pending', { cwd: chat.cwd });
+    chat.projEl.querySelector('.mem-pending-chip')?.remove();
+    const n = r && r.ok ? (r.pending || []).length : 0;
+    if (!n) return;
+    const chip = elIcon('button', 'proj-chip mem-pending-chip', CCEIcons.svg('brain', 13) + ' ' + n + ' memory note' + (n > 1 ? 's' : '') + ' to review');
+    chip.addEventListener('click', () => toggleMemoryPanel(chat));
+    chat.projEl.appendChild(chip);
+  }
+
   async function toggleMemoryPanel(chat) {
     if (panelOpen(chat, 'chat-memory-panel')) return;
     const panel = makePanel(chat, 'chat-memory-panel', 'brain', 'Memory & rules',
@@ -1169,6 +1209,42 @@ const Chat = (() => {
       toast('Saved ' + f.label, 'ok');
     });
     row.appendChild(save);
+    // Auto memory: opt-in switch, and the notes the model proposed, awaiting a yes or no.
+    const toggle = el('label', 'mem-auto');
+    const cb = el('input');
+    cb.type = 'checkbox';
+    ccx.invoke('settings:get').then((st) => { cb.checked = !!(st && st.settings && st.settings.autoMemory); });
+    cb.addEventListener('change', () => ccx.invoke('settings:set', { settings: { autoMemory: cb.checked } }));
+    toggle.appendChild(cb);
+    toggle.appendChild(el('span', '', ' Propose lasting notes from my chats (same model; I approve each one)'));
+    panel.appendChild(toggle);
+    const proposals = el('div', 'mem-proposals');
+    panel.appendChild(proposals);
+    const loadProposals = async () => {
+      const pr = await ccx.invoke('memory:pending', { cwd: chat.cwd });
+      proposals.innerHTML = '';
+      for (const p of (pr && pr.ok ? pr.pending : [])) {
+        const card = el('div', 'mem-proposal');
+        card.appendChild(el('div', 'mem-proposal-head', p.type + ' · ' + p.slug));
+        card.appendChild(el('div', 'hint', p.description));
+        card.appendChild(el('pre', 'mem-proposal-body', p.body));
+        const act = el('div', 'perm-actions');
+        for (const [label, accept, cls] of [['Accept', true, 'btn small primary'], ['Reject', false, 'btn small']]) {
+          const b = el('button', cls, label);
+          b.addEventListener('click', async () => {
+            b.disabled = true;
+            const rr = await ccx.invoke('memory:resolve', { cwd: chat.cwd, slug: p.slug, accept });
+            if (rr && rr.ok && rr.saved) toast('Saved to memory: ' + p.slug, 'ok');
+            await loadProposals();
+            showPendingChip(chat);
+          });
+          act.appendChild(b);
+        }
+        card.appendChild(act);
+        proposals.appendChild(card);
+      }
+    };
+    loadProposals();
     panel.appendChild(pick);
     panel.appendChild(editor);
     panel.appendChild(row);
@@ -2712,7 +2788,10 @@ const Chat = (() => {
           chat.pendingMsgs.splice(0, Math.max(0, chat.pendingMsgs.length - queued));
           renderQueued(chat);
         }
-        if (chat.compacting) {
+        if (chat.memProbe) {
+          chat.memProbe = false;
+          collectMemoryProbe(chat, msg);
+        } else if (chat.compacting) {
           chat.compacting = false;
           const brief = String(msg.result || '').trim();
           if (msg.subtype === 'success' && brief) {
@@ -2730,6 +2809,8 @@ const Chat = (() => {
           } else {
             appendError(chat, 'Compaction failed (' + msg.subtype + '). The engine auto-compacts near the context limit regardless.');
           }
+        } else if (msg.subtype === 'success' && !msg.is_error && (chat.results = (chat.results || 0) + 1) >= 3 && !chat.memProbed) {
+          setTimeout(() => maybeProbeMemory(chat), 1500);   // auto-memory, opt-in, once per chat
         } else if (msg.subtype === 'success' && !msg.is_error && maybeNudge(chat, msg)) {
           // nudged: the next turn starts by itself
         } else if (msg.subtype !== 'success' || msg.is_error) {
@@ -2999,6 +3080,7 @@ const Chat = (() => {
         }
       }).catch(() => {});
     }
+    if (!chat.pendingChipChecked) { chat.pendingChipChecked = true; showPendingChip(chat); }
     // model selector: reflect live model
     if (chat.init.model && ![...chat.modelSel.options].some(o => o.value === chat.init.model)) {
       const o = el('option', '', chat.init.model + ' (session)');

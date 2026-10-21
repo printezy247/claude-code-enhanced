@@ -29,7 +29,7 @@ const INVOKE_CHANNELS = new Set([
   'chat:supported-models', 'chats:index',
   'session:create', 'session:list', 'session:resize', 'session:kill',
   'session:fork', 'session:rename', 'session:tag',
-  'memory:read', 'memory:save', 'memory:files',
+  'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
   'file:read', 'git:info', 'project:files', 'project:scripts', 'skill:import',
   'dialog:pickDir', 'dialog:pickFiles', 'clipboard:write', 'shell:openExternal', 'shell:reveal',
 ]);

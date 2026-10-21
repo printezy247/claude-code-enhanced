@@ -29,6 +29,7 @@ const adapters = require('./adapters');
 const bedrock = require('./bedrock');
 const connectors = require('./connectors');
 const tools = require('./tools');
+const automemory = require('./automemory');
 const localmodels = require('./localmodels');
 const worktrees = require('./worktrees');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
@@ -1759,6 +1760,11 @@ function registerIpc() {
     }
     return { global: { path: globalPath, content: read(globalPath) }, project };
   });
+  // Auto-memory proposals: the model suggests, Jack approves. Opt-in via settings.autoMemory.
+  handle('memory:probe-prompt', async () => ({ prompt: automemory.PROBE_PROMPT }));
+  handle('memory:propose', async ({ cwd, text }) => ({ queued: automemory.addPending(cwd, automemory.parseProposals(text)) }));
+  handle('memory:pending', async ({ cwd }) => ({ pending: automemory.listPending(cwd) }));
+  handle('memory:resolve', async ({ cwd, slug, accept }) => automemory.resolve(cwd, String(slug || ''), !!accept));
   handle('memory:save', async ({ path: p, content }) => {
     const home = process.env.HOME || os.homedir();
     const real = path.resolve(String(p || '').replace(/^~(?=\/|$)/, home));

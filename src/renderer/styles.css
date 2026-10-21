@@ -1534,3 +1534,11 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .ctx-cat .ctx-tokens { margin-left: 0; min-width: 0; text-align: right; font-size: 11.5px; }
 .ctx-cat .ctx-share { width: 40px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
 .ctx-cat.deferred { opacity: .55; }
+
+/* Auto memory: opt-in switch and proposed notes awaiting review */
+.mem-auto { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); margin: 8px 0; cursor: pointer; }
+.mem-proposals { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
+.mem-proposal { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; background: var(--bg3); }
+.mem-proposal-head { font-size: 12px; font-weight: 600; color: var(--text); }
+.mem-proposal-body { white-space: pre-wrap; font-size: 11.5px; max-height: 140px; overflow: auto; margin: 6px 0; color: var(--text); }
+.mem-pending-chip { cursor: pointer; border-color: var(--accent); color: var(--accent); }
