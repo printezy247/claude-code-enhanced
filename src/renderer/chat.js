@@ -1223,7 +1223,7 @@ const Chat = (() => {
     const loadProposals = async () => {
       const pr = await ccx.invoke('memory:pending', { cwd: chat.cwd });
       proposals.innerHTML = '';
-      for (const p of (pr && pr.ok ? pr.pending : [])) {
+      for (const p of ((pr && pr.pending) || [])) {
         const card = el('div', 'mem-proposal');
         card.appendChild(el('div', 'mem-proposal-head', p.type + ' · ' + p.slug));
         card.appendChild(el('div', 'hint', p.description));
