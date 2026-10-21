@@ -98,4 +98,25 @@ describe('compacting shell output', () => {
     expect(r.compacted).toBe(true);
     expect(r.text.length).toBeLessThanOrEqual(2000);
   });
+
+  it('gives the model more text when the budget is raised', () => {
+    // The knob said "characters of shell output the model may read" and did
+    // nothing above ~2700: the head and the tail were capped at 1200 each.
+    const body = 'x'.repeat(50000);
+    const small = compactBashOutput({ output: body, maxChars: 2000 });
+    const big = compactBashOutput({ output: body, maxChars: 20000 });
+    expect(small.text.length, 'the budget did not change the text').toBeLessThan(big.text.length);
+    expect(big.text.length, 'a 20000 budget still gave the model ~2500 chars').toBeGreaterThan(15000);
+    // And the text the model reads never leaves the budget.
+    expect(small.text.length).toBeLessThanOrEqual(2000);
+    expect(big.text.length).toBeLessThanOrEqual(20000);
+  });
+
+  it('states the real size of the text the model reads', () => {
+    const r = compactBashOutput({ output: 'z'.repeat(50000), command: 'npm test', maxChars: 4000 });
+    const m = /model sees (\d+) chars/.exec(r.text);
+    expect(m, 'the header states no size: ' + r.text.slice(0, 140)).toBeTruthy();
+    expect(Number(m[1]), 'the header lies about the size').toBe(r.text.length);
+    expect(r.text.length).toBeLessThanOrEqual(4000);
+  });
 });

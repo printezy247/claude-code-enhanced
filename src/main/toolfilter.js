@@ -18,8 +18,6 @@ const DEFAULT_MAX_CHARS = 8000;
  */
 const MIN_MAX_CHARS = 500;
 const MAX_MAX_CHARS = 100000;
-const HEAD_CHARS = 1200;
-const TAIL_CHARS = 1200;
 /** Room reserved for the "… N characters elided …" marker. */
 const MARKER_ROOM = 64;
 
@@ -98,20 +96,52 @@ function compactBashOutput({ output, command = '', maxChars = DEFAULT_MAX_CHARS 
 
   const collapsed = collapseRepeats(original);
   const body = collapsed.length < original.length ? collapsed : original;
-  const header = '[cce] compacted shell output: '
-    + original.split('\n').length + ' lines, ' + original.length + ' chars, model sees ~' + limit + ' chars'
-    + (command ? ' (' + String(command).slice(0, 200) + ')' : '')
-    + '\n';
+  const lines = original.split('\n').length;
+  const cmd = command ? ' (' + String(command).slice(0, 200) + ')' : '';
+  // The header is part of what the model reads, so it is budgeted too: the
+  // body gets what is left of the limit once the header and the elision
+  // marker have their room. #F5 #F6
+  const headerFor = (stated) => '[cce] compacted shell output: '
+    + lines + ' lines, ' + original.length + ' chars, model sees ' + stated + ' chars'
+    + cmd + '\n';
+  // The header states the length of the whole text, so its own length depends
+  // on the number it states: reserve room for the widest number and solve the
+  // small fixed point afterwards.
+  const headerRoom = headerFor('').length + 8;
+  const budget = Math.max(200, limit - headerRoom - MARKER_ROOM);
 
-  const budget = Math.max(200, limit - header.length - MARKER_ROOM);
-  if (body.length <= budget) return { text: header + body, original, compacted: true };
-
-  const headLen = Math.min(HEAD_CHARS, Math.floor(budget / 2));
-  const tailLen = Math.min(TAIL_CHARS, Math.max(0, budget - headLen));
-  const elided = Math.max(0, body.length - headLen - tailLen);
-  const marker = '\n… [' + elided + ' characters elided] …\n';
-  const text = header + body.slice(0, headLen) + marker + body.slice(body.length - tailLen);
+  let bodyText = body;
+  if (body.length > budget) {
+    // The head and the tail come from the budget, not from fixed constants:
+    // a bigger budget really does give the model more text. #F5
+    const headLen = Math.max(1, Math.min(budget - 1, Math.round(budget * 0.6)));
+    const tailLen = Math.max(0, budget - headLen);
+    const elided = Math.max(0, body.length - headLen - tailLen);
+    const marker = '\n… [' + elided + ' characters elided] …\n';
+    bodyText = body.slice(0, headLen) + marker + body.slice(body.length - tailLen);
+  }
+  // The header must not overstate what the model reads: it states the real
+  // length of the text it is part of. #F6
+  const stated = statedLength(headerFor('').length + bodyText.length);
+  const text = headerFor(stated) + bodyText;
   return { text, original, compacted: true };
+}
+
+/**
+ * The length of a text that states its own length in its header.
+ *
+ * The text is `base + digits(stated)` long, and `stated` is that length, so
+ * the two must agree: pick the number of digits that makes the equation true.
+ *
+ * @param {number} base  the length of the text without the stated number
+ * @returns {number}
+ */
+function statedLength(base) {
+  for (let d = 1; d <= 9; d++) {
+    const n = base + d;
+    if (String(n).length === d) return n;
+  }
+  return base + 1;
 }
 
 module.exports = {
