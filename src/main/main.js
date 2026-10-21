@@ -35,7 +35,7 @@ const localmodels = require('./localmodels');
 const worktrees = require('./worktrees');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
-const { startProxy } = require('./proxy');
+const { startProxy, clearLastGoodModel } = require('./proxy');
 // Per-launch secret the translator proxy requires on every request. The proxy
 // attaches real provider API keys, so without it any local process could spend
 // them. See issue #8.
@@ -751,10 +751,23 @@ function createWindow() {
 // The event is passed on to the handler: only the sender's webContents id
 // proves which window a call came from, and ownership is what makes a
 // cross-window call refuseable. #feat-multi-window
+const { fileURLToPath } = require('url');
+const rendererDir = path.resolve(__dirname, '..', 'renderer');
+
 function isValidSender(e) {
   if (!e || !e.senderFrame || !e.senderFrame.url) return true;
   const url = String(e.senderFrame.url);
-  return url.startsWith('file://') || url.startsWith('devtools://');
+  if (url.startsWith('devtools://')) return true;
+  if (url.startsWith('file://')) {
+    try {
+      const filePath = fileURLToPath(url);
+      const rel = path.relative(rendererDir, filePath);
+      return !rel.startsWith('..') && !path.isAbsolute(rel);
+    } catch {
+      return false;
+    }
+  }
+  return false;
 }
 
 function handle(channel, fn) {
@@ -1529,7 +1542,10 @@ function registerIpc() {
     // without it, Ollama serves the model at its default (tiny) context.
     const chat = chats.chats.get(id);
     const prov = chat && chat.providerInstance;
-    if (prov) await ensureFreshAuth(prov);
+    if (prov) {
+      await ensureFreshAuth(prov);
+      if (prov.uid) clearLastGoodModel(prov.uid);
+    }
     const eff = sanitizeModel(model || (prov && prov.model) || '');
     model = sanitizeModel(model);
     // Warm on any local base or direct (non-proxied) provider — proxied local

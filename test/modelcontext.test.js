@@ -23,6 +23,12 @@ describe('modelContext', () => {
     expect(modelContext({ presetId: 'nope', models: [{ id: 'm', context: 131072 }] }, 'm')).toBe(131072);
   });
 
+  it('resolves known model aliases even without provider presetId', () => {
+    expect(modelContext(null, 'gpt-4-32k')).toBe(32768);
+    expect(modelContext({ presetId: 'nope' }, 'codestral')).toBe(32768);
+    expect(modelContext(null, 'qwen2.5-coder')).toBe(131072);
+  });
+
   it('returns 0 when nothing knows the model', () => {
     expect(modelContext({ presetId: 'nope' }, 'm')).toBe(0);
     expect(modelContext(null, 'm')).toBe(0);

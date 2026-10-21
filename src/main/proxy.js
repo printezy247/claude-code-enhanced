@@ -90,7 +90,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     const est = Math.max(1, Math.round(JSON.stringify(body.messages || []).length / 4)
       + Math.round(JSON.stringify(body.system || '').length / 4)
       + Math.round(JSON.stringify(body.tools || []).length / 4));
-    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: est }));
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: est, is_approximate: true }));
     return;
   }
   if (restPath !== '/v1/messages') {
@@ -155,7 +155,8 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     // up. Ask again with a model this provider is known to serve.
     const alt = fallbackModel(prov, body.model);
     if (alt && isModelMissing(err)) {
-      console.log('[proxy] model "' + body.model + '" is not on this provider; retrying with "' + alt + '"');
+      console.log('[proxy] model "' + body.model + '" is not on this provider; substituting with "' + alt + '"');
+      try { res.setHeader('x-cce-model-substituted', alt); } catch { /* headers might be locked */ }
       body = { ...body, model: alt };
       upstream = await call(body);
       if (upstream.clientGone) return;
@@ -468,6 +469,11 @@ function toolArgsComplete(args) {
 
 // Last model each provider answered with, as a stand-in for one it lacks.
 const lastGoodModel = new Map();
+
+function clearLastGoodModel(uid) {
+  if (uid) lastGoodModel.delete(uid);
+  else lastGoodModel.clear();
+}
 
 function errorText(e) {
   if (!e) return 'unknown provider error';
@@ -973,4 +979,6 @@ module.exports = {
   mapError,
   toolArgsComplete,
   aggregateToAnthropic,
+  clearLastGoodModel,
+  lastGoodModel,
 };

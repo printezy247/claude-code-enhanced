@@ -232,4 +232,14 @@ describe('main-process IPC guards', () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/unauthorized origin/);
   });
+
+  it('rejects foreign file:// origins outside renderer directory', async () => {
+    const stub = require('electron');
+    require('../src/main/main.js');
+    await new Promise(r => setTimeout(r, 200));
+    const info = stub.__state.handlers.get('app:info');
+    const res = await info({ senderFrame: { url: 'file:///etc/passwd' } }, {});
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unauthorized origin/);
+  });
 });

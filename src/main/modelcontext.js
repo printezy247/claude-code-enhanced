@@ -16,6 +16,12 @@ const KNOWN_MODEL_ALIASES = [
   { match: /qwen(?:2\.5|3)/i, context: 131_072 },
   { match: /o(?:1|3|4)(?:-mini|-preview)?/i, context: 200_000 },
   { match: /gpt-4o(?:-mini)?/i, context: 128_000 },
+  { match: /gpt-4-turbo/i, context: 128_000 },
+  { match: /gpt-4-32k/i, context: 32_768 },
+  { match: /gpt-4(?:-\d+)?$/i, context: 8_192 },
+  { match: /gpt-3\.5-turbo(?:-16k)?/i, context: 16_384 },
+  { match: /mistral-(?:large|medium|small|nemo)/i, context: 128_000 },
+  { match: /codestral/i, context: 32_768 },
 ];
 
 /**
@@ -54,7 +60,7 @@ function modelContext(provider, model) {
     }
   }
 
-  if (!result && pid && pid !== 'nope') {
+  if (!result) {
     for (const rule of KNOWN_MODEL_ALIASES) {
       if (rule.match.test(id)) {
         result = rule.context;

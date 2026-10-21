@@ -47,6 +47,14 @@ describe('parseProposals', () => {
     expect(r[0].slug).toMatch(/^[a-z0-9-]+$/);
     expect(r[0].slug).not.toContain('..');
     expect(r[0].type).toBe('project');
+    expect(r[0].source).toBe('model-suggested');
+  });
+  it('sanitizes script tags and validates body content', () => {
+    const malicious = [item({ name: 'safe-note', body: '<script>alert("pwned")</script>Keep this useful fact.' })];
+    const r = am.parseProposals(JSON.stringify(malicious));
+    expect(r).toHaveLength(1);
+    expect(r[0].body).not.toContain('<script>');
+    expect(r[0].body).toBe('Keep this useful fact.');
   });
 });
 
@@ -61,6 +69,7 @@ describe('pending → accept / reject', () => {
     const note = readFileSync(path.join(am.memDir(cwd), 'keep-version.md'), 'utf8');
     expect(note).toContain('name: keep-version');
     expect(note).toContain('type: feedback');
+    expect(note).toContain('source: model-suggested');
     expect(note).toContain('Stay on 0.9.33.');
     const index = readFileSync(path.join(am.memDir(cwd), 'MEMORY.md'), 'utf8');
     expect(index).toContain('(keep-version.md)');

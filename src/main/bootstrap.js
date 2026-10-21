@@ -162,26 +162,28 @@ function syncedSkillsPlugin() {
  * The system-prompt append for a new chat. Empty when none of the toolkits
  * are installed, so the prompt stays clean on a bare machine.
  */
-async function promptAppend(cwd) {
+async function promptAppend(cwd, opts = {}) {
   const caps = await capabilities();
   const lines = ['CCE session bootstrap (always active):'];
-  if (caps.caveman) {
-    lines.push('- Voice: caveman (lite) — concise, no filler, professional but tight. '
-      + 'Invoke the `' + (caps.caveman.includes(path.sep + 'synced' + path.sep) ? 'cce-synced:' : '')
-      + 'caveman` skill and keep it at lite level.');
-  }
-  if (caps.rtk) {
-    lines.push('- Shell output: rtk is installed (' + caps.rtk + '). Prefix shell commands with '
-      + '`rtk` (for example `rtk git status`, `rtk read <path>`) so their output stays compact.');
-  }
-  if (caps.superpowers) {
-    lines.push('- Method: superpowers is installed. Invoke the `brainstorming` skill before '
-      + 'implementing anything non-trivial, then `writing-plans` and `test-driven-development`.');
+  if (!opts.minimal) {
+    if (caps.caveman) {
+      lines.push('- Voice: caveman (lite) — concise, no filler, professional but tight. '
+        + 'Invoke the `' + (caps.caveman.includes(path.sep + 'synced' + path.sep) ? 'cce-synced:' : '')
+        + 'caveman` skill and keep it at lite level.');
+    }
+    if (caps.rtk) {
+      lines.push('- Shell output: rtk is installed (' + caps.rtk + '). Prefix shell commands with '
+        + '`rtk` (for example `rtk git status`, `rtk read <path>`) so their output stays compact.');
+    }
+    if (caps.superpowers) {
+      lines.push('- Method: superpowers is installed. Invoke the `brainstorming` skill before '
+        + 'implementing anything non-trivial, then `writing-plans` and `test-driven-development`.');
+    }
   }
   lines.push('- Connectors: MCP servers attached to this session have full tool-calling access. '
     + 'Prefer their tools over shelling out.');
   lines.push('- Method: for any code change, write a failing test first, then implement the smallest fix, then run the tests.');
-  if (cwd) {
+  if (cwd && !opts.minimal) {
     try {
       const pkgPath = path.join(cwd, 'package.json');
       if (fs.existsSync(pkgPath)) {
@@ -192,9 +194,13 @@ async function promptAppend(cwd) {
         if (pkg.scripts && pkg.scripts.test) bits.push('test="' + pkg.scripts.test + '"');
         if (bits.length) lines.push('- Project: ' + bits.join(', '));
       }
+    } catch { /* unreadable project */ }
+  }
+  if (cwd && opts && opts.includeReadme) {
+    try {
       const readmePath = path.join(cwd, 'README.md');
       if (fs.existsSync(readmePath)) {
-        const txt = fs.readFileSync(readmePath, 'utf8').slice(0, 400).replace(/\\s+/g, ' ').trim();
+        const txt = fs.readFileSync(readmePath, 'utf8').slice(0, 400).replace(/\s+/g, ' ').trim();
         if (txt) lines.push('- README (excerpt): ' + txt.slice(0, 240));
       }
     } catch { /* unreadable project */ }

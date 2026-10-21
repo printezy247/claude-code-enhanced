@@ -21,6 +21,17 @@ const pendingFile = (cwd) => path.join(memDir(cwd), '.proposals.json');   // dot
 
 const slugOf = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60);
 
+/** Clean proposal body to reject script tags, raw null bytes, or dangerous wrappers. */
+function sanitizeBody(text) {
+  if (typeof text !== 'string') return '';
+  return text
+    .replace(/\0/g, '')
+    .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+    .replace(/<\/?(?:script|iframe|object|embed)[^>]*>/gi, '')
+    .trim()
+    .slice(0, 1500);
+}
+
 /** Pull the JSON array out of a model reply (bare, fenced, or inside prose). */
 function parseProposals(text) {
   const s = String(text || '');
@@ -34,12 +45,14 @@ function parseProposals(text) {
   for (const it of arr) {
     if (!it || typeof it.name !== 'string' || typeof it.description !== 'string' || typeof it.body !== 'string') continue;
     const slug = slugOf(it.name);
-    if (!slug || !it.body.trim()) continue;
+    const body = sanitizeBody(it.body);
+    if (!slug || !body) continue;
     out.push({
       slug,
       type: TYPES.includes(it.type) ? it.type : 'project',
       description: it.description.replace(/\s+/g, ' ').trim().slice(0, 200),
-      body: it.body.trim().slice(0, 1500),
+      body,
+      source: 'model-suggested',
     });
     if (out.length === MAX_PROPOSALS) break;
   }
@@ -74,7 +87,7 @@ function resolve(cwd, slug, accept) {
   const file = path.join(dir, p.slug + '.md');
   if (fs.existsSync(file)) return { saved: false, duplicate: true };
   fs.writeFileSync(file, '---\nname: ' + p.slug + '\ndescription: ' + JSON.stringify(p.description)
-    + '\nmetadata:\n  type: ' + p.type + '\n---\n\n' + p.body + '\n');
+    + '\nmetadata:\n  type: ' + p.type + '\n  source: ' + (p.source || 'model-suggested') + '\n---\n\n' + p.body + '\n');
   const indexFile = path.join(dir, 'MEMORY.md');
   const title = p.slug.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, 'utf8') : '';
