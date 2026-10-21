@@ -75,3 +75,51 @@ describe('existing google instances', () => {
     expect(s.providers[0].model).toBe('gemini-3.7-flash');
   });
 });
+
+// Google 400s on a `reasoning` field and on reasoning_effort outside
+// none|minimal|low|medium|high; its native thinkingBudget must be 1..24576 and
+// is exclusive with thinkingLevel (all measured against the live API).
+describe('thinking and effort sent to google', () => {
+  const turn = (extra = {}) => ({
+    model: 'gemini-3.5-flash', max_tokens: 32000,
+    thinking: { budget_tokens: 31999, type: 'enabled' },
+    messages: [{ role: 'user', content: 'hi' }], ...extra,
+  });
+  const other = { baseUrl: 'https://api.openai.com/v1', apiKey: 'sk', protocol: 'openai', keyHeader: 'bearer' };
+  const eff = (e) => adapters.buildOpenAIBody(turn({ output_config: { effort: e } }), true, compat).reasoning_effort;
+
+  it('compat: drops the rejected reasoning field and maps the budget onto reasoning_effort', () => {
+    const out = adapters.buildOpenAIBody(turn(), true, compat);
+    expect(out.reasoning).toBeUndefined();
+    expect(out.reasoning_effort).toBe('high');
+    expect(adapters.buildOpenAIBody(turn({ thinking: { budget_tokens: 1024 } }), true, compat).reasoning_effort).toBe('minimal');
+    expect(adapters.buildOpenAIBody(turn({ thinking: { budget_tokens: 8192 } }), true, compat).reasoning_effort).toBe('medium');
+  });
+
+  it('compat: clamps xhigh and max to high, keeps valid levels, omits unknown ones', () => {
+    expect(eff('xhigh')).toBe('high');
+    expect(eff('max')).toBe('high');
+    for (const l of ['none', 'minimal', 'low', 'medium', 'high']) expect(eff(l)).toBe(l);
+    expect(eff('turbo')).toBeUndefined();
+  });
+
+  it('compat: other providers keep the reasoning field and any effort', () => {
+    const out = adapters.buildOpenAIBody(turn({ effort: 'xhigh' }), true, other);
+    expect(out.reasoning).toEqual({ max_tokens: 31999 });
+    expect(out.reasoning_effort).toBe('xhigh');
+  });
+
+  it('native: clamps the budget, omits a zero budget, uses a level only without a budget', () => {
+    const cfg = (b) => adapters.buildGeminiBody(b, native).generationConfig.thinkingConfig;
+    expect(cfg(turn())).toEqual({ thinkingBudget: 24576 });
+    expect(cfg(turn({ thinking: { budget_tokens: 4096 } }))).toEqual({ thinkingBudget: 4096 });
+    expect(cfg(turn({ thinking: { budget_tokens: 0 } }))).toBeUndefined();
+    expect(cfg(turn({ thinking: undefined, output_config: { effort: 'low' } }))).toEqual({ thinkingLevel: 'low' });
+    expect(cfg(turn({ thinking: undefined, output_config: { effort: 'max' } }))).toEqual({ thinkingLevel: 'high' });
+  });
+
+  it('native: another gemini gateway keeps the budget it was given', () => {
+    const gw = { baseUrl: 'https://gw.example/v1beta', apiKey: 'k', protocol: 'gemini', keyHeader: 'bearer' };
+    expect(adapters.buildGeminiBody(turn(), gw).generationConfig.thinkingConfig).toEqual({ thinkingBudget: 31999 });
+  });
+});

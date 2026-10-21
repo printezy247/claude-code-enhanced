@@ -311,6 +311,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 }
 .chat-btn:hover { color: var(--text); border-color: var(--accent); }
 .chat-stop { color: var(--danger); border-color: var(--danger); }
+.chat-build-now { color: var(--accent); border-color: var(--accent); }
 .chat-mcp-chips { display: flex; gap: 5px; }
 .mcp-chip.mcp-ok { color: var(--ok); }
 

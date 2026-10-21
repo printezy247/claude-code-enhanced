@@ -151,6 +151,7 @@ const Chat = (() => {
         <span class="chat-header-sep"></span>
         <button class="chat-btn chat-mgr-btn hidden" title="Model manager: load / unload, context size, keep-alive"><span data-icon="gear"></span> models</button>
         <button class="chat-btn chat-stop hidden" title="Interrupt (Esc)"><span data-icon="square"></span> stop</button>
+        <button class="chat-btn chat-build-now hidden" title="Stop investigating and build now (Interrupt & steer to immediate implementation)"><span data-icon="bolt"></span> build now</button>
         <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work"><span data-icon="play"></span> continue</button>
         <button class="chat-btn hdr-more" title="Chat actions" aria-label="Chat actions"><span data-icon="dots"></span></button>
       </div>
@@ -202,6 +203,7 @@ const Chat = (() => {
       id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider),
       pane, msgs: pane.querySelector('.chat-msgs'), composer: pane.querySelector('.chat-input'),
       sendBtn: pane.querySelector('.chat-send'), stopBtn: pane.querySelector('.chat-stop'),
+      buildNowBtn: pane.querySelector('.chat-build-now'),
       statusLine: pane.querySelector('.chat-statusline .sl-left'),
       statusRight: pane.querySelector('.chat-statusline .sl-right'),
       dot: pane.querySelector('.chat-dot'), providerEl: pane.querySelector('.chat-provider'),
@@ -336,6 +338,13 @@ const Chat = (() => {
     });
     chat.effortBtn.addEventListener('click', () => cycleEffort(chat));
     chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id }));
+    if (chat.buildNowBtn) {
+      chat.buildNowBtn.addEventListener('click', async () => {
+        await ccx.invoke('chat:interrupt', { id });
+        chat.composer.value = 'Stop investigating. Apply the requested changes directly based on what you already know.';
+        chat.send();
+      });
+    }
 
     // Header overflow menu. 13 buttons wrapped onto three rows; everything that
     // is not model/mode/stop now lives behind one "⋯". #33
@@ -578,8 +587,9 @@ const Chat = (() => {
   const NUDGE_TEXT = 'You said what you would do next but stopped without doing it. Do that step now: make the tool call, and keep going until the task is finished.';
   function announcedNextStep(text) {
     const t = String(text || '').trim();
-    if (!t || t.length > 1500 || /[?？]\s*$/.test(t)) return false;
+    if (!t || t.length > 1500 || /[?？]\s*$/.test(t) || /[?？]/.test(t.slice(-200))) return false;
     const paragraph = t.split(/\n{2,}/).pop().trim();
+    if (/\b(would you like|do you want|should I|please confirm|feel free to|let me know|what do you think)\b/i.test(paragraph)) return false;
     const sentences = paragraph.split(/(?<=[.!:])\s+/);
     const last = sentences[sentences.length - 1] || paragraph;
     if (/\b(done|completed?|finished|that'?s all|hope this helps|let me know)\b/i.test(last)) return false;
@@ -1948,7 +1958,11 @@ const Chat = (() => {
     },
     review: {
       mode: 'acceptEdits', fill: false,
-      prompt: () => `Code-review the current work in this repository.\n\n1. Run git status and git diff (including --staged). If the working tree is clean, diff against the default branch (origin/main or origin/master).\n2. For every finding report: severity (blocker / major / minor / nit), file:line, what is wrong, why it matters, and a concrete fix as a diff snippet.\n3. Cover correctness, security, error handling, tests, and naming. Spawn subagents to review different areas in parallel if the diff is large. End with a one-screen summary table sorted by severity.`,
+      prompt: () => `Code-review the current work in this repository.\n\n1. Run git status and git diff (including --staged). If the working tree is clean, diff against the default branch (origin/main or origin/master).\n2. For every finding report: severity (blocker / major / minor / nit), file:line, what is wrong, why it matters, and a concrete fix as a diff snippet.\n3. Cover correctness, security, error handling, tests, and naming. Focus directly on modified code. End with a one-screen summary table sorted by severity.`,
+    },
+    fastbuild: {
+      mode: 'acceptEdits', fill: true,
+      prompt: () => `Implement this directly and efficiently. Skip speculative brainstorming or excessive investigation. Read only the directly relevant files, make the code changes, and verify with tests.\n\nThe task: `,
     },
     explain: {
       mode: 'acceptEdits', fill: false,
@@ -1970,7 +1984,7 @@ const Chat = (() => {
   Object.assign(WORKFLOWS, {
     map: {
       mode: 'acceptEdits', fill: true,
-      prompt: () => `Map the code that matters for this task before touching anything.\n\n1. Find the files, functions and tests involved (search, don't guess) — spawn parallel subagents for separate areas.\n2. List each with path:line and one line on its role, plus how data flows between them.\n3. Stop there: no edits. End with the 3 riskiest places to change.\n\nThe task: `,
+      prompt: () => `Map the code that matters for this task before touching anything.\n\n1. Find the files, functions and tests involved using focused search.\n2. List each with path:line and one line on its role, plus how data flows between them.\n3. Stop there: no edits. End with the 3 riskiest places to change.\n\nThe task: `,
     },
     brainstorm: {
       mode: 'plan', fill: true,
@@ -1978,7 +1992,7 @@ const Chat = (() => {
     },
     build: {
       mode: 'acceptEdits', fill: true,
-      prompt: () => `Implement this end to end, in stages:\n\n1. Context: find the relevant files first (search, read).\n2. Plan: a short checklist (use the task list).\n3. Build: make the changes in small steps; run the build/tests after each step.\n4. Review: re-read your own diff (git diff) for bugs, missing tests and leftovers; fix them.\n5. Report: what changed, file by file, and how you verified it.\n\nThe feature: `,
+      prompt: () => `Implement this directly:\n\n1. Locate and read the relevant target files.\n2. Apply the necessary modifications in small verified steps.\n3. Run build/tests to confirm functionality.\n4. Summarize the changes made.\n\nThe feature: `,
     },
     bugfix: {
       mode: 'acceptEdits', fill: true,
@@ -2614,6 +2628,7 @@ const Chat = (() => {
     publishTabState(chat);
     chat.dot.classList.toggle('busy', busy);
     chat.stopBtn.classList.toggle('hidden', !busy);
+    if (chat.buildNowBtn) chat.buildNowBtn.classList.toggle('hidden', !busy);
     chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
     // While a turn runs the primary button becomes stop, as in the desktop app.
     chat.sendBtn.innerHTML = CCEIcons.svg(busy ? 'square' : 'send', 15);
@@ -3486,6 +3501,21 @@ const Chat = (() => {
       if (opening) {
         const d = body.querySelector('.monaco-diff');
         if (d && d.__init) d.__init();
+      } else {
+        const d = body.querySelector('.monaco-diff');
+        if (d && d.__ed) {
+          try { d.__ed.dispose(); } catch { /* disposed */ }
+          d.__ed = null;
+          d.classList.add('pending');
+          d.innerHTML = '<div class="hint">click the card header to show the diff</div>';
+          if (d.__diffData) {
+            d.__init = () => {
+              const fresh = renderDiff(d.__diffData.name, d.__diffData.input, d.__diffData.source);
+              d.replaceWith(fresh);
+              if (fresh.__init) fresh.__init();
+            };
+          }
+        }
       }
     });
     renderInput();
@@ -3762,6 +3792,7 @@ const Chat = (() => {
   function renderDiff(name, input, source) {
     const [orig, mod] = diffPair(name, input, source);
     const wrap = el('div', 'monaco-diff pending');
+    wrap.__diffData = { name, input, source };
     wrap.appendChild(el('div', 'hint', 'click the card header to show the diff'));
     wrap.__init = () => {
       if (!wrap.__init) return;
@@ -4536,5 +4567,5 @@ const Chat = (() => {
     chat.composer.focus();
   };
 
-  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences, pollContext };
+  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences, pollContext, renderDiff };
 })();

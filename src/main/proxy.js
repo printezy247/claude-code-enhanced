@@ -88,7 +88,8 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   }
   if (restPath === '/v1/messages/count_tokens') {
     const est = Math.max(1, Math.round(JSON.stringify(body.messages || []).length / 4)
-      + Math.round(JSON.stringify(body.system || '').length / 4));
+      + Math.round(JSON.stringify(body.system || '').length / 4)
+      + Math.round(JSON.stringify(body.tools || []).length / 4));
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: est }));
     return;
   }
@@ -785,7 +786,8 @@ function inTokens(body) {
   try {
     const msgs = JSON.stringify(body.messages || []);
     const sys = JSON.stringify(body.system || '');
-    return Math.max(1, Math.round(msgs.length / 4) + Math.round(sys.length / 4));
+    const tools = JSON.stringify(body.tools || []);
+    return Math.max(1, Math.round(msgs.length / 4) + Math.round(sys.length / 4) + Math.round(tools.length / 4));
   } catch { return 1; }
 }
 
@@ -885,10 +887,9 @@ function findBareToolStart(text) {
     if (at < 0) return -1;
     const bal = matchBalancedToolJson(text.slice(at));
     if (bal && bal.complete && /"name"\s*:/.test(bal.json) && /"arguments"\s*:/.test(bal.json)) return at;
-    // Incomplete: only treat as a candidate if it could still become one and it
-    // runs to the very end of the buffer (otherwise it is a closed non-tool
-    // object in prose).
-    if (bal && !bal.complete && at + 20 >= text.length) return at;
+    // Incomplete: only treat as a candidate if it could still become one (it
+    // already has a "name" key or is still short enough that keys are streaming in).
+    if (bal && !bal.complete && (/"name"\s*:/.test(bal.json) || bal.json.length < 40)) return at;
     from = at + 1;
   }
 }

@@ -993,10 +993,14 @@ function renderSplit() {
   }
   const chat = Chat.chats.get(state.activeId);
   const card = chat && chat.msgs ? chat.msgs.querySelector('.monaco-diff') : null;
-  if (card) {
+  if (card && card.__diffData && window.Chat && window.Chat.renderDiff) {
+    const diffEl = window.Chat.renderDiff(card.__diffData.name, card.__diffData.input, card.__diffData.source);
+    body.appendChild(diffEl);
+    if (diffEl.__init) diffEl.__init();
+    body.appendChild(el('div', 'hint', 'Diff of the most recent file edit in this chat.'));
+  } else if (card) {
     const clone = card.cloneNode(true);
     body.appendChild(clone);
-    if (card.__init) card.__init();
     body.appendChild(el('div', 'hint', 'Diff of the most recent file edit in this chat.'));
   } else {
     body.appendChild(el('div', 'hint', 'No edit diff yet in this chat.'));
