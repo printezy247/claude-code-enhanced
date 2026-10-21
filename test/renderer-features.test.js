@@ -30,6 +30,7 @@ beforeEach(() => { h = loadRenderer({ ipc: bootIpc() }); });
 
 const pane = () => h.window.document.querySelector('.chat-pane');
 const send = (msg) => h.window.Chat.handleEvent(Object.assign({ id: 'c1', kind: 'message' }, msg));
+const todos = () => h.window.Chat.chats.get('c1').todos;
 
 describe('live tool input (#4)', () => {
   it('fills a streaming tool card as its JSON arrives', async () => {
@@ -65,11 +66,9 @@ describe('todos drawer (#5)', () => {
       },
     });
     await flush();
-    const drawer = pane().querySelector('.chat-todos');
-    expect(drawer.classList.contains('hidden')).toBe(false);
-    expect(drawer.querySelectorAll('.todo-item').length).toBe(3);
-    expect(drawer.querySelectorAll('.todo-item.done').length).toBe(1);
-    expect(drawer.querySelector('h4').textContent).toBe('todos 1/3');
+    expect(todos().length).toBe(3);
+    expect(todos().filter(t => t.status === 'completed').length).toBe(1);
+    expect(pane().querySelector('.chat-todos')).toBeNull();   // no checklist in the transcript
   });
 
   it('updates the drawer on a second TodoWrite', async () => {
@@ -80,9 +79,8 @@ describe('todos drawer (#5)', () => {
     await flush();
     send(mk([{ content: 'a', status: 'completed' }, { content: 'b', status: 'in_progress' }]));
     await flush();
-    const drawer = pane().querySelector('.chat-todos');
-    expect(drawer.querySelectorAll('.todo-item').length).toBe(2);
-    expect(drawer.querySelector('h4').textContent).toBe('todos 1/2');
+    expect(todos().length).toBe(2);
+    expect(todos().filter(t => t.status === 'completed').length).toBe(1);
   });
 
   it('renders a checklist from assistant plain text', async () => {
@@ -93,11 +91,8 @@ describe('todos drawer (#5)', () => {
       },
     });
     await flush();
-    const drawer = pane().querySelector('.chat-todos');
-    expect(drawer.classList.contains('hidden')).toBe(false);
-    expect(drawer.querySelectorAll('.todo-item').length).toBe(2);
-    expect(drawer.querySelectorAll('.todo-item.done').length).toBe(1);
-    expect(drawer.querySelector('h4').textContent).toBe('todos 1/2');
+    expect(todos().length).toBe(2);
+    expect(todos().filter(t => t.status === 'completed').length).toBe(1);
   });
 
   it('ignores checkboxes inside fenced code blocks', async () => {
@@ -108,10 +103,10 @@ describe('todos drawer (#5)', () => {
       },
     });
     await flush();
-    expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(true);
+    expect(todos().length).toBe(0);
   });
 
-  it('clears the drawer 1.5s after every item completes', async () => {
+  it('keeps a finished list in the Tasks tab (no auto-retire, no note in the chat)', async () => {
     vi.useFakeTimers();
     try {
       send({
@@ -122,29 +117,8 @@ describe('todos drawer (#5)', () => {
           },
         },
       });
-      expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(false);
-      vi.advanceTimersByTime(1600);
-      expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(true);
-      expect(pane().textContent).toMatch(/todos finished/);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it('does not clear while the chat is busy', async () => {
-    vi.useFakeTimers();
-    try {
-      h.window.Chat.chats.get('c1').busy = true;
-      send({
-        msg: {
-          type: 'assistant',
-          message: {
-            content: [{ type: 'tool_use', id: 'tdc2', name: 'TodoWrite', input: { todos: [{ content: 'a', status: 'completed' }] } }],
-          },
-        },
-      });
-      vi.advanceTimersByTime(1600);
-      expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(false);
+      vi.advanceTimersByTime(5000);
+      expect(todos().length).toBe(1);
       expect(pane().textContent).not.toMatch(/todos finished/);
     } finally {
       vi.useRealTimers();
@@ -164,8 +138,8 @@ describe('todos drawer (#5)', () => {
     h.window.Chat.chats.get('c1').composer.value = 'keep going';
     h.window.Chat.chats.get('c1').send();
     await flush();
-    expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(false);
-    expect(pane().querySelector('.chat-todos .todo-item').textContent).toContain('a');
+    expect(todos().length).toBe(1);
+    expect(todos()[0].content).toContain('a');
   });
 
   it('clears finished todos on a new user prompt without the note', async () => {
@@ -181,7 +155,7 @@ describe('todos drawer (#5)', () => {
     h.window.Chat.chats.get('c1').composer.value = 'next task';
     h.window.Chat.chats.get('c1').send();
     await flush();
-    expect(pane().querySelector('.chat-todos').classList.contains('hidden')).toBe(true);
+    expect(todos().length).toBe(0);
     expect(pane().textContent).not.toMatch(/todos finished/);
   });
 });

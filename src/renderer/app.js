@@ -822,6 +822,12 @@ function renderSplit() {
     t.setAttribute('aria-selected', on ? 'true' : 'false');
   });
   if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null; }
+  // Leaving the Overview (terminal included): an Overview render still waiting
+  // on git/context must not land on top of the pane that replaces it.
+  if (kind !== 'tasks') {
+    body.__taskSeq = (body.__taskSeq || 0) + 1;
+    body.__taskHtml = null;
+  }
   if (kind === 'terminal') {
     // A live shell, not a bare xterm: the pane used to create a terminal with
     // no PTY behind it, so it stayed blank and nothing could be typed. #feat-desktop-layout
@@ -842,7 +848,6 @@ function renderSplit() {
       // already attached; nothing to do
     } else {
       body.innerHTML = '';
-      body.__taskHtml = null;   // the Overview must fully redraw when it comes back
       try {
         if (splitTerm.element) body.appendChild(splitTerm.element);
         else splitTerm.open(body);
@@ -854,13 +859,7 @@ function renderSplit() {
   }
   // Overview already showing: keep its cards until renderTasks swaps in the
   // new ones, instead of a blank panel on every tab switch.
-  if (!(kind === 'tasks' && body.__taskHtml != null)) {
-    body.innerHTML = '';
-    body.__taskHtml = null;
-    // An Overview render still waiting on git/context must not land on top of
-    // the pane that replaced it.
-    body.__taskSeq = (body.__taskSeq || 0) + 1;
-  }
+  if (!(kind === 'tasks' && body.__taskHtml != null)) body.innerHTML = '';
   body.classList.remove('preview-body');
   const cwd2 = activeCwd();
   if (kind === 'files') {
@@ -1053,6 +1052,51 @@ function renderTasks(target, cwd, only) {
     return c;
   };
 
+  // Tasks: the agent's todo list from the active chat, with progress. Like the
+  // desktop app: a progress line, the live step spelled out, then the checklist.
+  // Reads chat.todos (normalized by the chat), not the drawer's markup.
+  const buildTasks = () => {
+    const tasks = card('tasks', 'Tasks', 'check');
+    const items = (chat && chat.todos) || [];
+    if (!items.length) {
+      tasks.inner.appendChild(el('div', 'task-row hint',
+        chat && chat.busy ? 'The agent has not made a task list for this turn' : 'Task lists appear here when the agent plans multi-step work'));
+      return;
+    }
+    const doneN = items.filter(t => t.status === 'completed').length;
+    tasks.badge.textContent = doneN + '/' + items.length;
+    tasks.badge.classList.toggle('busy', doneN < items.length);
+    const prog = el('div', 'task-bar');
+    const pf = el('i');
+    pf.style.width = (doneN / items.length * 100).toFixed(1) + '%';
+    prog.appendChild(pf);
+    tasks.inner.appendChild(prog);
+    const live = items.find(t => t.status === 'in_progress');
+    if (live) tasks.inner.appendChild(el('div', 'task-now', live.activeForm || live.content));
+    else if (doneN === items.length) tasks.inner.appendChild(el('div', 'task-now done', 'All tasks done'));
+    const ol = el('ol', 'task-list');
+    for (const t of items) {
+      const st = t.status === 'completed' ? 'done' : t.status === 'in_progress' ? 'active' : 'todo';
+      const row = el('li', st);
+      row.appendChild(elIcon('span', 'task-mark', st === 'done' ? CCEIcons.svg('check', 12) : ''));
+      row.appendChild(el('span', 'task-text', t.content));
+      ol.appendChild(row);
+    }
+    tasks.inner.appendChild(ol);
+  };
+
+  // A task-list change redraws only that card: no git spawn, no engine calls.
+  if (only === 'tasks') {
+    buildTasks();
+    const cur = target.querySelector('[data-card="tasks"]');
+    const next = body.firstElementChild;
+    if (cur && next && target.isConnected && (document.querySelector('#split-kind')?.value || 'tasks') === 'tasks') {
+      if (cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
+      target.__taskHtml = null;   // the next full render compares afresh
+    }
+    return;
+  }
+
   // Session: what this chat is running on, at a glance.
   const sess = card('session', 'Session', 'bot');
   if (chat) {
@@ -1088,7 +1132,7 @@ function renderTasks(target, cwd, only) {
   const chList = el('div', 'task-rows');
   ch.inner.appendChild(chList);
   pending.push(ccx.invoke('git:info', { cwd }).then((r) => {
-    if (!(env.isConnected || body.contains(env)) || !r || !r.ok) return;
+    if (!r || !r.ok) return;
     env.inner.appendChild(el('div', 'task-row hint',
       (r.branch ? '⎇ ' + r.branch : 'no branch') + (r.repo ? ' · ' + r.repo : '')
       + (r.dirty ? ' · ' + r.dirty + ' changed' : ' · clean')));
@@ -1127,7 +1171,7 @@ function renderTasks(target, cwd, only) {
     acts.appendChild(compact);
     ctx.inner.appendChild(acts);
     pending.push(ccx.invoke('chat:context', { id: chat.id }).then((r) => {
-      if (!(ctx.isConnected || body.contains(ctx)) || !r || !r.ok || !r.usage) return;
+      if (!r || !r.ok || !r.usage) return;
       const u = r.usage;
       const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
       ring.style.setProperty('--p', pct.toFixed(1));
@@ -1180,7 +1224,6 @@ function renderTasks(target, cwd, only) {
           return r;
         });
     pending.push(fetcher.then((r) => {
-      if (!(conn.isConnected || body.contains(conn))) return;
       const servers = (r && r.ok && r.servers) || [];
       connRows.innerHTML = '';
       const live = servers.filter((s) => s.status === 'connected').length;
@@ -1233,40 +1276,7 @@ function renderTasks(target, cwd, only) {
     connRows.appendChild(el('div', 'task-row hint', 'start a chat to see connectors'));
   }
 
-  // Tasks: the agent's todo list from the active chat, with progress. Like the
-  // desktop app: a progress line, the live step spelled out, then the checklist.
-  const tasks = card('tasks', 'Tasks', 'check');
-  const items = chat && chat.todosList ? [...chat.todosList.children] : [];
-  if (items.length) {
-    const doneN = items.filter(li => li.classList.contains('done')).length;
-    tasks.badge.textContent = doneN + '/' + items.length;
-    tasks.badge.classList.toggle('busy', doneN < items.length);
-    const prog = el('div', 'task-bar');
-    const pf = el('i');
-    pf.style.width = (doneN / items.length * 100).toFixed(1) + '%';
-    prog.appendChild(pf);
-    tasks.inner.appendChild(prog);
-    const live = items.find(li => li.classList.contains('active'));
-    if (live) {
-      const t = live.querySelector('.todo-text');
-      tasks.inner.appendChild(el('div', 'task-now', live.dataset.active || (t ? t.textContent : '')));
-    } else if (doneN === items.length) {
-      tasks.inner.appendChild(el('div', 'task-now done', 'All tasks done'));
-    }
-    const ol = el('ol', 'task-list');
-    for (const li of items) {
-      const text = li.querySelector('.todo-text');
-      const st = li.classList.contains('done') ? 'done' : li.classList.contains('active') ? 'active' : 'todo';
-      const row = el('li', st);
-      row.appendChild(elIcon('span', 'task-mark', st === 'done' ? CCEIcons.svg('check', 12) : ''));
-      row.appendChild(el('span', 'task-text', text ? text.textContent : li.textContent));
-      ol.appendChild(row);
-    }
-    tasks.inner.appendChild(ol);
-  } else {
-    tasks.inner.appendChild(el('div', 'task-row hint',
-      chat && chat.busy ? 'The agent has not made a task list for this turn' : 'Task lists appear here when the agent plans multi-step work'));
-  }
+  buildTasks();
 
   // Background work the engine is running for this chat (subagents, shells).
   if (chat && chat.bgTasks && chat.bgTasks.size) {
@@ -1280,8 +1290,9 @@ function renderTasks(target, cwd, only) {
     // A newer render started meanwhile, or the panel was closed: drop this one.
     if (seq !== target.__taskSeq || !target.isConnected) return;
     // Nothing changed: leave the live DOM alone (no repaint, hover and focus kept).
-    if (body.innerHTML === target.__taskHtml) return;
-    target.__taskHtml = body.innerHTML;
+    const html = body.innerHTML;
+    if (html === target.__taskHtml) return;
+    target.__taskHtml = html;
     const keepScroll = target.scrollTop;
     const fresh = [...body.children];
     const old = [...target.children];
@@ -1296,17 +1307,6 @@ function renderTasks(target, cwd, only) {
     }
     target.scrollTop = keepScroll;
   };
-  // One card changed (the task list): swap just that card now, no waiting on
-  // git / context / connectors, which still hold their last values.
-  if (only) {
-    const next = body.querySelector(`[data-card="${only}"]`);
-    const cur = target.querySelector(`[data-card="${only}"]`);
-    if (next && cur && target.isConnected) {
-      if (cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
-      target.__taskHtml = null;   // the next full render must compare afresh
-      return;
-    }
-  }
   // A slow call must not hold the whole panel back: show what is there after 1.5s.
   Promise.race([Promise.allSettled(pending), new Promise((r) => setTimeout(r, 1500))]).then(swap);
 }
@@ -2911,9 +2911,15 @@ function wireChrome() {
     // tabs keep Ctrl+K / Ctrl+E for the shell (kill line, end of line).
     const mod = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
     const k = String(e.key).toLowerCase();
-    if (mod && (k === 'k' || k === 'e') && inChat && window.Chat) {
+    if (mod && (k === 'k' || k === 'e') && inChat && window.Chat && state.view === 'conversations') {
       const c = Chat.chats.get(state.activeId);
-      if (c) {
+      // Only when focus is in the chat itself (or nowhere). The side-panel
+      // shell, the diff editor, other views and dialogs keep their own keys.
+      const t = e.target;
+      const home = !t || t === document.body || t === document.documentElement
+        || (c && c.pane.contains(t)) || !!(t.closest && t.closest('.palette-back'));
+      const own = !!(t && t.closest && t.closest('.xterm, .monaco-editor'));
+      if (c && home && !own) {
         e.preventDefault();
         if (k === 'k') Chat.openPalette(c);
         else Chat.toggleExpanded(c);

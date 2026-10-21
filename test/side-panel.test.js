@@ -47,8 +47,7 @@ describe('tasks side panel', () => {
     toolUse('t3', 'TaskUpdate', { taskId: '1', status: 'completed' });
     toolResult('t3', 'Updated task #1 status');
     await flush();
-    const drawer = h.window.document.querySelector('.chat-todos');
-    expect(drawer.querySelector('h4').textContent).toBe('todos 1/2');
+    expect(h.window.Chat.chats.get('c1').todos.map((t) => t.status)).toEqual(['completed', 'pending']);
     h.window.toggleSplit(true);
     await flush(4);
     const card = h.window.document.querySelector('#split-body [data-card="tasks"]');
@@ -77,6 +76,6 @@ describe('tasks side panel', () => {
     toolUse('t2', 'TaskUpdate', { taskId: '1', status: 'deleted' });
     toolResult('t2', 'Updated task #1 deleted');
     await flush();
-    expect(h.window.document.querySelector('.chat-todos').classList.contains('hidden')).toBe(true);
+    expect(h.window.Chat.chats.get('c1').todos).toEqual([]);
   });
 });
