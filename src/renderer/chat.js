@@ -7,9 +7,40 @@
 const Chat = (() => {
   const chats = new Map(); // id -> chat view state
 
+  // A reply that shows a fenced example inside a fenced block (a ```markdown
+  // block holding ```pine) closes early at the first inner fence, so the rest of
+  // the block renders as loose text. Lengthen the outer fence past the inner ones.
+  function fixNestedFences(text) {
+    if (!text || !text.includes('```')) return text;
+    const open = /^ {0,3}(`{3,})[^`\s]/;      // a fence with an info string
+    const bare = /^ {0,3}(`{3,})\s*$/;        // a bare fence: closes
+    const plain = /^ {0,3}(`{3,})[^`]*$/;     // any opening fence
+    const lines = text.split('\n');
+    let i = 0;
+    while (i < lines.length) {
+      const m = lines[i].match(plain);
+      if (!m) { i++; continue; }
+      const start = i;
+      let depth = 0, longest = m[1].length, end = -1, nested = false;
+      for (let j = i + 1; j < lines.length; j++) {
+        const o = lines[j].match(open);
+        if (o && !bare.test(lines[j])) { depth++; nested = true; longest = Math.max(longest, o[1].length + 1); continue; }
+        if (bare.test(lines[j])) { if (depth === 0) { end = j; break; } depth--; }
+      }
+      if (end < 0) break;                      // still streaming: leave it alone
+      if (nested) {
+        const ticks = '`'.repeat(longest);
+        lines[start] = lines[start].replace(/`{3,}/, ticks);
+        lines[end] = lines[end].replace(/`{3,}/, ticks);
+      }
+      i = end + 1;
+    }
+    return lines.join('\n');
+  }
+
   const md = (text) => {
     try {
-      let html = DOMPurify.sanitize(marked.parse(text || '', { breaks: true, gfm: true }));
+      let html = DOMPurify.sanitize(marked.parse(fixNestedFences(text || ''), { breaks: true, gfm: true }));
       // collapse runs of empty rules (some relays pad replies with '---' lines)
       html = html.replace(/(?:<hr\s*\/?>\s*(?:<p>\s*<\/p>\s*)*){3,}/g, '<hr>');
       return html;
@@ -133,7 +164,6 @@ const Chat = (() => {
             <p class="chat-empty-hint">Type <b>/</b> for commands · <b>Enter</b> to send · <b>Shift+Enter</b> newline</p>
           </div>
         </div>
-        <div class="chat-todos hidden"><h4>todos</h4><ol></ol></div>
         <button class="chat-latest hidden" title="Jump to the latest response (End)" aria-label="Jump to the latest response">
           <span data-icon="chevron"></span><span class="chat-latest-label">latest</span>
         </button>
@@ -184,7 +214,7 @@ const Chat = (() => {
       queuedEl: pane.querySelector('.chat-queued'),
       permSlot: pane.querySelector('.chat-perm-slot'), slash: pane.querySelector('.chat-slash'),
       latestBtn: pane.querySelector('.chat-latest'),
-      todosEl: pane.querySelector('.chat-todos'), todosList: pane.querySelector('.chat-todos ol'),
+      todos: [],
       moreBtn: pane.querySelector('.hdr-more'),
       ctxBar: pane.querySelector('.chat-ctxbar'),
       ctxFill: pane.querySelector('.chat-ctxbar i'),
@@ -348,17 +378,10 @@ const Chat = (() => {
       }
       // A finished list retires on a new prompt (no note — the next turn
       // brings its own); unfinished work stays visible through the steer.
-      if (chat.todosList.children.length
-        && [...chat.todosList.children].every(li => li.classList.contains('done'))) {
-        clearTimeout(chat.todosCleared);
-        chat.todosCleared = null;
-        chat.todosList.innerHTML = '';
-        chat.todosEl.classList.add('hidden');
-        if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id);
-      }
+      if (chat.todos.length && chat.todos.every(t => t.status === 'completed')) clearTodos(chat);
       // Seed a list from the prompt's own steps when the model has not produced
       // one yet (and the current list is empty/finished). #todos-every-model
-      if (!chat.todosList.children.length) {
+      if (!chat.todos.length) {
         const seeded = seedTodosFromPrompt(text);
         if (seeded) renderTodoItems(chat, seeded);
       }
@@ -3596,50 +3619,21 @@ const Chat = (() => {
     renderTodoItems(chat, [...board.values()]);
   }
 
+  // The agent's task list lives on the chat (chat.todos) and is shown only in
+  // the side panel's Tasks card; the transcript carries no checklist. A
+  // finished list stays there until the next prompt retires it.
+  function setTodos(chat, items) {
+    chat.todos = items;
+    if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id);
+  }
+  const clearTodos = (chat) => setTodos(chat, []);
+
   function renderTodoItems(chat, items) {
-    // The side panel mirrors this list; tell it now rather than on its next tick.
-    const notify = () => { if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id); };
-    clearTimeout(chat.todosCleared);
-    chat.todosCleared = null;
-    if (!items.length) {
-      chat.todosList.innerHTML = '';
-      chat.todosEl.classList.add('hidden');
-      notify();
-      return;
-    }
-    chat.todosList.innerHTML = '';
-    for (const t of items) {
-      const now = t.status === 'in_progress';
-      const li = el('li', 'todo-item' + (t.status === 'completed' ? ' done' : now ? ' active' : ''));
-      li.appendChild(el('span', 'todo-mark', t.status === 'completed' ? '✓' : now ? '▸' : '○'));
-      li.appendChild(el('span', 'todo-text', String(t.content || '')));
-      // "Running the tests" reads better than "Run the tests" for the live step.
-      if (now && t.activeForm) li.dataset.active = String(t.activeForm);
-      if (now) li.appendChild(el('span', 'chip', 'now'));
-      chat.todosList.appendChild(li);
-    }
-    const done = items.filter(t => t.status === 'completed').length;
-    chat.todosEl.querySelector('h4').textContent = 'todos ' + done + '/' + items.length;
-    chat.todosEl.classList.remove('hidden');
-    notify();
-    // Finished list: show it a beat, then retire it with a note — unless the
-    // chat is busy, in which case re-check on the next beat (a busy re-render
-    // can still land more completed items).
-    if (items.length && items.every(t => t.status === 'completed')) {
-      const clearWhenDone = () => {
-        const kids = [...chat.todosList.children];
-        if (chat.busy || !kids.length || !kids.every(li => li.classList.contains('done'))) {
-          if (chat.busy) chat.todosCleared = setTimeout(clearWhenDone, 1500);
-          return;
-        }
-        chat.todosList.innerHTML = '';
-        chat.todosEl.classList.add('hidden');
-        chat.msgs.appendChild(el('div', 'sys-note', '✓ todos finished'));
-        scrollDownSoft(chat);
-        notify();
-      };
-      chat.todosCleared = setTimeout(clearWhenDone, 1500);
-    }
+    setTodos(chat, items.map(t => ({
+      content: String(t.content || ''),
+      status: t.status === 'completed' || t.status === 'in_progress' ? t.status : 'pending',
+      activeForm: t.activeForm ? String(t.activeForm) : '',
+    })));
   }
 
   // Left/right text for a file-modifying tool call. The pre-edit content is not in
@@ -4462,5 +4456,5 @@ const Chat = (() => {
     chat.composer.focus();
   };
 
-  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded };
+  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences };
 })();

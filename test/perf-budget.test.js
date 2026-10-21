@@ -5,7 +5,12 @@ const { loadRenderer, flush } = require('./helpers/renderer.js');
 
 describe('perf budget', () => {
   it('parses a large todo checklist quickly', async () => {
-    const h = loadRenderer({ ipc: {} });
+    // boot() reads settings.theme; an empty ipc made it throw after the test ended
+    const h = loadRenderer({ ipc: {
+      'settings:get': { ok: true, settings: { defaultCwd: '/tmp', fontSize: 14, scrollback: 100 }, claude: { found: true, path: '', version: '' } },
+      'providers:all': { ok: true, presets: [], instances: [], defaultUid: null },
+      'connectors:presets': { ok: true, presets: [] },
+    } });
     await flush();
     const fn = h.window.Chat && h.window.Chat.parseTodoChecklist
       ? h.window.Chat.parseTodoChecklist
