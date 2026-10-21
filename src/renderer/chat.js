@@ -248,6 +248,10 @@ const Chat = (() => {
       const d = localStorage.getItem('cce:draft:' + (chat.cwd || ''));
       if (d) { chat.composer.value = d; autosize(chat.composer); }
     } catch { /* ignore */ }
+    try {
+      const p = JSON.parse(localStorage.getItem('cce:pending:' + (chat.cwd || '')) || '[]');
+      if (Array.isArray(p) && p.length) { chat.pendingMsgs = p; renderQueued(chat); }
+    } catch { /* ignore */ }
     // The nav badge counts every open tab, chat tabs included.
     if (typeof window.updateTabCount === 'function') window.updateTabCount();
 
@@ -337,6 +341,7 @@ const Chat = (() => {
       updateLatestBtn(chat);
       if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
       try { localStorage.removeItem('cce:draft:' + (chat.cwd || '')); } catch { /* ignore */ }
+      try { localStorage.removeItem('cce:pending:' + (chat.cwd || '')); } catch { /* ignore */ }
       // Warn before sending into a nearly-full context window. #token-budget
       if (chat.ctxUsage && Number(chat.ctxUsage.percentage) >= 80) {
         toast('Context is ' + Number(chat.ctxUsage.percentage).toFixed(0) + '% full — consider /compact', 'warn');
@@ -361,6 +366,7 @@ const Chat = (() => {
       if (chat.busy) {
         chat.pendingMsgs.push(text);
         renderQueued(chat);
+        try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
         chat.msgs.appendChild(el('div', 'sys-note', '↯ steered — Claude will see this mid-turn'));
       }
       if (text && (!chat.promptHistory.length || chat.promptHistory[0] !== text)) {
