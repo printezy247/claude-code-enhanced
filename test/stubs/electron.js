@@ -97,6 +97,7 @@ class BrowserWindow extends EventEmitter {
   show() { this.shown = true; }
   hide() { this.shown = false; }
   focus() { this.focused = true; }
+  blur() { this.focused = false; }
   restore() { this.shown = true; }
   minimize() { this.minimized = true; this.shown = false; }
   close() { this.destroyed = true; this.emit('closed'); }

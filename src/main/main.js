@@ -1353,7 +1353,9 @@ function registerIpc() {
       // The window that owns the chat decides whether the user is watching.
       // #feat-multi-window
       const focused = owner && !owner.isDestroyed() && owner.isFocused();
-      if (!focused && !finished.has(id)) {
+      // A chat whose window is gone — closed by the user, or taken down with
+      // its window — has nobody to raise: the notification would be a ghost. #R1
+      if (owner && !owner.isDestroyed() && !focused && !finished.has(id)) {
         finished.add(id);
         notify('Claude finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.', owner);
       }

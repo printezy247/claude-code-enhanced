@@ -41,11 +41,26 @@ class WindowRegistry {
   remove(id) {
     const e = this.entries.get(id);
     if (e) {
-      for (const c of e.chats) this.dead.add('chats:' + c);
-      for (const s of e.sessions) this.dead.add('sessions:' + s);
+      for (const c of e.chats) this._markDead('chats', c);
+      for (const s of e.sessions) this._markDead('sessions', s);
     }
     this.entries.delete(id);
-    // The dead list only grows with closed windows; keep it bounded.
+  }
+
+  /**
+   * Remember that an item is gone, so its late frames are dropped. #R1
+   *
+   * A released item is genuinely gone — the user closed the chat, killed the
+   * session, or failed over to another provider — so its late frame must not
+   * fall back to whichever window happens to be newest.
+   *
+   * @param {string} kind
+   * @param {string} itemId
+   */
+  _markDead(kind, itemId) {
+    if (!itemId) return;
+    this.dead.add(kind + ':' + itemId);
+    // The dead list only grows; keep it bounded.
     while (this.dead.size > 500) this.dead.delete(this.dead.values().next().value);
   }
 
@@ -77,8 +92,14 @@ class WindowRegistry {
     return true;
   }
 
-  /** Drop a claim (the chat or session is gone). */
+  /**
+   * Drop a claim (the chat or session is gone).
+   *
+   * A released item is gone: a late frame for it must be dropped, not
+   * delivered to whichever window happens to be newest. #R1
+   */
   release(kind, itemId) {
+    this._markDead(kind, itemId);
     for (const e of this.entries.values()) e[kind].delete(itemId);
   }
 

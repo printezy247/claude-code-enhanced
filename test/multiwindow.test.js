@@ -117,6 +117,23 @@ describe('multi-window', () => {
     expect(show2, 'the wrong window was raised').not.toHaveBeenCalled();
   });
 
+  it('raises no notification for a chat the user closed', async () => {
+    const w2 = stub.__state.windows[1];
+    windowRegistry.claim(w2.webContents.id, 'chats', 'cClosed');
+    // Blur EVERY window, not just the owner. On the UNFIXED code the owner
+    // falls back to the NEWEST window (the fallback `win`), and that one was
+    // focused by `window:new` — so no notification is raised on the unfixed
+    // code either, and the RED would be a false one.
+    for (const w of stub.__state.windows) w.blur();
+    stub.__state.notifications.length = 0;
+
+    // The user closed the chat: its late frames are ghosts.
+    await stub.__state.handlers.get('chat:close')(sender(w2), { id: 'cClosed' });
+
+    main.chats.emit('event', 'cClosed', { kind: 'status', busy: false });
+    expect(stub.__state.notifications.length, 'a closed chat still raised a notification').toBe(0);
+  });
+
   it('brings a hidden window back from the tray', async () => {
     // Close-to-tray hides a window; with two windows open, closing the newest
     // left the older, hidden one with no way back.

@@ -52,6 +52,19 @@ describe('window ownership registry', () => {
     expect(reg.ownerOf('sessions', 's1')).toBe(null);
   });
 
+  it('drops a late frame for an item that was released', () => {
+    const reg = new WindowRegistry();
+    const a = fakeWin(1);
+    const b = fakeWin(2);
+    reg.add(a);
+    reg.add(b);
+    reg.claim(1, 'chats', 'c1');
+    reg.release('chats', 'c1');
+    // The chat is gone: its late frame must be dropped, not delivered to
+    // whichever window happens to be newest.
+    expect(route(reg, 'chats', 'c1', b)).toBe(null);
+  });
+
   it('routes an event to the window that owns the item', () => {
     const reg = new WindowRegistry();
     const a = fakeWin(1);
