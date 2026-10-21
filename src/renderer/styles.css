@@ -1518,3 +1518,19 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .task-list li.active .task-text { color: var(--text); font-weight: 500; }
 .task-list li.todo .task-text { color: var(--text); opacity: .85; }
 @media (prefers-reduced-motion: reduce) { .task-now::before { animation: none; } }
+
+/* Context card, desktop style: "N% used", thin segmented bar, quiet category list */
+.ctx-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.ctx-used { font-size: 13px; font-weight: 600; color: var(--text); }
+.ctx-used.warn { color: var(--warn); }
+.ctx-total { font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.ctx-seg { display: flex; height: 4px; margin: 8px 0 10px; border-radius: 2px; background: var(--bg4); overflow: hidden; gap: 1px; }
+.ctx-seg i { display: block; height: 100%; min-width: 2px; background: var(--accent); }
+.ctx-rows { gap: 1px; }
+.ctx-cat { display: flex; align-items: center; gap: 8px; padding: 2px 0; }
+.ctx-cat .ctx-dot { width: 9px; height: 9px; border-radius: 2px; }
+.ctx-cat .ctx-dot.free { background: var(--bg4); }
+.ctx-cat .ctx-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }
+.ctx-cat .ctx-tokens { margin-left: 0; min-width: 0; text-align: right; font-size: 11.5px; }
+.ctx-cat .ctx-share { width: 40px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.ctx-cat.deferred { opacity: .55; }

@@ -181,7 +181,7 @@ describe('right rail', () => {
     await flush(4);
     const tabs = doc().querySelectorAll('#splitpane .split-tab');
     expect(tabs.length).toBe(6);
-    const sess = doc().querySelector('.task-card[data-card="session"]');
+    const sess = doc().querySelector(".task-card[data-card=\"environment\"]");
     expect(sess.textContent).toContain('model');
     const head = doc().querySelector('.task-card[data-card="context"] .task-card-head');
     click(head);

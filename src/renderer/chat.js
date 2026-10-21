@@ -1672,8 +1672,11 @@ const Chat = (() => {
   /* ---------------- context meter ---------------- */
 
   async function pollContext(chat) {
+    // Only the newest poll may paint: overlapping calls can answer out of
+    // order, and the older answer then overwrote the newer one (the meter flickered).
+    const n = chat.ctxSeq = (chat.ctxSeq || 0) + 1;
     const r = await ccx.invoke('chat:context', { id: chat.id });
-    if (!r.ok || !r.usage) return;
+    if (n !== chat.ctxSeq || !r || !r.ok || !r.usage) return;
     const u = r.usage;
     const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
     chat.ctxBar.classList.remove('hidden');
@@ -2500,7 +2503,7 @@ const Chat = (() => {
       clearPermission(chat, evt.requestId, null);
       if (evt.reason === 'interrupted') toast('Pending permission cleared (interrupted)', '');
     }
-    else if (kind === 'task') onTaskEvent(chat, evt.msg);
+    else if (kind === 'task') { onTaskEvent(chat, evt.msg); if (window.refreshTasksRail) window.refreshTasksRail(chat.id, 'background'); }
     // The live tail of a running background task's output. #feat-live-output
     else if (kind === 'tool-output') applyLiveOutput(chat, evt.toolUseId, evt.text, evt.done);
     // The unfiltered text behind a result the engine compacted. #feat-output-filter
@@ -4456,5 +4459,5 @@ const Chat = (() => {
     chat.composer.focus();
   };
 
-  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences };
+  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences, pollContext };
 })();

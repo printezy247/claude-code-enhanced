@@ -438,6 +438,12 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     }
     return;
   }
+  // Text arrived but the stream ended with no finish_reason and no [DONE]: the
+  // provider dropped the connection mid-reply. Say so rather than let a
+  // half sentence pass as a finished answer.
+  if (!sawFinish && sawText && !sawTool && !toolBuf.size && !textTools.length) {
+    emitText('\n[The provider closed the stream before the reply was finished. Send "continue" to resume.]\n');
+  }
   flushTools();   // tool calls buffered for sequential emission (no finish_reason seen)
   if (stopReason === 'tool_use' && !sawTool) stopReason = 'end_turn';
   // The model reasoned and then said nothing. The engine reads that as an empty

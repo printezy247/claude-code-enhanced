@@ -36,7 +36,7 @@ describe('tasks side panel', () => {
     expect(panel()).toContain('/work/proj');
     expect(panel()).not.toContain('/home/test');
     expect(panel()).toContain('⎇ main');
-    expect(panel()).toContain('5,000 / 100,000 tokens');
+    expect(panel()).toContain('5k / 100k');
   });
 
   it('lists tasks the engine makes with TaskCreate and TaskUpdate', async () => {

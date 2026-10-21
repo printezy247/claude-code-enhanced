@@ -10,7 +10,7 @@ const path = require('path');
 const os = require('os');
 const { EventEmitter } = require('events');
 const providers = require('./providers');
-const { promptAppend: bootstrapPrompt } = require('./bootstrap');
+const { promptAppend: bootstrapPrompt, syncedSkillsPlugin } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { compactBashOutput, toolResultText, clampMaxChars } = require('./toolfilter');
 
@@ -426,6 +426,9 @@ class ChatManager extends EventEmitter {
         snapshot: true,
       };
     }
+    // Skills synced from Claude Desktop live one folder too deep for the engine.
+    const synced = settings && settings.minimalPrompt ? null : syncedSkillsPlugin();
+    if (synced) options.plugins = [...(options.plugins || []), { type: 'local', path: synced }];
     // Every model/provider gets the todo discipline, not just the ones that
     // remember it: plan before multi-step work, update on steer, check off as
     // items finish. Works with the object-form systemPrompt above — the SDK

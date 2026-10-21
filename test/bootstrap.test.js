@@ -2,7 +2,7 @@
 // disk, and only the ones that are really there are announced to the engine.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
@@ -23,6 +23,26 @@ const skill = (root, name) => {
   writeFileSync(path.join(dir, 'SKILL.md'), '---\nname: ' + name + '\n---\n');
   return dir;
 };
+
+describe('synced skills', () => {
+  it('exposes skills nested in skills/synced/<id>/ as a local plugin, skipping trash', () => {
+    const synced = path.join(home, '.claude', 'skills', 'synced', 'a_b');
+    skill(synced, 'caveman');
+    skill(path.join(synced, '.trash'), 'junk');
+    const dir = bootstrap.syncedSkillsPlugin();
+    expect(dir).toBeTruthy();
+    expect(JSON.parse(readFileSync(path.join(dir, '.claude-plugin', 'plugin.json'), 'utf8')).name).toBe('cce-synced');
+    expect(existsSync(path.join(dir, 'skills', 'caveman', 'SKILL.md'))).toBe(true);
+    expect(existsSync(path.join(dir, 'skills', 'junk'))).toBe(false);
+  });
+
+  it('returns null when nothing is synced, and names the skill with its plugin prefix', async () => {
+    expect(bootstrap.syncedSkillsPlugin()).toBeNull();
+    skill(path.join(home, '.claude', 'skills', 'synced', 'a_b'), 'caveman');
+    bootstrap.__resetCacheForTests();
+    expect(await bootstrap.promptAppend('')).toContain('`cce-synced:caveman`');
+  });
+});
 
 describe('bootstrap detection', () => {
   it('finds the caveman skill and ignores a trashed copy', () => {
