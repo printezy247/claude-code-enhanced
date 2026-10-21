@@ -42,7 +42,7 @@ let proxyPort = null;
 const ChatManager = require('./chats');
 const { modelContext } = require('./modelcontext');
 const { WindowRegistry, route } = require('./windows');
-const { MIN_MAX_CHARS, MAX_MAX_CHARS, DEFAULT_MAX_CHARS } = require('./toolfilter');
+const { clampMaxChars } = require('./toolfilter');
 
 const store = new Store();
 const auth = new AuthStore();
@@ -2073,10 +2073,7 @@ function registerIpc() {
     // persisted — a hand-edited config.json or any other writer cannot store
     // an unbounded budget. #F1
     if ('outputFilterMaxChars' in incoming) {
-      const raw = Number(incoming.outputFilterMaxChars);
-      incoming.outputFilterMaxChars = Number.isFinite(raw) && raw > 0
-        ? Math.min(MAX_MAX_CHARS, Math.max(MIN_MAX_CHARS, Math.round(raw)))
-        : DEFAULT_MAX_CHARS;
+      incoming.outputFilterMaxChars = clampMaxChars(incoming.outputFilterMaxChars);
     }
     store.settings = { ...store.settings, ...incoming };
     // loginEnv is derived, never persisted.

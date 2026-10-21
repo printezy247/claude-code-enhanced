@@ -12,7 +12,7 @@ const { EventEmitter } = require('events');
 const providers = require('./providers');
 const { promptAppend: bootstrapPrompt } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
-const { compactBashOutput, toolResultText, DEFAULT_MAX_CHARS, MIN_MAX_CHARS, MAX_MAX_CHARS } = require('./toolfilter');
+const { compactBashOutput, toolResultText, clampMaxChars } = require('./toolfilter');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
@@ -314,8 +314,7 @@ class ChatManager extends EventEmitter {
       // main process: this is the code that uses the number, and a
       // hand-edited config.json must not hand the model an unbounded result.
       // #F1
-      const raw = Number(settings && settings.outputFilterMaxChars) || DEFAULT_MAX_CHARS;
-      const maxChars = Math.min(MAX_MAX_CHARS, Math.max(MIN_MAX_CHARS, raw));
+      const maxChars = clampMaxChars(settings && settings.outputFilterMaxChars);
       options.hooks = {
         PostToolUse: [{
           matcher: 'Bash',
