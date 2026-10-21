@@ -5,6 +5,8 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { execFile, execFileSync } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 
 app.setName('claude-code-enhanced');
 if (process.env.CCE_NO_SANDBOX) app.commandLine.appendSwitch('no-sandbox');
@@ -16,7 +18,6 @@ process.on('unhandledRejection', (reason) => {
 process.on('uncaughtException', (err) => {
   console.error('[cce] uncaught exception:', (err && err.stack) || err);
 });
-if (process.env.CCE_NO_SANDBOX) app.commandLine.appendSwitch('no-sandbox');
 
 const { Store } = require('./store');
 const providers = require('./providers');
@@ -1607,7 +1608,7 @@ function registerIpc() {
     }
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-skill-'));
     try {
-      execFileSync('git', ['clone', '--depth', '1', u, path.join(tmp, 'repo')], { timeout: 60_000, stdio: 'pipe' });
+      await execFileAsync('git', ['clone', '--depth', '1', u, path.join(tmp, 'repo')], { timeout: 60_000 });
       const found = [];
       const walk = (d, depth) => {
         if (depth > 4 || found.length >= 10) return;

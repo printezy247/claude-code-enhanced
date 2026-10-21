@@ -62,6 +62,17 @@ const isGoogle = (prov) => String((prov && prov.baseUrl) || '').includes('genera
 /** Google's native route reads the key from x-goog-api-key and 401s on any Authorization header. */
 const usesGoogHeader = (prov) => prov.keyHeader === 'x-goog-api-key' || (prov.protocol === 'gemini' && isGoogle(prov));
 
+/** Effort Google accepts ('' = send none); derived from the thinking budget when no effort is set. */
+function googleEffort(body) {
+  const e = String((body.output_config && body.output_config.effort) || body.reasoning_effort || body.effort || '').toLowerCase();
+  if (e === 'xhigh' || e === 'max') return 'high';
+  if (['none', 'minimal', 'low', 'medium', 'high'].includes(e)) return e;
+  if (e) return '';
+  const b = body.thinking && body.thinking.budget_tokens;
+  if (b == null) return '';
+  return b <= 1024 ? 'minimal' : b <= 4096 ? 'low' : b <= 16384 ? 'medium' : 'high';
+}
+
 function upHeaders(prov) {
   const h = { 'content-type': 'application/json' };
   // Gateways that fingerprint the client (OpenCode Go) reject a request with
@@ -98,10 +109,21 @@ function withQueryKey(url, prov) {
 // OpenAI chat.completions (native passthrough)
 // ---------------------------------------------------------------------------
 
-function buildOpenAIBody(body, wantStream) {
+function buildOpenAIBody(body, wantStream, prov) {
   const out = { model: body.model, stream: !!wantStream, max_tokens: body.max_tokens || 4096 };
   if (body.temperature != null) out.temperature = body.temperature;
   if (body.top_p != null) out.top_p = body.top_p;
+  if (prov && isGoogle(prov)) {
+    // Google 400s on `reasoning` and on efforts outside its enum.
+    const eff = googleEffort(body);
+    if (eff) out.reasoning_effort = eff;
+  } else {
+    if (body.reasoning_effort) out.reasoning_effort = body.reasoning_effort;
+    else if (body.effort) out.reasoning_effort = body.effort;
+    if (body.thinking && body.thinking.budget_tokens != null) {
+      out.reasoning = { max_tokens: body.thinking.budget_tokens };
+    }
+  }
   const msgs = [];
   let sys = body.system;
   if (Array.isArray(sys)) sys = sys.map(b => b.text || '').join('\n');
@@ -204,7 +226,7 @@ function toolResultText(b) {
 const { splitThink } = require('../shared/think.js');
 
 function callOpenAI(body, prov, wantStream, signal) {
-  const out = buildOpenAIBody(body, wantStream);
+  const out = buildOpenAIBody(body, wantStream, prov);
   let url = openaiBase(prov.baseUrl) + '/chat/completions';
   url = withQueryKey(url, prov);
   return fetchUpstream(url, {
@@ -253,9 +275,15 @@ const nowId = (p) => 'chatcmpl-' + String(p) + '-' + Date.now().toString(36);
 function buildResponsesInput(body) {
   let instructions = body.system;
   if (Array.isArray(instructions)) instructions = instructions.map(b => b.text || '').join('\n');
+  const lateSystem = [];
   const input = [];
   for (const m of body.messages || []) {
     const c = m.content;
+    if (m.role === 'system') {
+      const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map(b => (b && b.text) || '').join('\n') : '';
+      if (t.trim()) lateSystem.push(t);
+      continue;
+    }
     if (typeof c === 'string') { input.push({ role: m.role === 'assistant' ? 'assistant' : 'user', content: [{ type: m.role === 'assistant' ? 'output_text' : 'input_text', text: c }] }); continue; }
     if (!Array.isArray(c)) continue;
     if (m.role === 'assistant') {
@@ -269,17 +297,19 @@ function buildResponsesInput(body) {
     }
     for (const b of c) {
       if (b.type === 'text') input.push({ role: 'user', content: [{ type: 'input_text', text: b.text }] });
-      else if (b.type === 'tool_result') {
-        let out = b.content;
-        if (Array.isArray(out)) out = out.map(x => x.text || '').join('\n');
-        input.push({ type: 'function_call_output', call_id: b.tool_use_id, output: String(out || '') });
+      else if (b.type === 'image' && b.source && b.source.type === 'base64') {
+        input.push({ role: 'user', content: [{ type: 'input_image', image_url: 'data:' + (b.source.media_type || 'image/png') + ';base64,' + b.source.data }] });
+      } else if (b.type === 'tool_result') {
+        input.push({ type: 'function_call_output', call_id: b.tool_use_id, output: toolResultText(b) });
       }
     }
   }
   const req = { model: body.model, input, max_output_tokens: body.max_tokens || 4096 };
+  if (lateSystem.length) instructions = (instructions ? instructions + '\n\n' : '') + lateSystem.join('\n\n');
   if (instructions) req.instructions = String(instructions);
   if (body.temperature != null) req.temperature = body.temperature;
   if (body.top_p != null) req.top_p = body.top_p;
+  if (body.effort || body.reasoning_effort) req.reasoning = { effort: body.effort || body.reasoning_effort };
   if (Array.isArray(body.tools) && body.tools.length) {
     req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } }));
   }
@@ -359,10 +389,18 @@ function geminiBase(baseUrl) {
   return base + '/v1beta';
 }
 
-function buildGeminiBody(body) {
+function buildGeminiBody(body, prov) {
   const contents = [];
   let systemText = body.system;
   if (Array.isArray(systemText)) systemText = systemText.map(b => b.text || '').join('\n');
+  const toolNameById = new Map();
+  for (const m of body.messages || []) {
+    if (Array.isArray(m.content)) {
+      for (const b of m.content) {
+        if (b && b.type === 'tool_use' && b.id && b.name) toolNameById.set(b.id, b.name);
+      }
+    }
+  }
   for (const m of body.messages || []) {
     const c = m.content;
     const role = m.role === 'assistant' ? 'model' : 'user';
@@ -375,7 +413,8 @@ function buildGeminiBody(body) {
       else if (b.type === 'tool_result') {
         let out = b.content;
         if (Array.isArray(out)) out = out.map(x => x.text || '').join('\n');
-        parts.push({ functionResponse: { name: b.name || b.tool_use_id, response: { output: String(out || '') } } });
+        const fname = b.name || toolNameById.get(b.tool_use_id) || b.tool_use_id || 'tool';
+        parts.push({ functionResponse: { name: fname, response: { output: String(out || '') } } });
       }
     }
     if (parts.length) contents.push({ role, parts });
@@ -386,6 +425,15 @@ function buildGeminiBody(body) {
   if (body.max_tokens) gen.maxOutputTokens = body.max_tokens;
   if (body.temperature != null) gen.temperature = body.temperature;
   if (body.top_p != null) gen.topP = body.top_p;
+  if (prov && isGoogle(prov)) {
+    // Google: budget 1..24576, or a level, never both.
+    const b = body.thinking && body.thinking.budget_tokens;
+    const lvl = googleEffort({ ...body, thinking: undefined });
+    if (b > 0) gen.thinkingConfig = { thinkingBudget: Math.min(b, 24576) };
+    else if (b == null && lvl && lvl !== 'none') gen.thinkingConfig = { thinkingLevel: lvl };
+  } else if (body.thinking && body.thinking.budget_tokens != null) {
+    gen.thinkingConfig = { thinkingBudget: body.thinking.budget_tokens };
+  }
   if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) gen.stopSequences = body.stop_sequences;
   if (Object.keys(gen).length) req.generationConfig = gen;
   if (Array.isArray(body.tools) && body.tools.length) {
@@ -422,7 +470,7 @@ async function* geminiChunks(upstream, model) {
 }
 
 async function callGemini(body, prov, wantStream, signal) {
-  const req = buildGeminiBody(body);
+  const req = buildGeminiBody(body, prov);
   const base = geminiBase(prov.baseUrl);
   const method = wantStream ? 'streamGenerateContent' : 'generateContent';
   let url = base + '/models/' + encodeURIComponent(body.model) + ':' + method;

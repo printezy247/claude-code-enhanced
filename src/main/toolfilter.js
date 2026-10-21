@@ -90,6 +90,20 @@ function collapseRepeats(text) {
  * @returns {{text: string, original: string, compacted: boolean}}
  */
 function compactBashOutput({ output, command = '', maxChars = DEFAULT_MAX_CHARS } = {}) {
+  return compactToolOutput({ output, toolName: 'Bash', detail: command, maxChars });
+}
+
+/**
+ * Compact any tool's output (Bash, Grep, Glob, Read).
+ *
+ * @param {object} opts
+ * @param {unknown} opts.output     the tool result, in any shape
+ * @param {string}  [opts.toolName] the tool name (e.g. 'Bash', 'Grep', 'Glob')
+ * @param {string}  [opts.detail]   detail string (e.g. command or pattern)
+ * @param {number}  [opts.maxChars] how much the model may read
+ * @returns {{text: string, original: string, compacted: boolean}}
+ */
+function compactToolOutput({ output, toolName = 'tool', detail = '', maxChars = DEFAULT_MAX_CHARS } = {}) {
   const original = toolResultText(output);
   const limit = clampMaxChars(maxChars);
   if (original.length <= limit) return { text: original, original, compacted: false };
@@ -97,34 +111,22 @@ function compactBashOutput({ output, command = '', maxChars = DEFAULT_MAX_CHARS 
   const collapsed = collapseRepeats(original);
   const body = collapsed.length < original.length ? collapsed : original;
   const lines = original.split('\n').length;
-  const cmd = command ? ' (' + String(command).slice(0, 200) + ')' : '';
-  // The header is part of what the model reads, so it is budgeted too: the
-  // body gets what is left of the limit once the header and the elision
-  // marker have their room. #F5 #F6
-  const headerFor = (stated) => '[cce] compacted shell output: '
+  const det = detail ? ' (' + String(detail).slice(0, 200) + ')' : '';
+  const label = toolName === 'Bash' ? 'shell output' : toolName + ' output';
+  const headerFor = (stated) => '[cce] compacted ' + label + ': '
     + lines + ' lines, ' + original.length + ' chars, model sees ' + stated + ' chars'
-    + cmd + '\n';
-  // The header states the length of the whole text, so its own length depends
-  // on the number it states: reserve room for the widest number and solve the
-  // small fixed point afterwards.
+    + det + '\n';
   const headerRoom = headerFor('').length + 8;
-  // The limit is a promise: the text the model reads never exceeds it, not
-  // even at the smallest budget with a long command in the header. The body
-  // takes what the header leaves, which is still ~186 characters there. #N2
   const budget = Math.max(0, limit - headerRoom - MARKER_ROOM);
 
   let bodyText = body;
   if (body.length > budget) {
-    // The head and the tail come from the budget, not from fixed constants:
-    // a bigger budget really does give the model more text. #F5
     const headLen = Math.max(1, Math.min(budget - 1, Math.round(budget * 0.6)));
     const tailLen = Math.max(0, budget - headLen);
     const elided = Math.max(0, body.length - headLen - tailLen);
     const marker = '\n… [' + elided + ' characters elided] …\n';
     bodyText = body.slice(0, headLen) + marker + body.slice(body.length - tailLen);
   }
-  // The header must not overstate what the model reads: it states the real
-  // length of the text it is part of. #F6
   const stated = statedLength(headerFor('').length + bodyText.length);
   const text = headerFor(stated) + bodyText;
   return { text, original, compacted: true };
@@ -148,6 +150,6 @@ function statedLength(base) {
 }
 
 module.exports = {
-  compactBashOutput, collapseRepeats, toolResultText,
+  compactBashOutput, compactToolOutput, collapseRepeats, toolResultText,
   DEFAULT_MAX_CHARS, MIN_MAX_CHARS, MAX_MAX_CHARS, clampMaxChars,
 };

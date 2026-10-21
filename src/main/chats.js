@@ -12,7 +12,7 @@ const { EventEmitter } = require('events');
 const providers = require('./providers');
 const { promptAppend: bootstrapPrompt, syncedSkillsPlugin } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
-const { compactBashOutput, toolResultText, clampMaxChars } = require('./toolfilter');
+const { compactBashOutput, compactToolOutput, toolResultText, clampMaxChars } = require('./toolfilter');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
