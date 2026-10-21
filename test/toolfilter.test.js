@@ -84,4 +84,18 @@ describe('compacting shell output', () => {
     const r = compactBashOutput({ output: 'q'.repeat(DEFAULT_MAX_CHARS + 100) });
     expect(r.compacted).toBe(true);
   });
+
+  it('clamps a budget that is out of range', () => {
+    // 999999 is out of range: the promise the Settings row makes is 500…100000.
+    // A 200k output must not be handed to the model whole.
+    const r = compactBashOutput({ output: 'x'.repeat(200000), maxChars: 999999 });
+    expect(r.compacted).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(100000);
+  });
+
+  it('clamps a budget that is below the range', () => {
+    const r = compactBashOutput({ output: 'x'.repeat(2000), maxChars: 10 });
+    expect(r.compacted).toBe(true);
+    expect(r.text.length).toBeLessThanOrEqual(2000);
+  });
 });

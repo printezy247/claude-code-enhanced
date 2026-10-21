@@ -119,6 +119,23 @@ describe('the shell-output filter', () => {
     expect(events.find((e) => e.kind === 'tool-original')).toBeFalsy();
   });
 
+  it('clamps the budget it reads out of the settings', async () => {
+    await boot({ outputFilter: 'on', outputFilterMaxChars: 999999 });
+    const hook = lastOptions.hooks.PostToolUse[0].hooks[0];
+    const big = 'x'.repeat(200000);
+    const out = await hook({
+      hook_event_name: 'PostToolUse',
+      tool_name: 'Bash',
+      tool_input: { command: 'npm test' },
+      tool_response: { stdout: big, stderr: '' },
+      tool_use_id: 'tu4',
+    });
+    // 999999 is out of range (500…100000), so the main process must clamp it
+    // before it hands the result to the model.
+    expect(out.hookSpecificOutput).toBeTruthy();
+    expect(out.hookSpecificOutput.updatedToolOutput.length).toBeLessThanOrEqual(100000);
+  });
+
   it('does not touch tools that are not shell commands', async () => {
     await boot({ outputFilter: 'on', outputFilterMaxChars: 1000 });
     const hook = lastOptions.hooks.PostToolUse[0].hooks[0];

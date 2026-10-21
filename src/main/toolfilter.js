@@ -9,10 +9,30 @@
 'use strict';
 
 const DEFAULT_MAX_CHARS = 8000;
+/**
+ * The range the Settings row promises, and the single source of truth for it.
+ *
+ * The renderer clamps what the user types, but the main process is the code
+ * that actually uses the number: a hand-edited config.json, another writer, or
+ * a stale value must not hand the model an unbounded result. #F1
+ */
+const MIN_MAX_CHARS = 500;
+const MAX_MAX_CHARS = 100000;
 const HEAD_CHARS = 1200;
 const TAIL_CHARS = 1200;
 /** Room reserved for the "… N characters elided …" marker. */
 const MARKER_ROOM = 64;
+
+/**
+ * Clamp a budget to the range the Settings row promises.
+ * @param {unknown} maxChars
+ * @returns {number}
+ */
+function clampMaxChars(maxChars) {
+  const n = Number(maxChars);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_MAX_CHARS;
+  return Math.min(MAX_MAX_CHARS, Math.max(MIN_MAX_CHARS, Math.round(n)));
+}
 
 /**
  * The plain text of a tool result, whatever shape the engine used.
@@ -73,7 +93,7 @@ function collapseRepeats(text) {
  */
 function compactBashOutput({ output, command = '', maxChars = DEFAULT_MAX_CHARS } = {}) {
   const original = toolResultText(output);
-  const limit = Math.max(500, Number(maxChars) || DEFAULT_MAX_CHARS);
+  const limit = clampMaxChars(maxChars);
   if (original.length <= limit) return { text: original, original, compacted: false };
 
   const collapsed = collapseRepeats(original);
@@ -94,4 +114,7 @@ function compactBashOutput({ output, command = '', maxChars = DEFAULT_MAX_CHARS 
   return { text, original, compacted: true };
 }
 
-module.exports = { compactBashOutput, collapseRepeats, toolResultText, DEFAULT_MAX_CHARS };
+module.exports = {
+  compactBashOutput, collapseRepeats, toolResultText,
+  DEFAULT_MAX_CHARS, MIN_MAX_CHARS, MAX_MAX_CHARS, clampMaxChars,
+};
