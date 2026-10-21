@@ -108,7 +108,10 @@ function compactBashOutput({ output, command = '', maxChars = DEFAULT_MAX_CHARS 
   // on the number it states: reserve room for the widest number and solve the
   // small fixed point afterwards.
   const headerRoom = headerFor('').length + 8;
-  const budget = Math.max(200, limit - headerRoom - MARKER_ROOM);
+  // The limit is a promise: the text the model reads never exceeds it, not
+  // even at the smallest budget with a long command in the header. The body
+  // takes what the header leaves, which is still ~186 characters there. #N2
+  const budget = Math.max(0, limit - headerRoom - MARKER_ROOM);
 
   let bodyText = body;
   if (body.length > budget) {

@@ -65,7 +65,7 @@ describe('compacting shell output', () => {
   it('stays inside the budget', () => {
     const body = 'x'.repeat(50000);
     const r = compactBashOutput({ output: body, maxChars: 2000 });
-    expect(r.text.length).toBeLessThanOrEqual(2400);
+    expect(r.text.length).toBeLessThanOrEqual(2000);
   });
 
   it('collapses a repetitive build log before cutting it', () => {
@@ -76,7 +76,25 @@ describe('compacting shell output', () => {
 
   it('never returns more than the budget, even with a huge header', () => {
     const r = compactBashOutput({ output: 'y'.repeat(100000), command: 'z'.repeat(5000), maxChars: 1000 });
-    expect(r.text.length).toBeLessThanOrEqual(1400);
+    expect(r.text.length).toBeLessThanOrEqual(1000);
+  });
+
+  it('never hands the model more than the budget, even with a long command', () => {
+    // The budget is a promise: the text the model reads never exceeds it —
+    // not at the smallest budget, where a long command in the header leaves
+    // the body almost nothing. #N2
+    for (const limit of [500, 800, 2000, 20000]) {
+      for (const cmdLen of [0, 40, 200, 600]) {
+        const r = compactBashOutput({
+          output: 'y'.repeat(200000),
+          command: 'x'.repeat(cmdLen),
+          maxChars: limit,
+        });
+        expect(r.text.length,
+          'over the budget at ' + limit + ' with a ' + cmdLen + '-char command')
+          .toBeLessThanOrEqual(limit);
+      }
+    }
   });
 
   it('has a default budget', () => {
