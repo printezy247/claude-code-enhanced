@@ -54,10 +54,10 @@ describe('names in innerHTML-built chips are escaped', () => {
       type: 'system', subtype: 'init', model: 'sonnet',
       mcp_servers: [{ name: '<img id="xss1">', status: 'connected' }],
     });
-    expect(chat.pane.querySelector('#xss1')).toBe(null);
-    const chip = chat.pane.querySelector('.mcp-chip');
-    expect(chip).toBeTruthy();
-    expect(chip.textContent).toContain('<img id="xss1">');
+    // The per-server chips were retired (the Connectors card lists them); a
+    // hostile name must still never become live DOM anywhere.
+    expect(h.window.document.querySelector('#xss1')).toBe(null);
+    expect(h.window.document.querySelector('.chat-mcp-chips')).toBe(null);
     expect(h.calls.length).toBeGreaterThan(0);
   });
 });

@@ -104,7 +104,7 @@ describe('compact in place', () => {
 });
 
 describe('header menu and panels', () => {
-  const openMenu = () => { click(pane().querySelector('.hdr-more')); return doc().querySelector('.chat-menu'); };
+  const openMenu = () => { click(doc().querySelector('.hdr-more')); return doc().querySelector('.chat-menu'); };
 
   it('has sections, a close button and real icons for every item', () => {
     const menu = openMenu();

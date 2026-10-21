@@ -1542,3 +1542,9 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .mem-proposal-head { font-size: 12px; font-weight: 600; color: var(--text); }
 .mem-proposal-body { white-space: pre-wrap; font-size: 11.5px; max-height: 140px; overflow: auto; margin: 6px 0; color: var(--text); }
 .mem-pending-chip { cursor: pointer; border-color: var(--accent); color: var(--accent); }
+
+/* Two-line top bar: tabs, then quick actions with the active chat's header beside "Closed tab" */
+#qa-chat-slot { display: flex; align-items: center; min-width: 0; flex: 0 1 auto; }
+#qa-chat-slot:not(:empty) ~ .hint { display: none; }
+.convo-quick .chat-header { padding: 0; background: none; border: 0; flex-wrap: wrap; min-width: 0; margin-left: 6px; padding-left: 12px; border-left: 1px solid var(--border); }
+.chat-header .chat-stop { display: none !important; }   /* the composer's button interrupts */
