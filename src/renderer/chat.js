@@ -592,7 +592,7 @@ const Chat = (() => {
     if (/\b(would you like|do you want|should I|please confirm|feel free to|let me know|what do you think)\b/i.test(paragraph)) return false;
     const sentences = paragraph.split(/(?<=[.!:])\s+/);
     const last = sentences[sentences.length - 1] || paragraph;
-    if (/\b(done|completed?|finished|that'?s all|hope this helps|let me know)\b/i.test(last)) return false;
+    if (/\b(done|completed?|finished|that'?s all|hope this helps|let me know|thanks|thank you)\b/i.test(last)) return false;
     // Only a sentence that hands off to an action counts: it ends in ":" / "…",
     // or it OPENS with the intent ("Let me…", "Now I'll…"). A closing remark
     // like "I'll leave the tests as they are." used to trigger a redo.
@@ -622,7 +622,8 @@ const Chat = (() => {
     // Never overwrite a draft the user is already typing.
     if (chat.composer.value.trim()) return false;
     chat.nudges = (chat.nudges || 0) + 1;
-    chat.msgs.appendChild(el('div', 'sys-note warn', '↻ the model announced a next step but stopped — nudging it to continue (automatic, once)'));
+    console.log('[cce] auto-nudge triggered for chat:', chat.id);
+    chat.msgs.appendChild(el('div', 'sys-note warn', '↻ [Auto-nudge] the model announced a next step but stopped — nudging it to continue (automatic, once)'));
     scrollDownSoft(chat);
     chat.composer.value = NUDGE_TEXT;
     autosize(chat.composer);
@@ -1160,7 +1161,8 @@ const Chat = (() => {
     if (!p || !p.ok) return;
     chat.memProbed = true;
     chat.memProbe = true;
-    chat.msgs.appendChild(el('div', 'sys-note', 'memory: checking this chat for lasting notes (auto memory is on)…'));
+    console.log('[cce] auto-memory probe started for chat:', chat.id);
+    chat.msgs.appendChild(el('div', 'sys-note', '[Auto-memory probe] checking this chat for lasting notes (auto memory is on)…'));
     scrollDownSoft(chat);
     const r = await ccx.invoke('chat:send', { id: chat.id, text: p.prompt });
     if (!r || !r.ok) chat.memProbe = false;
@@ -2652,7 +2654,7 @@ const Chat = (() => {
       if (metered && typeof r.total_cost_usd === 'number' && r.total_cost_usd > 0) parts.push('$' + r.total_cost_usd.toFixed(4));
       parts.push((r.num_turns != null ? r.num_turns : 0) + ' turns', Math.round((r.duration_ms || 0) / 1000) + 's');
       const u = r.usage || {};
-      if (u.input_tokens != null) parts.push('↑' + fmtTok(u.input_tokens) + ' ↓' + fmtTok(u.output_tokens));
+      if (u.input_tokens != null) parts.push('↑' + (metered ? '' : '~') + fmtTok(u.input_tokens) + ' ↓' + (metered ? '' : '~') + fmtTok(u.output_tokens));
     }
     chat.statusLine.textContent = parts.join('  ·  ');
     if (chat.init) {

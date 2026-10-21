@@ -378,20 +378,24 @@ class ChatManager extends EventEmitter {
     // Per-provider lean tool set. Fewer tool schemas = a much smaller base
     // prompt, which is the real lever on the ~70K context floor that blocks
     // 3-4B local models. #41
+    let isLean = false;
     if (settings && settings.leanTools) {
       const lean = Array.isArray(settings.leanTools) ? settings.leanTools : [];
       if (lean.length) {
         options.tools = lean;
         options.disallowedTools = (settings.disallowedTools || []).map(String);
+        isLean = true;
       }
-    } else {
-      // Auto-lean for small-context models: fewer tool schemas shrink the base
-      // prompt, which is the lever on the ~70K floor that blocks 3-4B models.
-      // #perf-tokens
+    } else if (settings && settings.autoLean) {
+      // Auto-lean for small-context models when explicitly configured in settings
       const ctx = (typeof this.contextOf === 'function' && Number(this.contextOf(providerInstance, model))) || 0;
       if (ctx > 0 && ctx < 131072) {
         options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob'];
+        isLean = true;
       }
+    }
+    if (isLean) {
+      console.log('[chat] explicit lean tool mode active for chat ' + id + ' (' + options.tools.join(', ') + ')');
     }
     // Sandboxed command execution (claude code sandbox: Bubblewrap on Linux).
     if (settings && settings.sandbox && settings.sandbox.enabled) {
@@ -443,7 +447,12 @@ class ChatManager extends EventEmitter {
     // a toolkit this machine does not have.
     // Minimal-prompt mode drops the bootstrap (skills/agents/project context)
     // to shrink the base prompt for quick chats. #token-cost
-    const bootstrap = settings && settings.minimalPrompt ? '' : await bootstrapPrompt(dir);
+    const isTranslated = Boolean(anthropicBaseUrl || (providerInstance && providerInstance.baseUrl));
+    const minimalBootstrap = Boolean(settings && settings.minimalBootstrap) || (isTranslated && !(settings && settings.fullBootstrap));
+    const includeReadme = Boolean(settings && settings.includeReadmeExcerpt);
+    const bootstrap = settings && settings.minimalPrompt
+      ? ''
+      : await bootstrapPrompt(dir, { minimal: minimalBootstrap, includeReadme });
     if (bootstrap) {
       options.systemPrompt = {
         type: 'preset',
@@ -723,6 +732,7 @@ class ChatManager extends EventEmitter {
       id, cwd: dir, model: chat.model, permissionMode: effMode,
       provider: chat.provider, sandbox: !!(settings && settings.sandbox && settings.sandbox.enabled),
       resumedFrom: (options.resume || null),
+      isLean,
     };
   }
 
