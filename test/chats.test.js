@@ -485,3 +485,46 @@ describe('context window display', () => {
     expect(c.declared).toBe(131072);
   });
 });
+
+describe('steer mode and web / PC tools access', () => {
+  it('steer interrupts a busy chat and dispatches prompt immediately', async () => {
+    const { id } = await openChat();
+    const chat = mgr.chats.get(id);
+    chat.busy = true;
+    const interruptSpy = vi.spyOn(mgr, 'interrupt');
+    const sendSpy = vi.spyOn(mgr, 'send');
+
+    const res = await mgr.steer(id, 'Stop investigating and build now');
+    expect(res.ok).toBe(true);
+    expect(interruptSpy).toHaveBeenCalledWith(id);
+    expect(sendSpy).toHaveBeenCalledWith(id, 'Stop investigating and build now', undefined);
+  });
+
+  it('populates options.allowedTools with WebFetch and WebSearch', async () => {
+    await openChat();
+    expect(lastOptions.allowedTools).toContain('WebFetch');
+    expect(lastOptions.allowedTools).toContain('WebSearch');
+  });
+
+  it('auto-allows WebFetch and WebSearch without creating a permission prompt', async () => {
+    await openChat();
+    const resFetch = await lastOptions.canUseTool('WebFetch', { url: 'https://example.com' });
+    const resSearch = await lastOptions.canUseTool('WebSearch', { query: 'test query' });
+    expect(resFetch).toEqual({ behavior: 'allow' });
+    expect(resSearch).toEqual({ behavior: 'allow' });
+    expect(events.filter(e => e.kind === 'permission').length).toBe(0);
+  });
+
+  it('permits ~/.claude/pc.md and .claude config even when restrictToCwd is true', async () => {
+    await openChat({ settings: { restrictToCwd: true } });
+    const os = require('node:os');
+    const path = require('node:path');
+    const pcPath = path.join(os.homedir(), '.claude', 'pc.md');
+    // Using Read on ~/.claude/pc.md should not be denied by cwd restriction
+    const p = lastOptions.canUseTool('Read', { file_path: pcPath });
+    await until(() => events.some(e => e.kind === 'permission'));
+    const perm = events.find(e => e.kind === 'permission');
+    expect(perm).toBeTruthy();
+    expect(perm.toolName).toBe('Read');
+  });
+});

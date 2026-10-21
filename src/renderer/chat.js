@@ -177,7 +177,7 @@ const Chat = (() => {
         <div class="chat-input-row">
           <button class="chat-attach" title="Attach an image or a file" aria-label="Attach a file"><span data-icon="clip2"></span></button>
           <textarea class="chat-input" rows="1" placeholder="Ask Claude to work on this project…  (@ files · / commands · paste images)"></textarea>
-          <button class="chat-expand hidden" title="Expand the composer (Ctrl+E)" aria-label="Expand the composer" aria-pressed="false"><span data-icon="expand"></span></button>
+          <button class="chat-busy-mode hidden" title="Toggle Queue vs Steer mode when busy"><span class="busy-mode-badge queue">⏭ Queue</span></button>
           <button class="chat-send" title="Send (Enter)" aria-label="Send"><span data-icon="send"></span></button>
         </div>
         <div class="chat-footbar">
@@ -223,7 +223,8 @@ const Chat = (() => {
       ctxFill: pane.querySelector('.chat-ctxbar i'),
       imgs: pane.querySelector('.chat-imgs'),
       contBtn: pane.querySelector('.chat-cont-btn'),
-      expandBtn: pane.querySelector('.chat-expand'),
+      busyModeBtn: pane.querySelector('.chat-busy-mode'),
+      busyMode: 'queue',
       wfBtn: pane.querySelector('.chat-wf-btn'),
       compactBtn: pane.querySelector('.chat-compact-btn'),
       init: null, lives: null, tools: new Map(), busy: false, alive: true, dead: false,
@@ -367,7 +368,7 @@ const Chat = (() => {
     // silently disabled them.
 
     // composer
-    const send = () => {
+    const send = (action) => {
       const text = chat.composer.value.trim();
       const blocks = chat.pendingImages.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }));
       if ((!text && !blocks.length) || !chat.alive) return;
@@ -381,7 +382,50 @@ const Chat = (() => {
       updateLatestBtn(chat);
       if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
       try { localStorage.removeItem('cce:draft:' + (chat.cwd || '')); } catch { /* ignore */ }
-      try { localStorage.removeItem('cce:pending:' + (chat.cwd || '')); } catch { /* ignore */ }
+
+      if (chat.busy) {
+        const mode = action || chat.busyMode || 'queue';
+        if (mode === 'queue') {
+          appendUser(chat, text || '(image)');
+          chat.pendingMsgs.push(blocks.length ? { text, blocks } : text);
+          renderQueued(chat);
+          try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
+          chat.msgs.appendChild(el('div', 'sys-note', '⏭ queued — will run after current turn finishes'));
+          scrollDownSoft(chat);
+          chat.composer.value = '';
+          autosize(chat.composer);
+          hideSlash(chat);
+          clearImages(chat);
+          updateBusyUi(chat);
+          return;
+        }
+
+        // Steer mode: interrupt immediately and redirect
+        appendUser(chat, text || '(image)');
+        chat.msgs.appendChild(el('div', 'sys-note', '↯ steered — interrupted and redirected Claude'));
+        scrollDownSoft(chat);
+        if (text && (!chat.promptHistory.length || chat.promptHistory[0] !== text)) {
+          chat.promptHistory.unshift(text);
+          if (chat.promptHistory.length > 100) chat.promptHistory.pop();
+        }
+        chat.histIdx = -1;
+        chat.composer.value = '';
+        autosize(chat.composer);
+        hideSlash(chat);
+        clearImages(chat);
+        updateBusyUi(chat);
+        ccx.invoke('chat:steer', { id, text, blocks: blocks.length ? blocks : null }).then((r) => {
+          if (!r || !r.ok) {
+            appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)'));
+            setBusy(chat, false);
+          }
+        }).catch((e) => {
+          appendError(chat, 'Not sent — ' + ((e && e.message) || e));
+          setBusy(chat, false);
+        });
+        return;
+      }
+
       // Warn before sending into a nearly-full context window. #token-budget
       if (chat.ctxUsage && Number(chat.ctxUsage.percentage) >= 80) {
         toast('Context is ' + Number(chat.ctxUsage.percentage).toFixed(0) + '% full — consider /compact', 'warn');
@@ -396,12 +440,6 @@ const Chat = (() => {
         if (seeded) renderTodoItems(chat, seeded);
       }
       appendUser(chat, text || '(image)');
-      if (chat.busy) {
-        chat.pendingMsgs.push(text);
-        renderQueued(chat);
-        try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
-        chat.msgs.appendChild(el('div', 'sys-note', '↯ steered — Claude will see this mid-turn'));
-      }
       if (text && (!chat.promptHistory.length || chat.promptHistory[0] !== text)) {
         chat.promptHistory.unshift(text);
         if (chat.promptHistory.length > 100) chat.promptHistory.pop();
@@ -409,11 +447,11 @@ const Chat = (() => {
       chat.histIdx = -1;
       autoTitle(chat, text);
       chat.composer.value = '';
-      chat.pane.classList.remove('composer-expanded');
       autosize(chat.composer);
       hideSlash(chat);
       clearImages(chat);
-      ccx.invoke('chat:send', { id, text, blocks }).then((r) => {
+      updateBusyUi(chat);
+      ccx.invoke('chat:send', { id, text, blocks: blocks.length ? blocks : null }).then((r) => {
         if (!r || !r.ok) {
           appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)'));
           setBusy(chat, false);
@@ -478,19 +516,33 @@ const Chat = (() => {
     // @-mentions of project files
     chat.composer.addEventListener('input', async () => {
       autosize(chat.composer);
+      updateBusyUi(chat);
       try { localStorage.setItem('cce:draft:' + (chat.cwd || ''), chat.composer.value); } catch { /* ignore */ }
       // maybeAt is async: un-awaited, its Promise was always truthy and the "/"
       // menu never opened.
       if (!(await maybeAt(chat))) maybeSlash(chat);
     });
-    chat.sendBtn.addEventListener('click', () => {
-      if (chat.busy) ccx.invoke('chat:interrupt', { id });   // button turns into stop
-      else send();
-    });
-    if (chat.expandBtn) {
-      chat.expandBtn.addEventListener('click', () =>
-        setExpanded(chat, !chat.pane.classList.contains('composer-expanded')));
+
+    if (chat.busyModeBtn) {
+      chat.busyModeBtn.addEventListener('click', () => {
+        chat.busyMode = (chat.busyMode || 'steer') === 'steer' ? 'queue' : 'steer';
+        updateBusyUi(chat);
+      });
     }
+
+    chat.sendBtn.addEventListener('click', () => {
+      if (chat.busy) {
+        const text = chat.composer.value.trim();
+        if (!text && !chat.pendingImages.length) {
+          ccx.invoke('chat:interrupt', { id });
+          return;
+        }
+        send(chat.busyMode || 'queue');
+      } else {
+        send();
+      }
+    });
+
     // Compact in place: the engine summarizes earlier turns and the same chat
     // keeps going (no new tab, no lost context).
     if (chat.compactBtn) chat.compactBtn.addEventListener('click', () => doCompact(chat));
@@ -517,7 +569,17 @@ const Chat = (() => {
         }
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideSlash(chat); return; }
       }
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        if (chat.busy) {
+          const isCtrl = e.ctrlKey || e.metaKey;
+          const currentMode = chat.busyMode || 'queue';
+          const modeToUse = isCtrl ? (currentMode === 'queue' ? 'steer' : 'queue') : currentMode;
+          send(modeToUse);
+        } else {
+          send();
+        }
+      }
     });
     chat.msgs.addEventListener('scroll', () => {}, { passive: true });
 
@@ -755,8 +817,21 @@ const Chat = (() => {
     if (!chat.queuedEl) return;
     chat.queuedEl.innerHTML = '';
     chat.queuedEl.classList.toggle('hidden', !chat.pendingMsgs.length);
-    for (const t of chat.pendingMsgs) {
-      const chip = el('span', 'queued-chip', t.length > 70 ? t.slice(0, 70) + '…' : t);
+    for (let i = 0; i < chat.pendingMsgs.length; i++) {
+      const item = chat.pendingMsgs[i];
+      const t = typeof item === 'string' ? item : (item && item.text) || '';
+      const chip = el('span', 'queued-chip');
+      const label = el('span', 'queued-chip-text', t.length > 70 ? t.slice(0, 70) + '…' : t);
+      const del = el('span', 'queued-chip-del', ' ×');
+      del.title = 'Remove queued message';
+      del.onclick = (e) => {
+        e.stopPropagation();
+        chat.pendingMsgs.splice(i, 1);
+        try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
+        renderQueued(chat);
+      };
+      chip.appendChild(label);
+      chip.appendChild(del);
       chat.queuedEl.appendChild(chip);
     }
   }
@@ -2623,6 +2698,43 @@ const Chat = (() => {
     }
   }
 
+  function updateBusyUi(chat) {
+    if (!chat.sendBtn) return;
+    const isBusy = !!chat.busy;
+    if (chat.busyModeBtn) {
+      chat.busyModeBtn.classList.toggle('hidden', !isBusy);
+      const mode = chat.busyMode || 'queue';
+      chat.busyModeBtn.innerHTML = mode === 'steer'
+        ? '<span class="busy-mode-badge steer">↯ Steer</span>'
+        : '<span class="busy-mode-badge queue">⏭ Queue</span>';
+      chat.busyModeBtn.title = mode === 'steer'
+        ? 'Steer mode: Interrupts immediately (Enter). Click to switch to Queue.'
+        : 'Queue mode: Runs after turn completes (Enter). Click to switch to Steer.';
+    }
+    const mode = chat.busyMode || 'queue';
+    if (isBusy) {
+      const hasText = Boolean((chat.composer && chat.composer.value.trim()) || chat.pendingImages.length);
+      if (hasText) {
+        chat.sendBtn.innerHTML = CCEIcons.svg(mode === 'steer' ? 'bolt' : 'play', 15);
+        chat.sendBtn.title = mode === 'steer'
+          ? 'Steer (Enter) · Ctrl+Enter to queue'
+          : 'Queue (Enter) · Ctrl+Enter to steer';
+        chat.sendBtn.classList.remove('busy');
+        chat.sendBtn.classList.toggle('mode-steer', mode === 'steer');
+        chat.sendBtn.classList.toggle('mode-queue', mode === 'queue');
+      } else {
+        chat.sendBtn.innerHTML = CCEIcons.svg('square', 15);
+        chat.sendBtn.title = 'Stop (Esc)';
+        chat.sendBtn.classList.add('busy');
+        chat.sendBtn.classList.remove('mode-steer', 'mode-queue');
+      }
+    } else {
+      chat.sendBtn.innerHTML = CCEIcons.svg('send', 15);
+      chat.sendBtn.title = 'Send (Enter)';
+      chat.sendBtn.classList.remove('busy', 'mode-steer', 'mode-queue');
+    }
+  }
+
   function setBusy(chat, busy) {
     // Late status frames from the dead engine must not resurrect a handed-off tab.
     if (chat.handedOff && busy) return;
@@ -2632,14 +2744,25 @@ const Chat = (() => {
     chat.stopBtn.classList.toggle('hidden', !busy);
     if (chat.buildNowBtn) chat.buildNowBtn.classList.toggle('hidden', !busy);
     chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
-    // While a turn runs the primary button becomes stop, as in the desktop app.
-    chat.sendBtn.innerHTML = CCEIcons.svg(busy ? 'square' : 'send', 15);
-    chat.sendBtn.title = busy ? 'Stop (Esc)' : 'Send (Enter)';
-    chat.sendBtn.classList.toggle('busy', busy);
+    updateBusyUi(chat);
     if (busy) { chat.statusLine.textContent = 'working…'; startContextPolling(chat); }
     else {
       if (chat.ctxTimer) { stopContextPolling(chat); pollContext(chat); }
       setStatusLine(chat);
+      // Auto-dispatch next queued message if any
+      if (chat.pendingMsgs && chat.pendingMsgs.length > 0) {
+        const next = chat.pendingMsgs.shift();
+        try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
+        renderQueued(chat);
+        const nextText = typeof next === 'string' ? next : (next && next.text) || '';
+        const nextBlocks = typeof next === 'object' && next ? next.blocks : null;
+        setTimeout(() => {
+          if (!chat.alive) return;
+          ccx.invoke('chat:send', { id: chat.id, text: nextText, blocks: nextBlocks })
+            .then((r) => { if (!r || !r.ok) setBusy(chat, false); })
+            .catch(() => setBusy(chat, false));
+        }, 50);
+      }
     }
   }
 
@@ -2806,11 +2929,6 @@ const Chat = (() => {
           if (u) (chat.answeredUuids || (chat.answeredUuids = new Set())).add(u);
         }
         showQueued(chat, queued);
-        // Queued chips were never cleared: drop the ones this turn answered.
-        if (chat.pendingMsgs.length) {
-          chat.pendingMsgs.splice(0, Math.max(0, chat.pendingMsgs.length - queued));
-          renderQueued(chat);
-        }
         if (chat.memProbe) {
           chat.memProbe = false;
           collectMemoryProbe(chat, msg);
@@ -4508,30 +4626,22 @@ const Chat = (() => {
   }
   function hideSlash(chat) { chat.slash.classList.add('hidden'); chat.slashIdx = -1; }
 
-  // The composer stays ONE line tall; long requests scroll inside the box
-  // instead of growing it over the transcript. Once the text is longer than a
-  // line an expand button appears; expanded, the box grows to 40% of the
-  // window. #feat-one-line-composer
+  // The composer auto-expands as new lines are formed (matching Claude Code Desktop)
+  // up to max height, with scrolling once cap is exceeded.
   const ONE_LINE = 20;   // one line of text (line-height); the box adds the margin
   function autosize(ta) {
-    const pane = ta.closest && ta.closest('.chat-pane');
-    const expanded = !!(pane && pane.classList.contains('composer-expanded'));
+    if (!ta) return;
     ta.style.height = 'auto';
-    const full = ta.scrollHeight;
-    const cap = expanded ? Math.max(ONE_LINE, Math.round((window.innerHeight || 800) * 0.4)) : ONE_LINE;
-    ta.style.height = Math.min(cap, Math.max(ONE_LINE, full)) + 'px';
-    const btn = pane && pane.querySelector('.chat-expand');
-    if (btn) btn.classList.toggle('hidden', !expanded && (full <= ONE_LINE + 2 && !ta.value.includes('\n')));
+    const lines = (ta.value || '').split('\n').length;
+    // In jsdom or before layout, scrollHeight is 0: estimate from line count if scrollHeight <= ONE_LINE
+    const full = Math.max(ta.scrollHeight || 0, lines * ONE_LINE);
+    const maxHeight = Math.min(320, Math.max(160, Math.round((window.innerHeight || 800) * 0.35)));
+    const h = Math.min(maxHeight, Math.max(ONE_LINE, full));
+    ta.style.height = h + 'px';
+    ta.style.overflowY = full > maxHeight ? 'auto' : 'hidden';
   }
   function setExpanded(chat, on) {
-    chat.pane.classList.toggle('composer-expanded', on);
-    if (chat.expandBtn) {
-      chat.expandBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
-      chat.expandBtn.title = on ? 'Back to one line (Ctrl+E)' : 'Expand the composer (Ctrl+E)';
-      chat.expandBtn.innerHTML = CCEIcons.svg(on ? 'shrink' : 'expand', 15);
-    }
-    autosize(chat.composer);
-    chat.composer.focus();
+    // Kept as no-op for backward compatibility
   }
 
   /* ---------------- global event wiring ---------------- */
@@ -4575,8 +4685,7 @@ const Chat = (() => {
   });
 
   const toggleExpanded = (chat) => {
-    setExpanded(chat, !chat.pane.classList.contains('composer-expanded'));
-    chat.composer.focus();
+    if (chat && chat.composer) chat.composer.focus();
   };
 
   return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences, pollContext, renderDiff };
