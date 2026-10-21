@@ -406,6 +406,57 @@ describe('permission decisions fail closed', () => {
   });
 });
 
+describe('canUseTool host pipeline parity', () => {
+  it('denies tools targeting VM or virtual system paths', async () => {
+    await openChat();
+    const res = await lastOptions.canUseTool('Read', { file_path: '/proc/cpuinfo' });
+    expect(res.behavior).toBe('deny');
+    expect(res.message).toMatch(/restricted VM or system location/);
+  });
+
+  it('denies write tools in read-only sessions', async () => {
+    await openChat({ settings: { readOnly: true } });
+    const res = await lastOptions.canUseTool('Write', { file_path: '/tmp/test.txt', content: 'hello' });
+    expect(res.behavior).toBe('deny');
+    expect(res.message).toMatch(/read-only in this session/);
+  });
+
+  it('denies tools on the blocked tools list', async () => {
+    await openChat({ settings: { blockedTools: ['Bash'] } });
+    const res = await lastOptions.canUseTool('Bash', { command: 'echo 1' });
+    expect(res.behavior).toBe('deny');
+    expect(res.message).toMatch(/blocked by policy/);
+  });
+
+  it('denies tools targeting paths outside cwd when restricted', async () => {
+    await openChat({ cwd: '/tmp/myproject', settings: { restrictToCwd: true } });
+    const res = await lastOptions.canUseTool('Write', { file_path: '/etc/passwd', content: 'boom' });
+    expect(res.behavior).toBe('deny');
+    expect(res.message).toMatch(/outside allowed working directories/);
+  });
+
+  it('enforces always_deny on connector tools', async () => {
+    await openChat({ settings: { connectorToolPolicy: { mcp__db__drop: 'always_deny' } } });
+    const res = await lastOptions.canUseTool('mcp__db__drop', {});
+    expect(res.behavior).toBe('deny');
+    expect(res.message).toMatch(/denied by connector policy/);
+  });
+
+  it('pins updatedInput on allow', async () => {
+    const { id } = await openChat();
+    const ctx = { signal: new AbortController().signal, suggestions: [], toolUseID: 't_pin' };
+    const p = lastOptions.canUseTool('Read', { file_path: '/tmp/file.txt' }, ctx);
+    await until(() => events.some(e => e.kind === 'permission'));
+    const rid = events.find(e => e.kind === 'permission').requestId;
+    let res = null;
+    p.then(r => { res = r; });
+    mgr.answer(id, rid, 'allow');
+    await until(() => res !== null);
+    expect(res.behavior).toBe('allow');
+    expect(res.updatedInput).toEqual({ file_path: '/tmp/file.txt' });
+  });
+});
+
 describe('context window display', () => {
   it('reports the declared limit when the engine clamped to 200k', async () => {
     mgr.contextOf = () => 400000;

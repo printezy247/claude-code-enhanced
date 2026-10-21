@@ -2,7 +2,7 @@
 // the fixes for a code-review chat that spent ~11.5M input tokens over 102
 // requests (a ~98k-token prompt before any work), retried one blocked write six
 // times, and drew /model output and the compaction summary as user messages.
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
@@ -15,6 +15,18 @@ const { classifyUserText } = require('../src/shared/usertext.js');
 const QWEN = { uid: 'a', presetId: 'alibaba', protocol: 'openai', baseUrl: 'https://dashscope.example/v1', model: 'qwen3.5-plus' };
 
 describe('smaller requests on translated providers', () => {
+  let savedEnv;
+  beforeEach(() => {
+    savedEnv = process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+  });
+  afterEach(() => {
+    if (savedEnv !== undefined) {
+      process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS = savedEnv;
+    } else {
+      delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+    }
+  });
   it('loads MCP tools on demand instead of sending every schema each time', () => {
     expect(leanEngineEnv({ provider: QWEN, model: 'qwen3.5-plus' })).toEqual({ ENABLE_TOOL_SEARCH: 'true' });
   });

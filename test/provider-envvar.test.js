@@ -67,4 +67,18 @@ describe('environment-variable credentials', () => {
     providers.useAuth(auth);
     expect(providers.resolveApiKey(plain, auth, { OPENCODE_API_KEY: 'env-key' })).toBe('');
   });
+
+  it('reads key from instance-declared envVar', () => {
+    const custom = { uid: 'u2', name: 'Custom Env Auth', envVar: 'CUSTOM_AI_KEY' };
+    const auth = { resolve: () => ({}) };
+    providers.useAuth(auth);
+    expect(providers.resolveApiKey(custom, auth, { CUSTOM_AI_KEY: 'custom-secret-key' })).toBe('custom-secret-key');
+  });
+
+  it('reads key from catalog md.env array', () => {
+    const provider = { uid: 'u3', presetId: 'deepseek', name: 'DeepSeek' };
+    const auth = { resolve: () => ({}) };
+    providers.useAuth(auth);
+    expect(providers.resolveApiKey(provider, auth, { DEEPSEEK_API_KEY: 'deepseek-secret' })).toBe('deepseek-secret');
+  });
 });

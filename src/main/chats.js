@@ -47,6 +47,32 @@ const PERM_TIMEOUT_MESSAGE = 'The user did not answer this permission request wi
   + 'Do not retry this call or a variant of it. Finish anything that needs no permission, then stop and tell '
   + 'the user exactly which action is waiting for their approval.';
 
+const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEditCell']);
+
+function isVmPath(p) {
+  if (!p || typeof p !== 'string') return false;
+  const norm = p.replace(/\\/g, '/');
+  return /^\/(proc|sys|dev)(\/|$)/i.test(norm)
+    || /^\/private\/var\/vm(\/|$)/i.test(norm)
+    || /^\\\\\.\\/i.test(p);
+}
+
+function targetFilePath(toolName, input) {
+  if (!input || typeof input !== 'object') return '';
+  return String(input.file_path || input.path || input.target || '');
+}
+
+function isOutsideDirs(filePath, allowedDirs) {
+  if (!filePath || !allowedDirs || !allowedDirs.length) return false;
+  try {
+    const resolved = path.resolve(filePath);
+    return !allowedDirs.some((dir) => {
+      const rDir = path.resolve(dir);
+      return resolved === rDir || resolved.startsWith(rDir + path.sep);
+    });
+  } catch { return false; }
+}
+
 /** Chat models are assumed to have this window unless told otherwise. */
 const { ENGINE_DEFAULT_WINDOW } = require('./modelcontext');
 
@@ -469,6 +495,43 @@ class ChatManager extends EventEmitter {
     // (parallel tool calls, subagents). The old single-slot UI dropped all but
     // the last card and left the rest to time out. #2
     options.canUseTool = async (toolName, input, ctx = {}) => {
+      input = input || {};
+      const targetPath = targetFilePath(toolName, input);
+
+      // 1. VM-path denial
+      if (targetPath && isVmPath(targetPath)) {
+        return { behavior: 'deny', message: 'Path is in a restricted VM or system location.' };
+      }
+
+      // 2. Read-only session policy
+      if (settings && settings.readOnly && WRITE_TOOLS.has(toolName)) {
+        return { behavior: 'deny', message: 'Session is read-only in this session.' };
+      }
+
+      // 3. Write-tool block rules
+      if (settings && Array.isArray(settings.blockedTools) && settings.blockedTools.includes(toolName)) {
+        return { behavior: 'deny', message: 'Tool blocked by policy.' };
+      }
+
+      // 4. Path outside allowed working directories
+      if (targetPath && settings && settings.restrictToCwd) {
+        const allowed = [dir, ...(settings.allowedDirectories || [])];
+        if (isOutsideDirs(targetPath, allowed)) {
+          return { behavior: 'deny', message: 'Path is outside allowed working directories.' };
+        }
+      }
+
+      // 5. Connector tool policy (always_ask / always_deny)
+      if (settings && settings.connectorToolPolicy && settings.connectorToolPolicy[toolName]) {
+        const pol = settings.connectorToolPolicy[toolName];
+        if (pol === 'always_deny') {
+          return { behavior: 'deny', message: 'Tool use denied by connector policy.' };
+        }
+        if (pol === 'always_ask') {
+          ctx.suppressAlwaysAllowRule = true;
+        }
+      }
+
       const requestId = 'r' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
       return await new Promise((resolve) => {
         const entry = {
@@ -789,8 +852,17 @@ class ChatManager extends EventEmitter {
     if (maxTokens > 0 && maxTokens !== u.maxTokens) {
       percentage = Math.max(0, Math.min(100, ((Number(u.totalTokens) || 0) / maxTokens) * 100));
     }
+    let categories = Array.isArray(u.categories) ? u.categories : [];
+    if (!categories.length && (Number(u.totalTokens) || 0) > 0) {
+      const used = Number(u.totalTokens) || 0;
+      const free = Math.max(0, maxTokens - used);
+      categories = [
+        { name: 'conversation', kind: 'used', tokens: used, color: '#3b82f6' },
+        { name: 'free', kind: 'free', tokens: free, color: 'transparent' },
+      ];
+    }
     // Diagnostic: keep both numbers so the UI can show declared vs engine.
-    return { ...u, maxTokens, percentage, declared, engineMaxTokens: u.maxTokens || 0 };
+    return { ...u, categories, maxTokens, percentage, declared, engineMaxTokens: u.maxTokens || 0 };
   }
 
   // File checkpointing: restore every tracked file to the state at a user
@@ -1164,16 +1236,16 @@ class ChatManager extends EventEmitter {
       // use of the tool for the session — one "yes" to `ls` would have allowed
       // `rm -rf`. The SDK documents updatedPermissions as the intended channel. #3
       if (entry.suppressAlwaysAllowRule) {
-        entry.resolve({ behavior: 'allow' });
+        entry.resolve({ behavior: 'allow', updatedInput: entry.input });
       } else if (entry.suggestions.length) {
-        entry.resolve({ behavior: 'allow', updatedPermissions: entry.suggestions });
+        entry.resolve({ behavior: 'allow', updatedInput: entry.input, updatedPermissions: entry.suggestions });
       } else {
         // No suggestions available: allow just this call rather than granting a
         // blanket rule. Safer default than the old behaviour.
-        entry.resolve({ behavior: 'allow' });
+        entry.resolve({ behavior: 'allow', updatedInput: entry.input });
       }
     } else if (decision === 'allow') {
-      entry.resolve({ behavior: 'allow' });
+      entry.resolve({ behavior: 'allow', updatedInput: entry.input });
     } else {
       // Fail closed: anything that is not a recognised decision (a typo, a
       // corrupted payload) must deny the tool call, never allow it.

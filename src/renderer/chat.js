@@ -2770,10 +2770,13 @@ const Chat = (() => {
       // Frames the UI previously ignored. Several are user-visible states the
       // desktop app shows: retry notices, rate limits, denials, and the next
       // prompt suggestions. #26
-      case 'tool_progress': onToolProgress(chat, msg); break;
+      case 'tool_progress':
+      case 'agent_progress':
+      case 'agent_progress_summary': onToolProgress(chat, msg); break;
       case 'api_retry': onApiRetry(chat, msg); break;
       case 'rate_limit': onRateLimit(chat, msg); break;
-      case 'prompt_suggestion': onPromptSuggestion(chat, msg); break;
+      case 'prompt_suggestion':
+      case 'prompt_suggestions': onPromptSuggestion(chat, msg); break;
       case 'permission_denied': onPermissionDenied(chat, msg); break;
       case 'session_state_changed': onSessionState(chat, msg); break;
       case 'commands_changed': onCommandsChanged(chat, msg); break;
@@ -2877,10 +2880,12 @@ const Chat = (() => {
   function onToolProgress(chat, msg) {
     const ctx = chat.tools.get(msg.tool_use_id);
     const secs = Math.round(Number(msg.elapsed_time_seconds) || 0);
+    const summary = msg.summary || msg.agent_progress || msg.status || '';
     if (ctx) {
       if (!ctx.statusEl) ctx.statusEl = el('span', 'tool-elapsed', '');
       ctx.card.querySelector('.tool-head').appendChild(ctx.statusEl);
-      ctx.statusEl.textContent = secs >= 1 ? secs + 's' : '';
+      const text = (summary ? summary + (secs >= 1 ? ' · ' : '') : '') + (secs >= 1 ? secs + 's' : '');
+      ctx.statusEl.textContent = text;
     } else if (chat.msgs && !chat.busy && !secs) {
       // ignore heartbeats for tools we no longer track
     }
@@ -2919,7 +2924,8 @@ const Chat = (() => {
   // prompt_suggestion: predicted next prompts, as clickable chips. #37
   function onPromptSuggestion(chat, msg) {
     const picks = Array.isArray(msg.suggestions) ? msg.suggestions
-      : (msg.prompt ? [msg.prompt] : []);
+      : (Array.isArray(msg.prompt_suggestions) ? msg.prompt_suggestions
+      : (msg.prompt ? [msg.prompt] : []));
     if (!picks.length) return;
     chat.suggestions?.remove();
     const row = el('div', 'chat-suggestions');
@@ -4286,7 +4292,9 @@ const Chat = (() => {
       done.addEventListener('click', () => answer('accept'));
       const no = el('button', 'btn danger', 'Decline');
       no.addEventListener('click', () => answer('decline'));
-      row.appendChild(open); row.appendChild(done); row.appendChild(no);
+      const cancel = el('button', 'btn ghost', 'Cancel');
+      cancel.addEventListener('click', () => answer('cancel'));
+      row.appendChild(open); row.appendChild(done); row.appendChild(no); row.appendChild(cancel);
       card.appendChild(row);
       if (evt.url) {
         const u = el('div', 'elic-url mono', evt.url.slice(0, 160));
@@ -4328,7 +4336,9 @@ const Chat = (() => {
       send.addEventListener('click', () => answer('accept'));
       const no = el('button', 'btn danger', 'Decline');
       no.addEventListener('click', () => answer('decline'));
-      row.appendChild(send); row.appendChild(no);
+      const cancel = el('button', 'btn ghost', 'Cancel');
+      cancel.addEventListener('click', () => answer('cancel'));
+      row.appendChild(send); row.appendChild(no); row.appendChild(cancel);
       card.appendChild(row);
       fill.addEventListener('input', () => {
         send.disabled = [...fill.querySelectorAll('[data-key]')].some(i =>
