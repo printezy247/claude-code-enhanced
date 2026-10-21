@@ -1190,6 +1190,7 @@ function renderTasks(target, cwd, only) {
       if (dupes.length) {
         const uniq = [...new Set(dupes)];
         connRows.appendChild(el('div', 'task-row hint', 'Duplicate tool names across connectors: ' + uniq.join(', ') + '. Prefer the server matching the task.'));
+      }
       for (const sv of servers) {
         const row = el('div', 'task-row hint conn-row');
         row.appendChild(el('span', 'st-dot st-' + String(sv.status || 'pending').replace(/[^a-z-]/g, '')));
