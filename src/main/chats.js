@@ -358,6 +358,14 @@ class ChatManager extends EventEmitter {
         options.tools = lean;
         options.disallowedTools = (settings.disallowedTools || []).map(String);
       }
+    } else {
+      // Auto-lean for small-context models: fewer tool schemas shrink the base
+      // prompt, which is the lever on the ~70K floor that blocks 3-4B models.
+      // #perf-tokens
+      const ctx = (typeof this.contextOf === 'function' && Number(this.contextOf(providerInstance, model))) || 0;
+      if (ctx > 0 && ctx < 131072) {
+        options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob'];
+      }
     }
     // Sandboxed command execution (claude code sandbox: Bubblewrap on Linux).
     if (settings && settings.sandbox && settings.sandbox.enabled) {
@@ -407,7 +415,7 @@ class ChatManager extends EventEmitter {
     // into the engine's system prompt, so connector tools stay available. #feat-cce-bootstrap
     // The capabilities are detected on disk, so the model is never told to use
     // a toolkit this machine does not have.
-    const bootstrap = await bootstrapPrompt();
+    const bootstrap = await bootstrapPrompt(dir);
     if (bootstrap) {
       options.systemPrompt = {
         type: 'preset',
@@ -421,7 +429,7 @@ class ChatManager extends EventEmitter {
     // items finish. Works with the object-form systemPrompt above — the SDK
     // only ignores appendSystemPrompt when systemPrompt is a plain string.
     // #todos-every-model
-    options.appendSystemPrompt = 'For any multi-step request, before starting: create a todo list with TodoWrite (or TaskCreate/TaskUpdate if those tools are available). Update the list when the user steers the request. Mark each item completed as soon as it finishes. When all items are finished, say the list is complete.';
+    options.appendSystemPrompt = 'For any multi-step request, before starting: create a todo list with TodoWrite (or TaskCreate/TaskUpdate if those tools are available). Example: TodoWrite with todos=[{content:"...",status:"pending"}]. Update the list when the user steers the request. Mark each item completed as soon as it finishes. When all items are finished, say the list is complete. Prefer the tool over prose checklists.';
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)
@@ -769,7 +777,15 @@ class ChatManager extends EventEmitter {
     const declared = (typeof this.contextOf === 'function' && Number(this.contextOf(provider, model))) || 0;
     let maxTokens = u.maxTokens || declared || ENGINE_DEFAULT_WINDOW;
     if (u.maxTokens === ENGINE_DEFAULT_WINDOW && declared > 0 && declared !== ENGINE_DEFAULT_WINDOW) maxTokens = declared;
-    return { ...u, maxTokens, declared };
+    // When the limit is overridden the engine's percentage (computed against
+    // its own number) is no longer truthful — recompute against the reported
+    // maxTokens so the meter and the rail agree. #context-exact
+    let percentage = u.percentage;
+    if (maxTokens > 0 && maxTokens !== u.maxTokens) {
+      percentage = Math.max(0, Math.min(100, ((Number(u.totalTokens) || 0) / maxTokens) * 100));
+    }
+    // Diagnostic: keep both numbers so the UI can show declared vs engine.
+    return { ...u, maxTokens, percentage, declared, engineMaxTokens: u.maxTokens || 0 };
   }
 
   // File checkpointing: restore every tracked file to the state at a user

@@ -341,6 +341,12 @@ const Chat = (() => {
         chat.todosEl.classList.add('hidden');
         if (typeof window.refreshTasksRail === 'function') window.refreshTasksRail(chat.id);
       }
+      // Seed a list from the prompt's own steps when the model has not produced
+      // one yet (and the current list is empty/finished). #todos-every-model
+      if (!chat.todosList.children.length) {
+        const seeded = seedTodosFromPrompt(text);
+        if (seeded) renderTodoItems(chat, seeded);
+      }
       appendUser(chat, text || '(image)');
       if (chat.busy) {
         chat.pendingMsgs.push(text);
@@ -865,7 +871,7 @@ const Chat = (() => {
       for (const m of r.models) {
         const id2 = m.value || m.id || m.name;
         if (!id2 || have.has(id2)) continue;
-        const o = el('option', '', m.displayName || m.label || id2 + (m.contextWindow ? ' · ' + Math.round(m.contextWindow / 1000) + 'K' : ''));
+        const o = el('option', '', m.displayName || m.label || id2 + (m.contextWindow ? ' · ' + (m.contextWindow >= 1000000 ? Math.round(m.contextWindow / 1000000) + 'M' : Math.round(m.contextWindow / 1000) + 'K') : ''));
         o.value = id2;
         group.appendChild(o);
         n++;
@@ -1651,6 +1657,9 @@ const Chat = (() => {
     pollContext(chat);
     chat.ctxTimer = setInterval(() => {
       if (!chat.alive) { stopContextPolling(chat); return; }
+      // Don't poll background/hidden tabs — keeps the meter fresh only for
+      // the tab the user is actually looking at. #perf-context
+      if (document.visibilityState !== 'visible') return;
       pollContext(chat);
     }, 5000);
   }
@@ -2559,7 +2568,14 @@ const Chat = (() => {
         if (items) {
           const seen = chat.parsedTodoUuids || (chat.parsedTodoUuids = new Set());
           const fresh = !msg.uuid || !seen.has(msg.uuid);
-          if (msg.uuid) seen.add(msg.uuid);
+          if (msg.uuid) {
+            seen.add(msg.uuid);
+            // Bound the dedup set so a long session cannot grow it forever.
+            if (seen.size > 500) {
+              const first = seen.values().next().value;
+              seen.delete(first);
+            }
+          }
           if (fresh) renderTodos(chat, { todos: items });
         }
         scrollDownSoft(chat);
@@ -3476,6 +3492,23 @@ const Chat = (() => {
    * checkboxes, so one stray checkbox in prose is not a list. Fenced code
    * blocks are stripped first so a diff snippet never becomes a todo.
    */
+  /** Seed a pending list from the user's own prompt steps (before the model
+   *  answers), so a todo drawer exists even for models that never call the
+   *  tools. Only triggers on ≥2 consecutive step lines. #todos-every-model */
+  function seedTodosFromPrompt(text) {
+    const lines = String(text || '').split('\n');
+    const items = [];
+    let run = [];
+    const flush = () => { if (run.length >= 2) items.push(...run); run = []; };
+    for (const line of lines) {
+      const m = line.match(/^\s*(?:\d+[.)]|[-*])\s+(.+)$/);
+      if (m && !/^\s*[-*] \[/.test(line)) run.push({ content: m[1].trim(), status: 'pending' });
+      else flush();
+    }
+    flush();
+    return items.length ? items : null;
+  }
+
   function parseTodoChecklist(text) {
     const stripped = String(text || '').replace(/```[\s\S]*?```/g, '');
     const lines = stripped.split('\n');

@@ -1178,6 +1178,11 @@ function renderTasks(target, cwd, only) {
         connRows.appendChild(el('div', 'task-row hint', 'no MCP servers in this session'));
         return;
       }
+      const connected = servers.filter((s) => s.status === 'connected');
+      if (connected.length >= 5) {
+        const hint = el('div', 'task-row hint', connected.length + ' connectors live — each adds MCP preamble to every turn. Disconnect unused ones in Providers.');
+        connRows.appendChild(hint);
+      }
       for (const sv of servers) {
         const row = el('div', 'task-row hint conn-row');
         row.appendChild(el('span', 'st-dot st-' + String(sv.status || 'pending').replace(/[^a-z-]/g, '')));

@@ -128,7 +128,7 @@ async function capabilities() {
  * The system-prompt append for a new chat. Empty when none of the toolkits
  * are installed, so the prompt stays clean on a bare machine.
  */
-async function promptAppend() {
+async function promptAppend(cwd) {
   const caps = await capabilities();
   const lines = ['CCE session bootstrap (always active):'];
   if (caps.caveman) {
@@ -145,6 +145,25 @@ async function promptAppend() {
   }
   lines.push('- Connectors: MCP servers attached to this session have full tool-calling access. '
     + 'Prefer their tools over shelling out.');
+  lines.push('- Method: for any code change, write a failing test first, then implement the smallest fix, then run the tests.');
+  if (cwd) {
+    try {
+      const pkgPath = path.join(cwd, 'package.json');
+      if (fs.existsSync(pkgPath)) {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+        const bits = [];
+        if (pkg.name) bits.push('name=' + pkg.name);
+        if (pkg.version) bits.push('version=' + pkg.version);
+        if (pkg.scripts && pkg.scripts.test) bits.push('test="' + pkg.scripts.test + '"');
+        if (bits.length) lines.push('- Project: ' + bits.join(', '));
+      }
+      const readmePath = path.join(cwd, 'README.md');
+      if (fs.existsSync(readmePath)) {
+        const txt = fs.readFileSync(readmePath, 'utf8').slice(0, 400).replace(/\\s+/g, ' ').trim();
+        if (txt) lines.push('- README (excerpt): ' + txt.slice(0, 240));
+      }
+    } catch { /* unreadable project */ }
+  }
   if (lines.length === 1) return '';
   return lines.join('\n');
 }
