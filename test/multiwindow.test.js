@@ -179,4 +179,28 @@ describe('multi-window', () => {
       && s.payload.id === 'cTear' && s.wcId === w2.webContents.id);
     expect(toW2.length, 'the dead chat’s frames were delivered to another window').toBe(0);
   });
+
+  it('raises the newest window when the owner is gone by the time it is clicked', async () => {
+    // The notification is raised for the window that OWNS the chat, but that
+    // window may be closed between the raise and the click. The click must
+    // then fall back to the newest window rather than doing nothing. #N1
+    const open = stub.__state.handlers.get('window:new');
+    await open(null, {});
+    await open(null, {});
+    const all = stub.__state.windows;
+    const owner = all[all.length - 2];
+    const newest = all[all.length - 1];
+    owner.blur();                    // the user is looking at another window
+    const show = vi.spyOn(newest, 'show');
+    windowRegistry.claim(owner.webContents.id, 'chats', 'cGoneWin');
+    stub.__state.notifications.length = 0;
+
+    main.chats.emit('event', 'cGoneWin', { kind: 'status', busy: false });
+    const notes = stub.__state.notifications;
+    expect(notes.length, 'no notification was raised').toBe(1);
+
+    owner.close();                   // the owner goes away before the click
+    notes[0].emit('click');
+    expect(show, 'the click raised no window at all').toHaveBeenCalled();
+  });
 });

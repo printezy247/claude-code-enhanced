@@ -1378,7 +1378,9 @@ function registerIpc() {
     try {
       const n = new Notification({ title, body });
       n.on('click', () => {
-        const w = target || win;
+        // The owning window may be gone by the time the notification is
+        // clicked: fall back to the newest window rather than doing nothing. #N1
+        const w = (target && !target.isDestroyed()) ? target : win;
         if (w && !w.isDestroyed()) w.show();
       });
       n.show();
