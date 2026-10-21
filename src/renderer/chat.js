@@ -2308,8 +2308,14 @@ const Chat = (() => {
       return true;
     }
     if (cmd === '/model') { openCustomModel(chat); return true; }
+    if (cmd === '/review') {
+      const focus = text.slice(cmd.length).trim();
+      chat.composer.value = 'Review the current changes' + (focus ? ' focusing on ' + focus : '') + ': run git diff, identify bugs, risks, missing tests, and style issues; report findings as a numbered list with file:line references.';
+      setTimeout(() => send(), 0);
+      return true;
+    }
     if (cmd === '/help') {
-      toast('Built-ins: /compact (summarize in place) · /handoff (brief → fresh session) · /clear (new session) · /cost · /model · /help — every other /command runs in the engine (skills, custom commands)', '');
+      toast('Built-ins: /compact · /handoff · /clear · /cost · /model · /review · /help — every other /command runs in the engine', '');
       return true;
     }
     return false; // engine-side command (skills, plugins, custom)
