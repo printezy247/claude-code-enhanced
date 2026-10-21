@@ -243,6 +243,11 @@ const Chat = (() => {
     chat.tabEl = tab;
 
     registerTab(id, { kind: 'chat', pane, tabEl: tab, sessionId: null, cwd: chat.cwd, focus: () => { if (chat.alive) chat.composer.focus(); } });
+    // Restore any draft left by a crash/refresh. #crash-recovery
+    try {
+      const d = localStorage.getItem('cce:draft:' + (chat.cwd || ''));
+      if (d) { chat.composer.value = d; autosize(chat.composer); }
+    } catch { /* ignore */ }
     // The nav badge counts every open tab, chat tabs included.
     if (typeof window.updateTabCount === 'function') window.updateTabCount();
 
@@ -331,6 +336,7 @@ const Chat = (() => {
       chat.follow = true;   // sending jumps back to the live end
       updateLatestBtn(chat);
       if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
+      try { localStorage.removeItem('cce:draft:' + (chat.cwd || '')); } catch { /* ignore */ }
       // Warn before sending into a nearly-full context window. #token-budget
       if (chat.ctxUsage && Number(chat.ctxUsage.percentage) >= 80) {
         toast('Context is ' + Number(chat.ctxUsage.percentage).toFixed(0) + '% full — consider /compact', 'warn');
@@ -433,6 +439,7 @@ const Chat = (() => {
     // @-mentions of project files
     chat.composer.addEventListener('input', async () => {
       autosize(chat.composer);
+      try { localStorage.setItem('cce:draft:' + (chat.cwd || ''), chat.composer.value); } catch { /* ignore */ }
       // maybeAt is async: un-awaited, its Promise was always truthy and the "/"
       // menu never opened.
       if (!(await maybeAt(chat))) maybeSlash(chat);
@@ -2647,6 +2654,16 @@ const Chat = (() => {
       case 'engine_notification': onEngineNotification(chat, msg); break;
       case 'result': {
         chat.lastResult = msg;
+        // Local-only observability: token-per-turn log for later analysis. #obs
+        try {
+          const u = msg.usage || {};
+          const entry = { t: Date.now(), chat: chat.id, in: u.input_tokens || 0, out: u.output_tokens || 0, cost: msg.total_cost_usd || 0 };
+          const key = 'cce:tokenlog';
+          const prev = JSON.parse(localStorage.getItem(key) || '[]');
+          prev.push(entry);
+          if (prev.length > 500) prev.splice(0, prev.length - 500);
+          localStorage.setItem(key, JSON.stringify(prev));
+        } catch { /* ignore */ }
         const metered = !chat.provider || !chat.provider.baseUrl;
         if (metered && typeof msg.total_cost_usd === 'number') chat.spent = (chat.spent || 0) + msg.total_cost_usd;
         setStatusLine(chat);
