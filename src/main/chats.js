@@ -415,7 +415,9 @@ class ChatManager extends EventEmitter {
     // into the engine's system prompt, so connector tools stay available. #feat-cce-bootstrap
     // The capabilities are detected on disk, so the model is never told to use
     // a toolkit this machine does not have.
-    const bootstrap = await bootstrapPrompt(dir);
+    // Minimal-prompt mode drops the bootstrap (skills/agents/project context)
+    // to shrink the base prompt for quick chats. #token-cost
+    const bootstrap = settings && settings.minimalPrompt ? '' : await bootstrapPrompt(dir);
     if (bootstrap) {
       options.systemPrompt = {
         type: 'preset',
@@ -429,7 +431,7 @@ class ChatManager extends EventEmitter {
     // items finish. Works with the object-form systemPrompt above — the SDK
     // only ignores appendSystemPrompt when systemPrompt is a plain string.
     // #todos-every-model
-    options.appendSystemPrompt = 'For any multi-step request, before starting: create a todo list with TodoWrite (or TaskCreate/TaskUpdate if those tools are available). Example: TodoWrite with todos=[{content:"...",status:"pending"}]. Update the list when the user steers the request. Mark each item completed as soon as it finishes. When all items are finished, say the list is complete. Prefer the tool over prose checklists.';
+    options.appendSystemPrompt = 'For any multi-step request, before starting: create a todo list with TodoWrite (or TaskCreate/TaskUpdate if those tools are available). Example: TodoWrite with todos=[{content:"...",status:"pending"}]. Update the list when the user steers the request. Mark each item completed as soon as it finishes. When all items are finished, say the list is complete. Prefer the tool over prose checklists. If two tools share a name, prefer the one whose server matches the task and read its description first.';
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)
