@@ -1,0 +1,21 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stryker-mutator/stryker-js/master/packages/core/schema/stryker-schema.json",
+  "comment": "Opt-in until stryker is added as a devDependency (plan forbids new deps in this batch). Install stryker, then `npx stryker run`. CI runs this only when stryker is present.",
+  "mutate": [
+    "src/main/providers.js",
+    "src/main/adapters.js",
+    "src/main/proxy.js",
+    "src/main/toolfilter.js"
+  ],
+  "testRunner": "vitest",
+  "vitest": {
+    "configFile": "vitest.config.mts"
+  },
+  "reporters": ["clear-text", "progress", "html"],
+  "coverageAnalysis": "perTest",
+  "thresholds": {
+    "high": 80,
+    "low": 60,
+    "break": 50
+  }
+}
