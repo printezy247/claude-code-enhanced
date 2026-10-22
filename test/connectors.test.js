@@ -290,3 +290,50 @@ describe('status', () => {
     expect(res.servers).toEqual([]);
   });
 });
+
+// The B8 review's five findings. Each one was a real defect: a tool that
+// arrives as an object never matched, an empty connector name was read as
+// "clear everything", asking for a status invented a connector record, the
+// alias methods were dead weight, and the module-level backoff could not be
+// reset.
+describe('connector tool picker — the review findings', () => {
+  it('matches a tool that arrives as an object', () => {
+    connectors.clearConnectorToolSelection('o1');
+    connectors.setActiveConnectorTools('o1', 'github', ['create_issue']);
+    // The engine hands tools over as { name, ... } objects, not bare strings.
+    expect(connectors.isConnectorToolActive('o1', 'github', { name: 'create_issue' })).toBe(true);
+    expect(connectors.isConnectorToolActive('o1', 'github', { name: 'list_repos' })).toBe(false);
+  });
+
+  it('clears only the named connector, and keeps the others', () => {
+    connectors.clearConnectorToolSelection('o2');
+    connectors.setActiveConnectorTools('o2', 'github', ['create_issue']);
+    connectors.setActiveConnectorTools('o2', 'linear', ['list_teams']);
+    connectors.clearConnectorToolSelection('o2', 'github');
+    expect(connectors.getActiveConnectorTools('o2', 'github')).toBeNull();
+    expect(connectors.getActiveConnectorTools('o2', 'linear')).toEqual(['list_teams']);
+  });
+
+  it('clears the whole session when no connector is named', () => {
+    connectors.clearConnectorToolSelection('o3');
+    connectors.setActiveConnectorTools('o3', 'github', ['create_issue']);
+    connectors.clearConnectorToolSelection('o3');
+    expect(connectors.getActiveConnectorTools('o3', 'github')).toBeNull();
+  });
+
+  it('does not invent a connector record when asked for a status', () => {
+    const b = new connectors.McpReconnectBackoff();
+    const before = b.all().length;
+    b.status('never-touched');
+    expect(b.all().length).toBe(before);
+  });
+
+  it('clears every connector backoff state at once', () => {
+    connectors.recordReconnectFailure('m1');
+    connectors.recordReconnectFailure('m2');
+    expect(connectors.reconnectStatus('m1').attempts).toBe(1);
+    connectors.clearReconnectBackoff();
+    expect(connectors.reconnectStatus('m1').attempts).toBe(0);
+    expect(connectors.reconnectStatus('m2').attempts).toBe(0);
+  });
+});

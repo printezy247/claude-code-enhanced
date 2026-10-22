@@ -341,15 +341,21 @@ function getActiveConnectorTools(sessionId, connector) {
 function isConnectorToolActive(sessionId, connector, tool) {
   const active = getActiveConnectorTools(sessionId, connector);
   if (active === null) return true; // no selection => all tools active
-  return active.includes(String(tool));
+  // A tool may arrive as an object ({ name: 'create_issue' }) or as a bare
+  // name. Comparing the object itself would never match the stored name, so
+  // every tool of the connector looked inactive.
+  const name = (tool && typeof tool === 'object') ? tool.name : tool;
+  return active.includes(String(name));
 }
 
 function clearConnectorToolSelection(sessionId, connector) {
   const sid = String(sessionId);
   const sel = connectorToolSelections.get(sid);
   if (!sel) return;
-  if (connector) delete sel[String(connector)];
-  else connectorToolSelections.delete(sid);
+  // "no connector" clears the whole session; an empty-string connector is a
+  // connector whose name happens to be empty and must be cleared on its own.
+  if (connector === undefined || connector === null) connectorToolSelections.delete(sid);
+  else delete sel[String(connector)];
 }
 
 // Return the subset of a connector's tools that are active for the session.
@@ -389,6 +395,11 @@ class McpReconnectBackoff {
     if (!this.entries.has(key)) this.entries.set(key, { attempts: 0, nextRetryAt: null, state: 'connected' });
     return this.entries.get(key);
   }
+  // A READ must not create an entry: asking a connector's status would
+  // otherwise leave a "connected" record for a connector nobody touched.
+  _peek(name) {
+    return this.entries.get(String(name)) || { attempts: 0, nextRetryAt: null, state: 'connected' };
+  }
   fail(name) {
     const e = this._entry(name);
     e.attempts += 1;
@@ -397,9 +408,6 @@ class McpReconnectBackoff {
     e.state = e.attempts >= this.maxAttempts ? 'failed' : 'reconnecting';
     return { name: String(name), attempts: e.attempts, delay, nextRetryAt: e.nextRetryAt, state: e.state };
   }
-  // Aliases matching common naming.
-  recordFailure(name) { return this.fail(name); }
-  onFailure(name) { return this.fail(name); }
   success(name) {
     const e = this._entry(name);
     e.attempts = 0;
@@ -407,22 +415,22 @@ class McpReconnectBackoff {
     e.state = 'connected';
     return { name: String(name), attempts: 0, delay: 0, nextRetryAt: null, state: 'connected' };
   }
-  recordSuccess(name) { return this.success(name); }
-  onSuccess(name) { return this.success(name); }
-  reset(name) { return this.success(name); }
   status(name) {
-    const e = this._entry(name);
+    const e = this._peek(name);
     return { name: String(name), attempts: e.attempts, nextRetryAt: e.nextRetryAt, state: e.state };
   }
-  get(name) { return this.status(name); }
   all() { return [...this.entries.keys()].map(n => this.status(n)); }
   clear(name) { this.entries.delete(String(name)); }
+  /** Forget every connector's backoff state (app restart, manual reset). */
+  clearAll() { this.entries.clear(); }
 }
 
 const reconnectBackoff = new McpReconnectBackoff();
 function recordReconnectFailure(name) { return reconnectBackoff.fail(name); }
 function recordReconnectSuccess(name) { return reconnectBackoff.success(name); }
 function reconnectStatus(name) { return reconnectBackoff.status(name); }
+/** Clear the module-level backoff state for every connector. */
+function clearReconnectBackoff() { reconnectBackoff.clearAll(); }
 
 module.exports = {
   PRESETS, add, addCustom, remove, list, status, parseMcpList, parseMcpGet, normalizeHeader,
@@ -432,6 +440,6 @@ module.exports = {
   clearConnectorToolSelection, connectorToolSelections, activeConnectorToolList,
   // C6 reconnect backoff
   McpReconnectBackoff, reconnectBackoff, reconnectDelay, recordReconnectFailure,
-  recordReconnectSuccess, reconnectStatus, RECONNECT_BASE_DELAY_MS, RECONNECT_MAX_DELAY_MS,
-  RECONNECT_MAX_ATTEMPTS,
+  recordReconnectSuccess, reconnectStatus, clearReconnectBackoff,
+  RECONNECT_BASE_DELAY_MS, RECONNECT_MAX_DELAY_MS, RECONNECT_MAX_ATTEMPTS,
 };
