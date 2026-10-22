@@ -2776,6 +2776,17 @@ const Chat = (() => {
       return node;
     };
 
+    msgs.removeChild = function(node) {
+      const idx = chat._allNodes.indexOf(node);
+      if (idx !== -1) {
+        chat._allNodes.splice(idx, 1);
+        if (chat._winEnd > chat._allNodes.length) chat._winEnd = chat._allNodes.length;
+        chat._renderedStart = chat._winStart;
+        chat._renderedEnd = chat._winEnd;
+      }
+      return origRemove(node);
+    };
+
     msgs.addEventListener('scroll', () => {
       if (chat._allNodes.length === 0 || chat._virtLoading) return;
       const total = chat._allNodes.length;
@@ -3037,8 +3048,8 @@ const Chat = (() => {
             // Already drawn under this exact uuid (the engine replays a turn
             // after a reconnect). Drop it rather than draw the prompt twice —
             // matching by uuid, not by text, so two identical prompts are safe.
-            const drawn = [...chat.msgs.querySelectorAll('[data-uuid]')]
-              .some(n => n.dataset.uuid === msg.uuid);
+            const allNodes = chat._allNodes && chat._allNodes.length ? chat._allNodes : [...chat.msgs.children];
+            const drawn = allNodes.some(n => n.dataset && n.dataset.uuid === msg.uuid);
             // Command output, the caveat note and the compaction summary are
             // recorded as user messages too; they are not prompts.
             const kind = window.CCEUserText ? CCEUserText.classifyUserText(t, msg) : { kind: 'prompt', text: t };
@@ -3049,10 +3060,17 @@ const Chat = (() => {
               // The composer already showed this message when it was sent; the
               // engine's replay only adds the uuid. Swap it in place instead of
               // drawing the message twice.
-              const sent = [...chat.msgs.querySelectorAll('.msg.user-msg')]
-                .find(n => !n.dataset.uuid && (n.dataset.text === String(t).trim() || n.dataset.text === kind.text));
+              const sent = allNodes.find(n => n.classList && n.classList.contains('user-msg') && !n.dataset.uuid && (n.dataset.text === String(t).trim() || n.dataset.text === kind.text));
               const fresh = appendUser(chat, kind.text, msg.uuid);
-              if (sent) sent.replaceWith(fresh);
+              if (sent) {
+                if (sent.parentNode === chat.msgs) sent.replaceWith(fresh);
+                if (chat._allNodes) {
+                  const idx = chat._allNodes.indexOf(sent);
+                  if (idx !== -1) chat._allNodes[idx] = fresh;
+                  const freshIdx = chat._allNodes.lastIndexOf(fresh);
+                  if (freshIdx !== -1 && freshIdx !== idx) chat._allNodes.splice(freshIdx, 1);
+                }
+              }
             }
           }
         }

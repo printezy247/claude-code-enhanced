@@ -59,8 +59,11 @@ function parseProposals(text) {
   return out;
 }
 
+const { atomicWriteJson, readJsonSafe } = require('./atomic');
+
 function readJson(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
+  const data = readJsonSafe(file);
+  return (data !== undefined && data !== null) ? data : fallback;
 }
 
 const listPending = (cwd) => readJson(pendingFile(cwd), []);
@@ -72,7 +75,7 @@ function addPending(cwd, proposals) {
   const fresh = (proposals || []).filter((p) => !fs.existsSync(path.join(dir, p.slug + '.md')) && !have.some((h) => h.slug === p.slug));
   if (!fresh.length) return 0;
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(pendingFile(cwd), JSON.stringify(have.concat(fresh), null, 2));
+  atomicWriteJson(pendingFile(cwd), have.concat(fresh));
   return fresh.length;
 }
 
@@ -81,7 +84,7 @@ function resolve(cwd, slug, accept) {
   const have = listPending(cwd);
   const p = have.find((h) => h.slug === slug);
   if (!p) return { saved: false, missing: true };
-  fs.writeFileSync(pendingFile(cwd), JSON.stringify(have.filter((h) => h !== p), null, 2));
+  atomicWriteJson(pendingFile(cwd), have.filter((h) => h !== p));
   if (!accept) return { saved: false };
   const dir = memDir(cwd);
   const file = path.join(dir, p.slug + '.md');

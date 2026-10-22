@@ -2,6 +2,21 @@
 
 All notable changes to Claude Code Enhanced will be documented in this file.
 
+## [0.9.39] - 2026-10-22
+
+### Fixed & Improved
+- **Security & Navigation Sandboxing**:
+  - Hardened Electron `will-navigate` handler to strictly confine local `file://` navigations within `rendererDir`, preventing arbitrary file URL escapes (`src/main/main.js`).
+  - Added safe error wrapping in `setWindowOpenHandler` to reject malformed external URLs.
+  - Re-anchored renderer root path resolution to module initialization to prevent TDZ scope issues.
+- **Reliability & Transcript Virtualization**:
+  - Synchronized `msgs.removeChild` in chat virtualization to keep `_allNodes` and virtualized window bounds consistent with the DOM (`src/renderer/chat.js`).
+  - Corrected user message reconciliation during engine reconnection replays to search across all virtualized nodes (`_allNodes`), preventing prompt duplication.
+- **Stability & Model Cache Management**:
+  - Automatically invalidate proxy fallback cache (`clearLastGoodModel`) upon explicit user model selection (`src/main/chats.js`).
+- **Crash-Safe Persistence**:
+  - Converted pending auto-memory proposals to atomic writes (`atomicWriteJson`) and safe parsing (`readJsonSafe`), preventing file corruption on abrupt system interruptions (`src/main/automemory.js`).
+
 ## [0.9.38] - 2026-10-22
 
 ### Added
