@@ -90,6 +90,8 @@ function refreshSecretCache() {
   }
 }
 function secretFor(uid) { return secretCache.get(uid) || {}; }
+// providers.ensureFreshAuth rebuilds the cache after a successful refresh.
+providers.setRefreshSecretCache(refreshSecretCache);
 
 // OAuth flows in flight, keyed by a short session id handed to the renderer.
 const oauthSessions = new Map();
@@ -109,64 +111,15 @@ const oauthReaper = setInterval(() => {
   }
 }, 60 * 1000);
 oauthReaper.unref();
-
 /**
- * Refresh an OAuth provider's token if it is expired (or about to). Copilot
- * short-lived tokens are re-minted from the long-lived GitHub token.
+ * Refresh an OAuth provider's token if it is expired (or about to).
+ *
+ * The implementation lives in providers.js -- ONE copy, so the retry, the
+ * backoff and the authExpired flag cannot drift between two copies. This
+ * only injects the main-process dependencies.
  */
 async function ensureFreshAuth(inst) {
-  if (!inst) return;
-  const rec = auth.get(inst.uid);
-  if (!rec || rec.type !== 'oauth') return;
-  const soon = rec.expires && rec.expires - Date.now() < 120_000;
-  if (!soon && !rec.expired) return;
-  const entry = providers.entryFor(inst) || {};
-  const cfg = entry.oauth || {};
-  
-  const doRefresh = async () => {
-    if (cfg.exchange === 'copilot' || (rec.meta && rec.meta.copilot)) {
-      return await oauth.refreshCopilot(rec.refresh);
-    } else if (rec.refresh && cfg.tokenUrl) {
-      return await oauth.refreshTokens(cfg, rec.refresh);
-    }
-    return null;
-  };
-
-  try {
-    let tokens = await doRefresh();
-    if (!tokens) return;
-    auth.setOAuth(inst.uid, {
-      access: tokens.access,
-      refresh: tokens.refresh || rec.refresh,
-      expires: tokens.expires,
-      meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
-    });
-    inst.authExpired = false;
-    refreshSecretCache();
-  } catch (err) {
-    // Retry once with a brief backoff
-    try {
-      await new Promise(r => setTimeout(r, 600));
-      const tokens = await doRefresh();
-      if (tokens) {
-        auth.setOAuth(inst.uid, {
-          access: tokens.access,
-          refresh: tokens.refresh || rec.refresh,
-          expires: tokens.expires,
-          meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
-        });
-        inst.authExpired = false;
-        refreshSecretCache();
-        return;
-      }
-    } catch { /* second attempt failed */ }
-
-    console.error('[auth] refresh failed for ' + inst.name + ':', String((err && err.message) || err));
-    inst.authExpired = true;
-    if (rec.expires && rec.expires < Date.now()) {
-      auth.setOAuth(inst.uid, { ...rec, meta: { ...(rec.meta || {}), expired: true } });
-    }
-  }
+  return providers.ensureFreshAuth(inst, { auth, oauth, refreshSecretCache });
 }
 
 /**

@@ -10,10 +10,14 @@
 const crypto = require('crypto');
 const catalog = require('./catalog');
 const modelsdev = require('./modelsdev');
+const oauth = require('./oauth');
 
 let authRef = null;
 /** Wire the AuthStore so instances can resolve their secrets. */
 function useAuth(auth) { authRef = auth; }
+let refreshSecretCacheFn = null;
+/** Wire the main-process refreshSecretCache so ensureFreshAuth can rebuild the proxy cache. */
+function setRefreshSecretCache(fn) { refreshSecretCacheFn = fn; }
 
 function newUid() { return crypto.randomBytes(6).toString('hex'); }
 
@@ -47,14 +51,25 @@ function ensureDefaults(store) {
 function normalizeBaseUrl(baseUrl, protocol) {
   let b = String(baseUrl || '').trim();
   if (!b) return '';
+  // Reject non-http(s) schemes outright.
+  if (/^[a-z][a-z0-9+.\-]*:/i.test(b) && !/^https?:\/\//i.test(b)) return '';
   b = b.replace(/\/+$/, '');
   if (!/^https?:\/\//i.test(b)) {
     b = (/^(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?$/i.test(b) ? 'http://' : 'https://') + b;
   }
-  if ((protocol || 'openai') === 'openai') {
-    if (/api\.openai\.com$/i.test(b)) b += '/v1';
-    else if (/openrouter\.ai\/api$/i.test(b)) b += '/v1';
-    else if (/api\.groq\.com\/openai$/i.test(b)) b += '/v1';
+  const proto = protocol || 'openai';
+  const local = /^(https?:\/\/)?(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?(\/|$)/i.test(b);
+  if (proto === 'openai' && !local && !/\/v1$/i.test(b)) {
+    // Curated hosts that need the segment added even though they carry a path.
+    if (/api\.openai\.com$/i.test(b) || /openrouter\.ai\/api$/i.test(b) || /api\.groq\.com\/openai$/i.test(b)) {
+      b += '/v1';
+    } else {
+      // Bare host or host with no real path: ensure /v1.
+      try {
+        const u = new URL(b);
+        if (u.pathname === '/' || u.pathname === '') b += '/v1';
+      } catch { /* leave as-is */ }
+    }
   }
   return b;
 }
@@ -76,6 +91,7 @@ function makeInstance(entry, values = {}) {
     placeholders: entry.baseUrlTemplate ? placeholders : undefined,
     model: values.model || entry.defaultModel || '',
     smallFastModel: values.smallFastModel || entry.defaultSmall || '',
+    envVar: (values.envVar !== undefined) ? values.envVar : (entry.envVar || null),
     models: values.models ? values.models.slice() : (entry.recommendedModels || []).slice(), blacklist: [], whitelist: [],
     envExtras: {}, headers: {},
     leanTools: null,
@@ -104,19 +120,33 @@ function entryFor(instance) {
  * @param {object} [auth] the auth store (injected so tests can drive it)
  * @param {object} [env] the environment to read (defaults to process.env)
  */
+function envVarNames(instance) {
+  if (!instance) return [];
+  const entry = entryFor(instance) || {};
+  // The models.dev id is not always the catalog id (the kimi preset is
+  // moonshotai on models.dev), so the entry's own modelsDevId wins; the
+  // preset id is only the last resort.
+  const mdId = instance.modelsDevId || entry.modelsDevId || instance.presetId;
+  const md = modelsdev.get(mdId);
+  const names = [
+    // An env var the user named explicitly is taken at face value.
+    instance.envVar,
+    entry.envVar,
+    // The discovered lists are filtered: models.dev mixes configuration
+    // values (AZURE_RESOURCE_NAME, GOOGLE_VERTEX_PROJECT) in with the secret,
+    // and one of those sent as a bearer token looks like a bad key.
+    ...catalog.secretEnvNames(entry.env),
+    ...catalog.secretEnvNames(md && md.env),
+  ].filter(Boolean);
+  return [...new Set(names)];
+}
+
 function resolveApiKey(instance, auth, env) {
   const store = auth || authRef;
   const fromStore = store ? store.resolve(instance.uid) : {};
   if (fromStore.apiKey) return fromStore.apiKey;
   if (fromStore.authToken) return '';
-  const entry = entryFor(instance) || {};
-  const md = modelsdev.get(instance && (instance.presetId || instance.modelsDevId || entry.modelsDevId));
-  const names = [
-    instance && instance.envVar,
-    entry.envVar,
-    ...(Array.isArray(entry.env) ? entry.env : []),
-    ...(md && Array.isArray(md.env) ? md.env : []),
-  ].filter(Boolean);
+  const names = envVarNames(instance);
   if (!names.length) return '';
   const source = env || process.env;
   for (const name of names) {
@@ -182,10 +212,10 @@ function publicInstance(p) {
     keyHeader: p.keyHeader || entry.keyHeader || 'bearer',
     placeholders: p.placeholders || undefined,
     modelsDevId: entry.modelsDevId || entry.id || p.presetId,
-    envVar: entry.envVar || null,
+    envVar: p.envVar || entry.envVar || null,
     docsUrl: entry.docsUrl || '',
     model: p.model || '',
-    smallFastModel: p.smallFastModel || '',
+    smallFastModel: p.smallFastModel || entry.defaultSmall || '',
     options: p.options || {},
     headers: p.headers || {},
     models: Array.isArray(p.models) ? p.models : [],
@@ -202,7 +232,7 @@ function publicInstance(p) {
     authType: auth.type || null,
     authHint: auth.hint || '',
     authExpires: auth.expires || 0,
-    authExpired: !!auth.expired || !!(auth.expires && auth.expires < Date.now()),
+    authExpired: !!auth.expired || !!p.authExpired || !!(auth.expires && auth.expires < Date.now()),
   };
 }
 
@@ -210,6 +240,10 @@ function publicInstance(p) {
 function migrateUrls(store) {
   let changed = false;
   for (const p of store.providers) {
+    // General normalization: strip trailing slash, ensure scheme, add /v1 for
+    // openai-compat providers that are missing it. Idempotent.
+    const norm = normalizeBaseUrl(p.baseUrl, p.protocol);
+    if (norm && norm !== p.baseUrl) { p.baseUrl = norm; changed = true; }
     // NaraRouter shipped a dead domain; the live API is router.bynara.id.
     if (p.presetId === 'nararouter' && /nararouter\.com/.test(p.baseUrl || '')) {
       p.baseUrl = 'https://router.bynara.id/v1';
@@ -318,6 +352,38 @@ function keyUrlMismatch(baseUrl, key) {
     }
   }
 
+  // Trailing slash or double slash in the base URL
+  const hasTrailingSlash = /\/$/.test(base);
+  const hasDoubleSlash = /\/\/[^/]/.test(base.replace(/^https?:\/\//i, ''));
+  if (hasTrailingSlash || hasDoubleSlash) {
+    return 'The base URL has a trailing slash or a double slash (' + base + '). Remove the extra slash so requests resolve to the right path.';
+  }
+
+  // OpenAI-style base URL missing the /v1 path segment (Azure uses /openai/deployments, not /v1)
+  if (/openai\.com|openrouter|groq|deepseek/i.test(base) && !/\/v1(\/|$)/i.test(base)) {
+    return 'The base URL is missing the /v1 path segment (' + base + '). Add /v1, e.g. ' + base.replace(/\/+$/, '') + '/v1.';
+  }
+
+  // Google key passed as a query parameter instead of a header
+  if (/[\?&]key=/i.test(base)) {
+    return 'A Google API key must be sent as a header (Authorization: Bearer or x-goog-api-key), not as a ?key= query parameter. Remove ?key= from the base URL.';
+  }
+
+  // Azure resource missing deployments
+  if (/openai\.azure\.com/i.test(base) && !/deployments/i.test(base)) {
+    return 'Azure OpenAI endpoints require a deployment path, e.g. https://<resource>.openai.azure.com/openai/deployments/<deployment>.';
+  }
+
+  // Azure base URL whose resource name does not match the key
+  if (/openai\.azure\.com/i.test(base) && /deployments/i.test(base)) {
+    const m = base.match(/https?:\/\/([^.]+)\.openai\.azure\.com/i);
+    const resource = m ? m[1] : '';
+    const azureKeyShape = /^[0-9a-f]{32}$/i.test(k);
+    if (resource && !azureKeyShape) {
+      return 'The Azure resource name in the base URL (' + resource + ') does not match the key. Use the API key from the same Azure resource.';
+    }
+  }
+
   // Anthropic key on non-Anthropic OpenAI-style host
   if (/^sk-ant-/i.test(k) && /api\.openai\.com|azure\.com|groq\.com|deepseek\.com/i.test(base)) {
     return 'This appears to be an Anthropic API key (sk-ant-…), but the provider URL points to ' + base + '. '
@@ -334,11 +400,6 @@ function keyUrlMismatch(baseUrl, key) {
   if (/^AIzaSy/i.test(k) && /api\.openai\.com|api\.anthropic\.com/i.test(base)) {
     return 'This appears to be a Google API key (AIzaSy…), but the provider is pointed at an Anthropic or OpenAI host. '
       + 'Connect Google AI Studio via Providers → Connect or set the base URL to https://generativelanguage.googleapis.com.';
-  }
-
-  // Azure resource missing deployments
-  if (/openai\.azure\.com/i.test(base) && !/deployments/i.test(base)) {
-    return 'Azure OpenAI endpoints require a deployment path, e.g. https://<resource>.openai.azure.com/openai/deployments/<deployment>.';
   }
 
   return '';
@@ -373,10 +434,82 @@ function chatModelFor(instance, picked) {
   return (instance.whitelist && instance.whitelist[0]) || (instance.models && instance.models[0]) || '';
 }
 
+/**
+ * Refresh an OAuth provider's token if it is expired (or about to). Copilot
+ * short-lived tokens are re-minted from the long-lived GitHub token. A failed
+ * refresh is retried once with backoff; it never throws, marks the provider
+ * `authExpired`, and leaves a still-valid stored token untouched.
+ */
+async function ensureFreshAuth(inst, authOrDeps, oauthModOverride) {
+  let auth = authOrDeps;
+  let oauthMod = oauthModOverride;
+  let refreshSecretCache = refreshSecretCacheFn;
+  if (authOrDeps && typeof authOrDeps.get !== 'function') {
+    const deps = authOrDeps || {};
+    auth = deps.auth || authRef;
+    oauthMod = deps.oauth || oauthMod;
+    if (typeof deps.refreshSecretCache === 'function') refreshSecretCache = deps.refreshSecretCache;
+  }
+  auth = auth || authRef;
+  oauthMod = oauthMod || oauth;
+  if (!inst) return;
+  const rec = auth ? auth.get(inst.uid) : null;
+  if (!rec || rec.type !== 'oauth') return;
+  const soon = !!(rec.expires && rec.expires - Date.now() < 120_000);
+  if (!soon && !rec.expired) return;
+  const entry = entryFor(inst) || {};
+  const cfg = entry.oauth || {};
+
+  const doRefresh = async () => {
+    if (cfg.exchange === 'copilot' || (rec.meta && rec.meta.copilot)) {
+      return await oauthMod.refreshCopilot(rec.refresh);
+    } else if (rec.refresh && cfg.tokenUrl) {
+      return await oauthMod.refreshTokens(cfg, rec.refresh);
+    }
+    return null;
+  };
+
+  try {
+    const tokens = await doRefresh();
+    if (!tokens) return;
+    auth.setOAuth(inst.uid, {
+      access: tokens.access,
+      refresh: tokens.refresh || rec.refresh,
+      expires: tokens.expires,
+      meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
+    });
+    inst.authExpired = false;
+    if (typeof refreshSecretCache === 'function') refreshSecretCache();
+  } catch (err) {
+    // Retry once with a brief backoff.
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 600));
+      const tokens = await doRefresh();
+      if (tokens) {
+        auth.setOAuth(inst.uid, {
+          access: tokens.access,
+          refresh: tokens.refresh || rec.refresh,
+          expires: tokens.expires,
+          meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
+        });
+        inst.authExpired = false;
+        if (typeof refreshSecretCache === 'function') refreshSecretCache();
+        return;
+      }
+    } catch { /* second attempt failed */ }
+
+    console.error('[auth] refresh failed for ' + (inst.name || inst.uid) + ':', String((err && err.message) || err));
+    inst.authExpired = true;
+    if (rec.expires && rec.expires < Date.now()) {
+      auth.setOAuth(inst.uid, { ...rec, meta: { ...(rec.meta || {}), expired: true } });
+    }
+  }
+}
+
 module.exports = {
   normalizeModelFields, chatModelFor,
   keyUrlMismatch, normalizeBaseUrl,
   PRESETS, ensureDefaults, envFor, publicInstance, newUid,
   useAuth, catalogEntries, makeInstance, entryFor, resolveApiKey,
-  migrateUrls, migrateModels,
+  envVarNames, ensureFreshAuth, setRefreshSecretCache, migrateUrls, migrateModels,
 };
