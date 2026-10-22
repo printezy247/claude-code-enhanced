@@ -285,8 +285,34 @@ function paintConvoTabs(pinned, openIds) {
 }
 function collapsedFolders() { return new Set(lsGet('cce.convoCollapsed', [])); }
 
-function renderConversationList() {
-  // Async data can land after the window is gone; bail out instead of throwing.
+// A search token: a later search wins over an earlier one that is still
+// running, so a fast typist never sees the answer to an old query.
+let convoSearchToken = 0;
+
+/**
+ * Search the stored transcripts for text the conversation list does not
+ * know about. The main process does the scan on a worker thread.
+ */
+async function searchTranscripts(query, foot) {
+  if (!foot) return;
+  const token = ++convoSearchToken;
+  const before = foot.textContent;
+  foot.textContent = 'Searching the stored transcripts…';
+  try {
+    const res = await ccx.invoke('chats:search', { query, limit: 50 });
+    // A newer search started, or the list was re-rendered: drop this answer.
+    if (token !== convoSearchToken) return;
+    const n = Number((res && res.count) || 0);
+    foot.textContent = n
+      ? n + ' transcript ' + (n === 1 ? 'entry' : 'entries') + ' mention "' + query + '"'
+      : (before || 'Nothing matches.');
+  } catch {
+    if (token !== convoSearchToken) return;
+    foot.textContent = before || 'Nothing matches.';
+  }
+}
+
+function renderConversationList() {  // Async data can land after the window is gone; bail out instead of throwing.
   if (typeof document === 'undefined') return;
   const root = document.querySelector('#convo-drop #convo-list');
   if (!root) return;
@@ -327,6 +353,10 @@ function renderConversationList() {
     const empty = { pinned: 'Nothing pinned — use ▾ → Pin on a conversation you come back to.',
       open: 'No open conversations.', archived: 'Nothing archived.' }[view];
     root.appendChild(el('div', 'convo-empty hint', q || folder ? 'Nothing matches.' : (empty || 'No conversations yet.')));
+    // The list only knows the previews. When a search finds nothing there,
+    // the stored transcripts are searched too — on a worker thread in the
+    // main process, so a big history does not freeze the window. #t0-workers
+    if (q && q.length >= 3 && !folder) searchTranscripts(q, foot);
     return;
   }
 

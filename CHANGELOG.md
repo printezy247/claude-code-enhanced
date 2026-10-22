@@ -2,6 +2,62 @@
 
 All notable changes to Claude Code Enhanced will be documented in this file.
 
+## [0.9.40] - 2026-10-22
+
+Parity with **Claude Desktop 3.1623.3** (deb sha256 `851be2cc…`, app.asar
+sha256 `840551c1…`), reviewed with REA 6.7.0 (evidence
+`ev_dc6120b6da000401010742fbff63c0d6646f6e6f0f1d12d390e147d4990fd360`).
+The full review and the gap list: `docs/claude-desktop-3.1623.3-parity.md`.
+
+### Added
+- **The host-side MCP client** (`src/main/mcpclient.js`): HTTP and SSE
+  transports, an OAuth 2.1 device-code flow, a one-shot tool call and an
+  `McpAuthError` for a 401. No new dependency — Node's `fetch` and the
+  existing SSE reader. The desktop can hold an MCP connection in the host;
+  CCE now can too (stdio stays with the CLI).
+- **The connector policy track** (`src/main/tools.js`): a fourth state,
+  `always_ask_session` — the user is asked once and the answer holds for the
+  rest of the chat, and the grant dies with the chat. The track is separate
+  from the session permission mode, and a destructive connector tool always
+  needs a confirmation.
+- **The managed policy file** (`src/main/managedconfig.js`):
+  `managed-settings.json` (or `CLAUDE_CODE_MANAGED_SETTINGS_PATH`) is read
+  and handed to the engine, so a managed workstation no longer runs the GUI
+  unmanaged.
+- **20 more SDK options** (`src/main/sdkoptions.js`), each behind a settings
+  row: scoped MCP servers (`mcpServers` + `strictMcpConfig`), subagent
+  definitions, the task budget, the plan-mode instructions, the tool
+  aliases, the session mirror, the per-task stop, the plugin delivery, the
+  user dialog, the project config root.
+- **The git surface** (`src/main/gitsurface.js`): the diff, the diff stats,
+  the commit list, one commit's patch and a cached status — the desktop's
+  side panel.
+- **The plugin manager** (`src/main/plugins.js`): a DXT/MCPB archive is
+  checked (manifest, then signature) before anything is installed or
+  registered with the CLI. A plugin that cannot be verified is not run.
+- **The skills manager** (`src/main/skilltoggle.js`): list, read, enable and
+  re-scan the skills on disk, next to the existing toggle.
+- **The transcript search** (`chats:search`): a full-text search over the
+  stored transcripts, on a worker thread.
+
+### Fixed
+- `session:subagents` was handled in the main process but blocked by the
+  preload allowlist, so the renderer could never call it. The preload↔main
+  channel sets are now checked in **both** directions by a test.
+- The tool deny list only applied in lean mode: a blocked tool was allowed
+  in the normal mode. It now applies in every mode.
+- A credential in a connector URL was printed on the permission card. The
+  secret parts of a URL are now masked before they reach the screen
+  (`src/shared/secrets.js`).
+- The file browser walked the tree synchronously in the main process, which
+  froze the window on a big folder. The walk now runs on the worker thread
+  that existed but was never called.
+
+### Changed
+- The Agent SDK moved from 0.3.303 to **0.3.308** — the version the desktop
+  ships. No new capability (the option key set the desktop uses was already
+  accepted), but the options CCE relies on are now typed.
+
 ## [0.9.39] - 2026-10-22
 
 ### Fixed & Improved

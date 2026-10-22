@@ -13,6 +13,8 @@ const providers = require('./providers');
 const { promptAppend: bootstrapPrompt, syncedSkillsPlugin } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { compactBashOutput, compactToolOutput, toolResultText, clampMaxChars } = require('./toolfilter');
+const managedconfig = require('./managedconfig');
+const sdkoptions = require('./sdkoptions');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
@@ -277,6 +279,86 @@ class ChatManager extends EventEmitter {
     return [...this.pendingPerms.values()].filter(e => e.chatId === chatId);
   }
 
+  /**
+   * The tools the user already approved for this chat ('always_ask_session').
+   * The grant lives on the chat, so it ends with the chat and never leaks
+   * into the next one.
+   */
+  _sessionGrants(chatId) {
+    const chat = this.chats.get(chatId);
+    if (!chat) return null;
+    if (!chat.sessionGrants) chat.sessionGrants = new Set();
+    return chat.sessionGrants;
+  }
+
+  _hasSessionGrant(chatId, toolName) {
+    const grants = this._sessionGrants(chatId);
+    return !!grants && grants.has(String(toolName));
+  }
+
+  _grantSession(chatId, toolName) {
+    const grants = this._sessionGrants(chatId);
+    if (grants) grants.add(String(toolName));
+  }
+
+  /**
+   * A dialog the CLI asks the host to render (`request_user_dialog`).
+   *
+   * Only the kinds CCE declares are answered. An undeclared kind must NOT be
+   * answered with {behavior:'cancelled'}: that is a real settlement which
+   * counts as the user dismissing the dialog. Returning null leaves it
+   * unanswered, and the CLI cancels it when its own deadline passes. #t1
+   */
+  async _userDialog(chatId, request, ctx = {}) {
+    const kind = String((request && request.dialog_kind) || '');
+    if (kind !== 'refusal_fallback_prompt') return null;
+    if (ctx.signal && ctx.signal.aborted) return null;
+    const payload = (request && request.payload) || {};
+    const content = String(payload.content || payload.text || payload.message || '');
+    const requestId = 'd' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
+    const answer = await new Promise((resolve) => {
+      const entry = {
+        chatId, requestId, resolve,
+        timer: setTimeout(() => {
+          this._dropElicit(requestId);
+          this.emit('event', chatId, { kind: 'elicitation-cleared', requestId, reason: 'timeout' });
+          resolve({ action: 'decline' });
+        }, PERM_TIMEOUT_MS),
+      };
+      this.pendingElicits.set(requestId, entry);
+      ctx.signal && ctx.signal.addEventListener && ctx.signal.addEventListener('abort', () => {
+        if (!this._dropElicit(requestId)) return;
+        this.emit('event', chatId, { kind: 'elicitation-cleared', requestId, reason: 'interrupted' });
+        resolve({ action: 'cancel' });
+      }, { once: true });
+      this.emit('event', chatId, {
+        kind: 'elicitation', requestId,
+        serverName: 'claude', message: content,
+        mode: 'form', url: '', elicitationId: '',
+        requestedSchema: {
+          type: 'object',
+          properties: { content: { type: 'string', title: 'Your answer' } },
+          required: ['content'],
+        },
+        title: 'Claude needs your input',
+        displayName: 'Claude needs your input',
+        description: 'The model refused this prompt. Send a new one, or let it continue.',
+        expiresAt: Date.now() + PERM_TIMEOUT_MS,
+      });
+    });
+    if (!answer || answer.action !== 'accept') return { behavior: 'deny' };
+    const text = String((answer.content && answer.content.content) || content || '');
+    // The exact result shape for this kind is not published in the SDK types;
+    // the CLI only checks that the result carries a `behavior`. Extra keys are
+    // ignored, so the text travels under every name the CLI looks for.
+    return {
+      behavior: 'allow',
+      content: text,
+      updatedInput: { content: text, text, prompt: text },
+      refusal_fallback: { content: text },
+    };
+  }
+
   async create({ cwd, providerInstance, settings, model, permissionMode, yolo, resume, resumeAt, claudePath, fork, anthropicBaseUrl }) {
     const { query } = await this.sdk();
     const opts_fork = !!fork;
@@ -362,6 +444,12 @@ class ChatManager extends EventEmitter {
     // SDK branches history; `resumeSessionAt` is the message anchor. #30
     if (resumeAt) options.resumeSessionAt = String(resumeAt);
     if (opts_fork) options.forkSession = true;   // branch from a session without touching the original
+    // The deny list is not a lean-mode extra: a tool the user blocked must
+    // stay blocked in every mode. It used to be set only inside the lean
+    // branch, so the normal mode ignored the block list completely. #t0
+    options.disallowedTools = (settings && Array.isArray(settings.disallowedTools))
+      ? settings.disallowedTools.map(String).filter(Boolean)
+      : [];
     // Per-provider lean tool set. Fewer tool schemas = a much smaller base
     // prompt, which is the real lever on the ~70K context floor that blocks
     // 3-4B local models. #41
@@ -370,7 +458,6 @@ class ChatManager extends EventEmitter {
       const lean = Array.isArray(settings.leanTools) ? settings.leanTools : [];
       if (lean.length) {
         options.tools = lean;
-        options.disallowedTools = (settings.disallowedTools || []).map(String);
         isLean = true;
       }
     } else if (settings && settings.autoLean) {
@@ -427,6 +514,37 @@ class ChatManager extends EventEmitter {
         if (line.trim()) console.error('[claude]', line);
       }
     };
+    // ---- The SDK options the desktop passes and CCE did not ----------------
+    // The machine's policy file (managed-settings.json). A managed workstation
+    // must not run the GUI unmanaged just because the GUI never looked for
+    // the file. #t0-managed-settings
+    const managed = managedconfig.load();
+    // Scoped connectors: the engine gets exactly these servers and stops
+    // reading the CLI's own .mcp.json, so a chat can be pinned to a known
+    // server set. Off until the user scopes a list — otherwise the CLI's own
+    // config stays the single source and nothing is registered twice.
+    let scopedMcp = null;
+    const scopedNames = (settings && Array.isArray(settings.scopedMcpServers))
+      ? settings.scopedMcpServers.map(String).filter(Boolean)
+      : [];
+    if (scopedNames.length) {
+      try {
+        const connectors = require('./connectors');
+        const defs = await connectors.definitions(claudePath);
+        scopedMcp = {};
+        for (const d of defs) if (scopedNames.includes(d.name)) scopedMcp[d.name] = d.config;
+        if (!Object.keys(scopedMcp).length) scopedMcp = null;
+      } catch (err) {
+        console.error('[chat] scoped MCP servers could not be read: ' + String(err && err.message));
+      }
+    }
+    Object.assign(options, sdkoptions.buildSdkOptions({
+      settings: settings || {},
+      dir,
+      managed,
+      mcpServers: scopedMcp,
+      onUserDialog: (request, ctx) => this._userDialog(id, request, ctx),
+    }));
     // Every CCE chat starts with the caveman (lite) voice, rtk command
     // compression and the superpowers skill set (brainstorming first) baked
     // into the engine's system prompt, so connector tools stay available. #feat-cce-bootstrap
@@ -521,13 +639,30 @@ class ChatManager extends EventEmitter {
         }
       }
 
-      // 5. Connector tool policy (always_ask / always_deny) — settings override
-      // wins, then the static sets held in tools.js. #B1
+      // 5. Connector tool policy — the connector track is separate from the
+      // session permission mode (the desktop keeps chromePermissionMode next
+      // to permissionMode for the same reason). A connector the user marked
+      // "ask once per session" is asked once, not once per call. #t0-ask-session
       const connPol = toolPolicy.connectorPolicy(toolName, settings);
+      const isConn = toolPolicy.isConnectorTool(toolName);
+      const bypass = effMode === 'bypassPermissions' || !!yolo;
+      // A destructive connector tool always needs a confirmation, unless the
+      // session skips every prompt on purpose.
+      const destructive = isConn && !bypass && toolPolicy.isDestructiveTool(toolName);
       if (connPol === 'always_deny') {
         return { behavior: 'deny', message: toolPolicy.MESSAGES.connectorDeny };
       }
-      const alwaysAsk = connPol === 'always_ask';
+      if (connPol === 'always_allow' && !destructive) {
+        return { behavior: 'allow' };
+      }
+      let alwaysAsk = connPol === 'always_ask';
+      if (connPol === 'always_ask_session') {
+        // The grant lives in the host, so it dies with the chat and never
+        // leaks into the next one.
+        if (this._hasSessionGrant(id, toolName)) return { behavior: 'allow' };
+        alwaysAsk = true;
+      }
+      if (destructive) alwaysAsk = true;
       if (alwaysAsk) {
         // always_ask must win over bypass/yolo and over any allow rule: the
         // user is asked every time, never silently allowed. #B1
@@ -551,12 +686,16 @@ class ChatManager extends EventEmitter {
       return await new Promise((resolve) => {
         const entry = {
           chatId: id, requestId, toolName, input, resolve,
+          // The connector policy that produced this prompt. 'always_ask_session'
+          // needs it: the grant is recorded when the user answers. #t0-ask-session
+          policy: connPol || null,
+          destructive: !!destructive,
           // Suggestions come from the engine: they are the exact rule set that
           // would cover THIS call (e.g. `npm test *`), not the whole tool. #3
           suggestions: ctx.suggestions || [],
           suppressAlwaysAllowRule: !!ctx.suppressAlwaysAllowRule,
           // Metadata for the prompt text instead of a raw JSON dump. #28
-          title: ctx.title || '', description: ctx.description || '',
+          title: ctx.title || '', description: ctx.description || (destructive ? toolPolicy.MESSAGES.destructive : ''),
           decisionReason: ctx.decisionReason || '', blockedPath: ctx.blockedPath || '',
           displayName: ctx.displayName || '', toolUseID: ctx.toolUseID || '',
           timer: setTimeout(() => {
@@ -939,16 +1078,20 @@ class ChatManager extends EventEmitter {
    * @param {string} name server name
    * @param {object} config the server definition (SDK McpServerConfig shape)
    * @param {string[]} tools tool names to gate
-   * @param {'always_ask'|'always_allow'|'always_deny'} policy
+   * @param {'always_ask'|'always_ask_session'|'always_allow'|'always_deny'} policy
    */
   async mcpSetPolicy(id, name, config, tools, policy) {
     const chat = this._chat(id);
     const names = (Array.isArray(tools) ? tools : []).map(String).filter(Boolean);
     if (!names.length) throw new Error('no tools to gate');
     const key = String(name);
+    // The SDK knows three per-tool policies. 'always_ask_session' is a
+    // host-side decision (the grant lives here, not in the CLI), so at the
+    // SDK boundary it degrades to 'always_ask' — the safe direction.
+    const sdkPolicy = toolPolicy.SDK_POLICY[policy] || 'always_ask';
     const updated = {
       ...(config || {}),
-      tools: names.map((t) => ({ name: t, permission_policy: policy })),
+      tools: names.map((t) => ({ name: t, permission_policy: sdkPolicy })),
     };
     // Always send the full accumulated set: a partial payload drops servers.
     const next = { ...(chat.dynamicMcp || {}), [key]: updated };
@@ -1266,6 +1409,11 @@ class ChatManager extends EventEmitter {
     // must never be able to answer this tab's request. #20
     if (!entry || entry.chatId !== id) return { ok: false, error: 'request no longer pending' };
     this._dropPerm(requestId);
+    // 'always_ask_session': the user approved this tool for the rest of the
+    // chat. The grant dies with the chat. #t0-ask-session
+    if (entry.policy === 'always_ask_session' && decision !== 'deny') {
+      this._grantSession(id, entry.toolName);
+    }
     if (decision === 'deny') {
       // A deny message is how plan-mode feedback reaches the model. #40
       entry.resolve({ behavior: 'deny', message: String(message || 'User denied this tool use.') });

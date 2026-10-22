@@ -4,3 +4,6 @@ dist/
 .DS_Store
 .claude/
 
+
+# A stale copy of this project, left in the working tree by an earlier run.
+claude-code-enhanced/

@@ -1,7 +1,7 @@
 {
   "name": "claude-code-enhanced",
   "productName": "Claude Code Enhanced",
-  "version": "0.9.39",
+  "version": "0.9.40",
   "description": "Chat UI, terminal sessions and MCP connectors for Claude Code.",
   "main": "src/main/main.js",
   "license": "MIT",
@@ -20,7 +20,7 @@
     "bump": "npm version patch --no-git-tag-version"
   },
   "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.299",
+    "@anthropic-ai/claude-agent-sdk": "^0.3.308",
     "@xterm/addon-fit": "^0.10.0",
     "@xterm/addon-web-links": "^0.11.0",
     "@xterm/xterm": "^5.5.0",

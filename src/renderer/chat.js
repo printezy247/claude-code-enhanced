@@ -4398,6 +4398,12 @@ const Chat = (() => {
   /** Readable summary of a tool's input instead of a raw JSON dump. #28 */
   function renderToolInput(toolName, input) {
     const wrap = el('div', 'perm-tool-input');
+    // A connector call carries a URL, and that URL can carry a credential.
+    // The card is what the user screenshots, so the secret is masked here.
+    // #p5-connector-url
+    const shown = (window.CCESecrets && window.CCESecrets.maskToolInput)
+      ? window.CCESecrets.maskToolInput(input)
+      : input;
     if (toolName === 'Bash' && input.command) {
       // The command is the whole point of the prompt: show it large, not as JSON.
       wrap.appendChild(el('pre', 'perm-command mono', String(input.command).slice(0, 2000)));
@@ -4407,11 +4413,11 @@ const Chat = (() => {
     } else if ((toolName === 'Grep' || toolName === 'Glob') && input.pattern) {
       wrap.appendChild(el('div', 'perm-path mono', String(input.pattern)));
     } else if (toolName === 'WebFetch' && input.url) {
-      wrap.appendChild(el('div', 'perm-path mono', String(input.url)));
+      wrap.appendChild(el('div', 'perm-path mono', String(shown.url || input.url)));
     }
     const det = el('details', 'tool-json');
     det.appendChild(el('summary', '', 'raw input'));
-    det.appendChild(el('pre', 'tool-io mono', (JSON.stringify(input == null ? {} : input, null, 2) || '{}').slice(0, 1200)));
+    det.appendChild(el('pre', 'tool-io mono', (JSON.stringify(shown == null ? {} : shown, null, 2) || '{}').slice(0, 1200)));
     wrap.appendChild(det);
     return wrap;
   }
