@@ -533,7 +533,10 @@ function createWindow(initialState) {
       const shoot2 = async (file) => {
         try {
           if (!w || w.isDestroyed()) return;
-          await w.webContents.executeJavaScript('document.querySelector("#convo-drop").classList.add("hidden")');
+          // The dropdown is built on demand, so it may not exist yet: the
+          // optional chain keeps the smoke run quiet (it used to throw a
+          // null classList error that looked like an app crash).
+          await w.webContents.executeJavaScript('document.querySelector("#convo-drop")?.classList.add("hidden")');
           await new Promise(r => setTimeout(r, 300));
           const img = await w.webContents.capturePage();
           fs.writeFileSync(file, img.toPNG());
