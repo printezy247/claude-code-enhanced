@@ -39,6 +39,33 @@ const DEFAULT_SETTINGS = {
   autoNudge: true,         // once per prompt, re-prompt a model that ends a turn on "Let me …" without acting
   localNumCtx: 73728,        // context to load local Ollama models with (claude base prompt ≈66K tokens; more costs RAM)
   forceCtx: {},             // per-model override: { "qwen3-4b": 32000 } skips the floor (#11)
+  // ---- The SDK options the desktop app passes (0.9.40) ----
+  // The machine's policy file is applied when it exists; the row only turns
+  // the hand-off off for a user who wants the GUI to ignore it.
+  managedSettings: true,
+  // The connector servers this chat is pinned to. Empty = the CLI's own MCP
+  // config stays the single source (nothing is registered twice).
+  scopedMcpServers: [],
+  // Hand the CLI's ~/.claude/agents to the engine as agent definitions.
+  sdkAgents: false,
+  mainAgent: '',            // the agent that runs the main thread
+  allowAdditionalDirectories: false,  // widen the engine's reach to allowedDirectories
+  projectConfigRoot: '',    // the trusted checkout a worktree belongs to
+  taskBudget: 0,            // token budget the model paces itself against
+  planModeInstructions: '',  // custom plan-mode workflow
+  userDialog: false,        // render the CLI's refusal-fallback dialog
+  verbatimPrompts: false,   // send prompts as written (no @file expansion)
+  continueSession: false,   // continue the newest conversation in this folder
+  debugFile: '',            // engine debug log
+  toolAliases: {},          // { Bash: 'mcp__workspace__bash' }
+  toolConfig: {},           // per-tool configuration for the built-in tools
+  outputFormat: null,       // { type: 'json_schema', schema: {...} }
+  sessionMirror: '',        // mirror transcripts to this JSONL file
+  loadTimeoutMs: 0,         // timeout for one session-store call
+  perTaskStop: true,        // the UI has a per-task stop control
+  pluginDelivery: 'argv',   // 'argv' | 'initialize'
+  // Per-tool connector policy: { 'mcp__github__create_issue': 'always_ask_session' }
+  connectorToolPolicy: {},
 };
 
 class Store {
