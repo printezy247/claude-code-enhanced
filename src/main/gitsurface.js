@@ -8,13 +8,15 @@
 'use strict';
 const { execFile } = require('child_process');
 const fs = require('fs');
+const { setBounded } = require('./boundedmap');
 const os = require('os');
 const path = require('path');
 
 const STATUS_TTL_MS = 4000;
 const MAX_DIFF_BYTES = 512 * 1024;
 
-const statusCache = new Map();   // cwd -> { at, value }
+const STATUS_CACHE_MAX = 50;
+const statusCache = new Map();   // cwd -> { at, value }, capped at STATUS_CACHE_MAX
 
 /** Run git in one directory. Never throws: the result says what happened. */
 function git(cwd, args, { timeout = 8000, maxBuffer = 8 * 1024 * 1024 } = {}) {
@@ -79,7 +81,7 @@ async function status(cwd) {
     files: files.slice(0, 200),
     fileCount: files.length,
   };
-  statusCache.set(dir, { at: Date.now(), value });
+  setBounded(statusCache, dir, { at: Date.now(), value }, STATUS_CACHE_MAX);
   return value;
 }
 
@@ -179,5 +181,6 @@ function isRepo(cwd) {
 
 module.exports = {
   git, clamp, status, invalidate, diff, diffStats, commits, commitDiff, isRepo,
-  STATUS_TTL_MS, MAX_DIFF_BYTES,
+  STATUS_TTL_MS, MAX_DIFF_BYTES, STATUS_CACHE_MAX,
+  statusCacheSize: () => statusCache.size,
 };

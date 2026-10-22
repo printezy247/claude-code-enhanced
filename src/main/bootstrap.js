@@ -148,15 +148,19 @@ function syncedSkillsPlugin() {
   if (!found.size) return null;
   const plugin = path.join(homeDir(), '.cache', 'claude-code-enhanced', 'synced-skills');
   try {
+    const skilltoggle = require('./skilltoggle');
+    const enabled = [...found].filter(([name]) => skilltoggle.isSkillEnabled(name));
+    // Rebuilding on every chat start costs disk work; skip it when nothing moved.
+    const sig = JSON.stringify(enabled);
+    const sigFile = path.join(plugin, '.sig');
+    try { if (fs.readFileSync(sigFile, 'utf8') === sig) return plugin; } catch { /* first build */ }
     fs.rmSync(plugin, { recursive: true, force: true });
     fs.mkdirSync(path.join(plugin, '.claude-plugin'), { recursive: true });
     fs.mkdirSync(path.join(plugin, 'skills'), { recursive: true });
     fs.writeFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'),
       JSON.stringify({ name: 'cce-synced', description: 'Skills synced from Claude Desktop', version: '1.0.0' }));
-    const skilltoggle = require('./skilltoggle');
-    for (const [name, dir] of found) {
-      if (skilltoggle.isSkillEnabled(name)) fs.symlinkSync(dir, path.join(plugin, 'skills', name), 'dir');
-    }
+    for (const [name, dir] of enabled) fs.symlinkSync(dir, path.join(plugin, 'skills', name), 'dir');
+    fs.writeFileSync(sigFile, sig);
   } catch { return null; }
   return plugin;
 }

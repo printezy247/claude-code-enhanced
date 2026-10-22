@@ -3,6 +3,7 @@
 // Studio, Cloudflare Workers AI, NaraRouter, Ollama's /openai, …). This is what
 // lets the claude engine use key-only OpenAI-format providers.
 'use strict';
+const { setBounded } = require('./boundedmap');
 const http = require('http');
 const crypto = require('crypto');
 const adapters = require('./adapters');
@@ -171,7 +172,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
       return;
     }
   }
-  if (prov._uid && body.model) lastGoodModel.set(prov._uid, body.model);
+  if (prov._uid && body.model) setBounded(lastGoodModel, prov._uid, body.model, 200);
 
   if (!wantStream) {
     const j = await upstream.json();

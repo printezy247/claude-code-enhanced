@@ -5,7 +5,9 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { fileURLToPath } = require('url');
-const { execFile, execFileSync } = require('child_process');
+const { execFile } = require('child_process');
+const { probeLoginEnv } = require('./loginenv');
+const { swapChat } = require('./failover');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const rendererDir = path.resolve(__dirname, '..', 'renderer');
@@ -213,26 +215,24 @@ function claudePath() {
 // reported those tools as present. Resolve the login-shell environment once and
 // merge it into every spawned session.
 let loginEnvCache = null;
+let loginEnvPending = null;
+/** Probe the login shell off the main thread; shared by every caller. */
+function loginEnvReady() {
+  if (loginEnvCache) return Promise.resolve(loginEnvCache);
+  if (!loginEnvPending) {
+    loginEnvPending = probeLoginEnv().then((env) => { loginEnvCache = env; loginEnvPending = null; return env; });
+  }
+  return loginEnvPending;
+}
+/** The cached environment ({} until the first probe lands). */
 function loginEnv() {
-  if (loginEnvCache) return loginEnvCache;
-  const shell = process.env.SHELL || '/bin/bash';
-  try {
-    const out = execFileSync(shell, ['-ilc', 'env'], {
-      timeout: 8000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    const env = {};
-    for (const line of String(out).split('\n')) {
-      const i = line.indexOf('=');
-      if (i > 0) env[line.slice(0, i)] = line.slice(i + 1);
-    }
-    loginEnvCache = env;
-  } catch { loginEnvCache = {}; }
-  return loginEnvCache;
+  if (!loginEnvCache) loginEnvReady();
+  return loginEnvCache || {};
 }
 /** Re-probe the login shell (newly installed tools appear). #21 */
 function refreshLoginEnv() {
   loginEnvCache = null;
-  return loginEnv();
+  return loginEnvReady();
 }
 /** PATH first, then anything the login shell added that we lack. */
 function envWithLoginPath(base = {}) {
@@ -862,18 +862,18 @@ function registerIpc() {
     // The live engine cannot be re-pointed; recreate the chat on the next
     // provider and carry the model + mode over.
     const resume = chat.sessionId || null;
-    chats.close(id);
-    await new Promise(r => setTimeout(r, 50));
-    const created = await chats.create({
+    const optsFor = (prov, model) => ({
       cwd: chat.cwd,
-      providerInstance: next,
-      settings: { ...store.settings, ...(next.leanTools ? { leanTools: next.leanTools } : {}) },
-      model: next.model || chat.model,
+      providerInstance: prov,
+      settings: { ...store.settings, ...(prov && prov.leanTools ? { leanTools: prov.leanTools } : {}) },
+      model,
       permissionMode: chat.permissionMode,
       resume,
       claudePath: (store.settings.claudePath || '').trim() || undefined,
-      anthropicBaseUrl: usesProxy(next) ? proxyBaseUrl(next) : undefined,
+      anthropicBaseUrl: prov && usesProxy(prov) ? proxyBaseUrl(prov) : undefined,
     });
+    // If the new provider cannot start, the original chat is rebuilt.
+    const created = await swapChat(chats, id, optsFor(next, next.model || chat.model), optsFor(chat.providerInstance, chat.model));
     // The replacement chat belongs to the window that asked for the failover.
     // #feat-multi-window
     const owner = senderWindowId(e);
@@ -1323,6 +1323,7 @@ function registerIpc() {
     const dir = (cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
     if (!fs.existsSync(dir)) throw new Error(`directory not found: ${dir}`);
 
+    await loginEnvReady();
     let command, args = [];
     if (type === 'shell') {
       command = process.env.SHELL || 'bash';
@@ -1642,7 +1643,7 @@ function registerIpc() {
   // Re-read the login-shell environment so tools installed while the app is
   // running become visible to new sessions. #21
   handle('env:refresh', async () => {
-    const env = refreshLoginEnv();
+    const env = await refreshLoginEnv();
     return { PATH: env.PATH || process.env.PATH || '' };
   });
 
@@ -1826,17 +1827,29 @@ function registerIpc() {
       await client.close();
     }
   });
-  handle('mcp:authenticate', async ({ name }) => {
+  const mcpTokens = new Map();   // server name -> device-flow token, memory only
+  handle('mcp:authenticate', async ({ name }, e) => {
     // The server is resolved through the CLI's own MCP config, so the
     // renderer cannot point the host's OAuth flow at an arbitrary host.
     const cfg = await mcpServerOf(name);
-    const res = await mcpclient.deviceCodeAuth({
+    // The code is returned the moment the server issues it, so the user can
+    // type it in; polling for approval continues in the background and the
+    // result is announced on 'mcp:auth-done' (the token stays in main).
+    let announce;
+    const codeReady = new Promise((resolve, reject) => { announce = { resolve, reject }; });
+    const target = senderWin(e);
+    mcpclient.deviceCodeAuth({
       url: cfg.url,
       oauth: { scopes: Array.isArray(cfg.scopes) ? cfg.scopes : undefined },
+      onCode: (c) => announce.resolve({ ok: true, userCode: c.userCode, verificationUri: c.verificationUri, expiresIn: c.expiresIn }),
+    }).then((tok) => {
+      mcpTokens.set(name, { accessToken: tok.accessToken, tokenType: tok.tokenType, at: Date.now() });
+      if (target && !target.isDestroyed()) target.webContents.send('mcp:auth-done', { name, ok: true });
+    }).catch((err) => {
+      announce.reject(err);   // no-op once the code was returned
+      if (target && !target.isDestroyed()) target.webContents.send('mcp:auth-done', { name, ok: false, error: String((err && err.message) || err) });
     });
-    // The device code itself is shown to the user; the token is never
-    // returned in a message the UI would log.
-    return { ok: true, userCode: res.userCode, verificationUri: res.verificationUri, expiresIn: res.expiresIn };
+    return codeReady;
   });
   // Ollama model manager: running models, catalog, load/unload with context size
   const ollamaBase = (p) => (p && p.baseUrl ? p.baseUrl.replace(/\/+$/, '') : null);
@@ -2294,7 +2307,7 @@ function registerIpc() {
 
   // ----- settings -----
   handle('settings:get', async () => ({
-    settings: { ...store.settings, loginEnv: { PATH: loginEnv().PATH || '' } },
+    settings: { ...store.settings, loginEnv: { PATH: (await loginEnvReady()).PATH || '' } },
     claude: claudeInfo,
     leanPresets: Object.entries(LEAN_PRESETS).map(([id, p]) => ({ id, label: p.label, tools: p.tools })),
     leanAllTools: LEAN_ALL_TOOLS.slice(),
@@ -2343,6 +2356,7 @@ if (!gotLock) {
 
   app.whenReady().then(async () => {
     if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: app ready');
+    loginEnvReady();   // probe the login shell in the background, never on the main thread
     // Bind an ephemeral port: a fixed one collides with any other listener and
     // leaks provider API keys to whoever grabs it.
     store.init();

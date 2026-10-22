@@ -2,6 +2,7 @@
 // sizing, and model-name resolution. Kept out of main.js so `npm run check`
 // can test them against fake servers.
 'use strict';
+const { setBounded } = require('./boundedmap');
 
 // Default context for local models: the engine's prompt is ~66K tokens, and every
 // extra token of context costs RAM (128K needs ~14 GB for a 4B model and thrashes
@@ -190,7 +191,7 @@ async function warmOllamaModel(base, model, desiredCtx, opts = {}) {
         signal: AbortSignal.timeout(300_000),
       });
       if (res.ok) {
-        warmCtxCache.set(cacheKey, ctx);
+        setBounded(warmCtxCache, cacheKey, ctx, 200);
         const variant = await ensureCtxVariant(base, model, ctx);
         if (variant && await switchToVariant(base, model, variant)) {
           return { ok: true, ctx, native, model: variant, corrected: variant };

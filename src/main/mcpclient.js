@@ -633,6 +633,13 @@ async function deviceCodeAuth(opts = {}) {
   if (cfg.audience) params.set('audience', cfg.audience);
   const start = await postForm(f, cfg.deviceUrl, params, 'device authorization');
   const deviceCode = start.device_code;
+  if (typeof opts.onCode === 'function') {
+    opts.onCode({
+      userCode: String(start.user_code || ''),
+      verificationUri: String(start.verification_uri || start.verification_uri_complete || ''),
+      expiresIn: Number(start.expires_in) || 900,
+    });
+  }
   if (!deviceCode) throw new Error('MCP OAuth: the device authorization endpoint returned no device_code');
 
   const rawInterval = Number(start.interval);
