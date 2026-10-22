@@ -106,3 +106,48 @@ describe('swapChat (failover)', () => {
     expect(calls).toEqual(['close', 'create:next', 'create:orig']);
   });
 });
+
+describe('loop guard', () => {
+  const { createLoopGuard } = require('../src/main/loopguard.js');
+  const bash = (command) => ({ name: 'Bash', input: { command } });
+  it('trips on the same call repeated', () => {
+    const g = createLoopGuard();
+    expect(g.record({ name: 'Read', input: { file_path: '/a' } }).tripped).toBe(false);
+    expect(g.record({ name: 'Read', input: { file_path: '/a' } }).tripped).toBe(false);
+    expect(g.record({ name: 'Read', input: { file_path: '/a' } }).tripped).toBe(true);
+  });
+  it('trips on a run of echo-only shell calls with different text', () => {
+    const g = createLoopGuard();
+    let r;
+    for (let i = 0; i < 5; i++) r = g.record(bash('echo "status ' + i + '"'));
+    expect(r.tripped).toBe(true);
+  });
+  it('does not trip on normal varied work', () => {
+    const g = createLoopGuard();
+    const calls = [bash('ls'), { name: 'Read', input: { file_path: '/a' } }, bash('npm test'), { name: 'Edit', input: { file_path: '/a', old_string: 'x' } }, bash('echo done'), bash('git status')];
+    expect(calls.map((c) => g.record(c).tripped)).not.toContain(true);
+  });
+  it('reset clears the history', () => {
+    const g = createLoopGuard();
+    g.record(bash('echo 1')); g.record(bash('echo 2')); g.record(bash('echo 3')); g.record(bash('echo 4'));
+    g.reset();
+    expect(g.record(bash('echo 5')).tripped).toBe(false);
+  });
+});
+
+describe('shareablePath', () => {
+  const { shareablePath, absFor } = require('../src/main/fileshare.js');
+  it('allows only files the agent wrote', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-share-'));
+    const f = path.join(dir, 'out.txt'); fs.writeFileSync(f, 'hi');
+    const other = path.join(dir, 'other.txt'); fs.writeFileSync(other, 'no');
+    const written = new Set([absFor(dir, 'out.txt')]);
+    expect(shareablePath(written, dir, 'out.txt')).toBe(fs.realpathSync(f));
+    expect(shareablePath(written, dir, 'other.txt')).toBe(null);
+    expect(shareablePath(written, dir, 'missing.txt')).toBe(null);
+  });
+  it('rejects directories', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-share-'));
+    expect(shareablePath(new Set([dir]), dir, dir)).toBe(null);
+  });
+});

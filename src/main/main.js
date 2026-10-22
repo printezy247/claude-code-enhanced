@@ -2305,6 +2305,21 @@ function registerIpc() {
     return {};
   });
 
+  // Share a file the agent wrote: show it in the file manager, or save a copy
+  // wherever the user picks. Only files this chat's agent wrote are allowed.
+  handle('file:share', owned('chats', async ({ id, path: p, action }, e) => {
+    const real = chats.shareable(id, p);
+    if (!real) throw new Error('that file was not written in this chat, or no longer exists');
+    if (action === 'reveal') { shell.showItemInFolder(real); return { ok: true }; }
+    if (action === 'save') {
+      const r = await dialog.showSaveDialog(senderWin(e), { defaultPath: path.basename(real) });
+      if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+      await fs.promises.copyFile(real, r.filePath);
+      return { ok: true, savedTo: r.filePath };
+    }
+    throw new Error('unknown action');
+  }));
+
   // ----- settings -----
   handle('settings:get', async () => ({
     settings: { ...store.settings, loginEnv: { PATH: (await loginEnvReady()).PATH || '' } },

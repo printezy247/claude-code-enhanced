@@ -151,7 +151,6 @@ const Chat = (() => {
         <span class="chat-header-sep"></span>
         <button class="chat-btn chat-mgr-btn hidden" title="Model manager: load / unload, context size, keep-alive"><span data-icon="gear"></span> models</button>
         <button class="chat-btn chat-stop hidden" title="Interrupt (Esc)"><span data-icon="square"></span> stop</button>
-        <button class="chat-btn chat-build-now hidden" title="Stop investigating and build now (Interrupt & steer to immediate implementation)"><span data-icon="bolt"></span> build now</button>
         <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work"><span data-icon="play"></span> continue</button>
         <button class="chat-btn hdr-more" title="Chat actions" aria-label="Chat actions"><span data-icon="dots"></span></button>
       </div>
@@ -203,7 +202,6 @@ const Chat = (() => {
       id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider),
       pane, msgs: pane.querySelector('.chat-msgs'), composer: pane.querySelector('.chat-input'),
       sendBtn: pane.querySelector('.chat-send'), stopBtn: pane.querySelector('.chat-stop'),
-      buildNowBtn: pane.querySelector('.chat-build-now'),
       statusLine: pane.querySelector('.chat-statusline .sl-left'),
       statusRight: pane.querySelector('.chat-statusline .sl-right'),
       dot: pane.querySelector('.chat-dot'), providerEl: pane.querySelector('.chat-provider'),
@@ -340,14 +338,6 @@ const Chat = (() => {
     });
     chat.effortBtn.addEventListener('click', () => cycleEffort(chat));
     chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id }));
-    if (chat.buildNowBtn) {
-      chat.buildNowBtn.addEventListener('click', async () => {
-        await ccx.invoke('chat:interrupt', { id });
-        chat.composer.value = 'Stop investigating. Apply the requested changes directly based on what you already know.';
-        chat.send();
-      });
-    }
-
     // Header overflow menu. 13 buttons wrapped onto three rows; everything that
     // is not model/mode/stop now lives behind one "⋯". #33
     const forkConversation = async () => {
@@ -2875,6 +2865,11 @@ const Chat = (() => {
         scrollDownSoft(chat);
       }
     }
+    else if (kind === 'loop-guard') {
+      chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' stopped — the agent was repeating itself (' + String(evt.reason || 'same step again') + '). Send a new instruction to continue.'));
+      toast('Stopped a repeating loop', 'err');
+      scrollDownSoft(chat);
+    }
     else if (kind === 'error') appendError(chat, evt.error);
     else if (kind === 'exit') {
       chat.alive = false; chat.tabEl.classList.add('dead'); setBusy(chat, false);
@@ -2931,7 +2926,6 @@ const Chat = (() => {
     publishTabState(chat);
     chat.dot.classList.toggle('busy', busy);
     chat.stopBtn.classList.toggle('hidden', !busy);
-    if (chat.buildNowBtn) chat.buildNowBtn.classList.toggle('hidden', !busy);
     chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
     updateBusyUi(chat);
     if (busy) { chat.statusLine.textContent = 'working…'; startContextPolling(chat); }
@@ -3766,6 +3760,31 @@ const Chat = (() => {
     return depth;
   }
 
+  /** Buttons under a finished Write card: reveal the file, or save a copy. */
+  function addFileShare(chat, ctx) {
+    const file = String(ctx.input.file_path);
+    const bar = el('div', 'file-share');
+    bar.appendChild(el('span', 'fs-name mono', file.split('/').pop()));
+    const act = (label, action, hint) => {
+      const b = el('button', 'btn small', label);
+      b.title = hint;
+      b.addEventListener('click', async () => {
+        try {
+          const r = await ccx.invoke('file:share', { id: chat.id, path: file, action });
+          if (r && r.savedTo) toast('Saved to ' + r.savedTo, 'ok');
+        } catch (e) { toast(String((e && e.message) || e), 'err'); }
+      });
+      return b;
+    };
+    bar.appendChild(act('Show in folder', 'reveal', 'Open the file manager at this file'));
+    bar.appendChild(act('Save a copy…', 'save', 'Save a copy of this file where you choose'));
+    const copy = el('button', 'btn small', 'Copy path');
+    copy.addEventListener('click', () => { ccx.invoke('clipboard:write', { text: file }); toast('Path copied', 'ok'); });
+    bar.appendChild(copy);
+    ctx.shareBar = bar;
+    ctx.card.appendChild(bar);
+  }
+
   function makeToolCard(chat, toolUseId, name, input, parentId) {
     chat.msgs.querySelector('.chat-empty')?.remove();
     const card = el('div', 'tool-card kind-' + toolKind(name));
@@ -3802,6 +3821,7 @@ const Chat = (() => {
         if (note) title.textContent = note + ' — ' + toolTitle(name, ctx.input);
         else title.textContent = toolTitle(name, ctx.input);
         if (status === 'done' || status === 'err') renderOutput(chat, toolUseId);
+        if (status === 'done' && name === 'Write' && ctx.input && ctx.input.file_path && !ctx.shareBar) addFileShare(chat, ctx);
       },
       setInput(inp) { ctx.input = inp || {}; title.textContent = toolTitle(name, ctx.input); renderInput(); },
     };

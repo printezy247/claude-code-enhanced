@@ -36,7 +36,7 @@ const INVOKE_CHANNELS = new Set([
   'plugins:list', 'plugins:pick', 'plugins:install', 'plugins:uninstall',
   'mcp:list-tools', 'mcp:call-tool', 'mcp:list-resources', 'mcp:read-resource', 'mcp:authenticate',
   'skills:toggle', 'agents:toggle',
-  'dialog:pickDir', 'dialog:pickFiles', 'clipboard:write', 'shell:openExternal', 'shell:reveal',
+  'dialog:pickDir', 'dialog:pickFiles', 'clipboard:write', 'shell:openExternal', 'shell:reveal', 'file:share',
 ]);
 const SEND_CHANNELS = new Set(['session:write']);
 

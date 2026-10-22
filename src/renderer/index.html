@@ -126,8 +126,9 @@
     <div id="splitter" title="Drag to resize"></div>
     <section id="splitpane">
       <div class="split-head">
+        <button class="split-tab split-overview" role="tab" data-kind="tasks" title="Overview — session, context, connectors, tasks, changes (always shown)"><span data-icon="layers"></span><span>Overview</span></button>
+        <span class="split-sep" aria-hidden="true"></span>
         <div class="split-tabs" role="tablist" aria-label="Side panel views">
-          <button class="split-tab" role="tab" data-kind="tasks" title="Overview — session, context, connectors, tasks, changes"><span data-icon="layers"></span><span>Overview</span></button>
           <button class="split-tab" role="tab" data-kind="changes" title="Working tree changes"><span data-icon="branch"></span><span>Changes</span></button>
           <button class="split-tab" role="tab" data-kind="files" title="Project files"><span data-icon="folder"></span><span>Files</span></button>
           <button class="split-tab" role="tab" data-kind="terminal" title="Terminal in this folder"><span data-icon="terminal"></span><span>Terminal</span></button>
@@ -135,6 +136,7 @@
           <button class="split-tab" role="tab" data-kind="preview" title="Preview a dev server"><span data-icon="globe"></span><span>Preview</span></button>
         </div>
         <span class="spacer"></span>
+        <button class="icon-btn" id="btn-split-tabs" title="Choose which tabs to show" aria-label="Choose which side panel tabs to show" aria-haspopup="true"><span data-icon="dots"></span></button>
         <button class="icon-btn" id="btn-split-refresh" title="Refresh" aria-label="Refresh the side panel"><span data-icon="refresh"></span></button>
         <select id="split-kind" class="sr-only" tabindex="-1" aria-hidden="true">
           <option value="tasks">Overview</option>
