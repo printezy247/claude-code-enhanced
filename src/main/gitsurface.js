@@ -19,7 +19,10 @@ const statusCache = new Map();   // cwd -> { at, value }
 /** Run git in one directory. Never throws: the result says what happened. */
 function git(cwd, args, { timeout = 8000, maxBuffer = 8 * 1024 * 1024 } = {}) {
   return new Promise((resolve) => {
-    execFile('git', args, { cwd, timeout, maxBuffer, encoding: 'utf8' }, (err, stdout, stderr) => {
+    // Untrusted repos: never run programs named in .git/config (fsmonitor, pager, ext diff).
+    const safe = ['-c', 'core.fsmonitor=false', '-c', 'core.pager=cat', ...args];
+    const env = { ...process.env, GIT_OPTIONAL_LOCKS: '0' };
+    execFile('git', safe, { cwd, timeout, maxBuffer, encoding: 'utf8', env }, (err, stdout, stderr) => {
       resolve({
         ok: !err,
         code: err && typeof err.code === 'number' ? err.code : 0,
@@ -99,7 +102,7 @@ function invalidate(cwd) {
  */
 async function diff(cwd, { staged = false, paths = [], context = 3, maxBytes = MAX_DIFF_BYTES } = {}) {
   const dir = String(cwd || '').replace(/^~(?=\/|$)/, os.homedir());
-  const args = ['diff', '--no-color', '--unified=' + String(context)];
+  const args = ['diff', '--no-ext-diff', '--no-color', '--unified=' + String(context)];
   if (staged) args.push('--cached');
   if (Array.isArray(paths) && paths.length) {
     args.push('--');
@@ -113,7 +116,7 @@ async function diff(cwd, { staged = false, paths = [], context = 3, maxBytes = M
 /** The same diff as numbers: files changed, insertions, deletions. */
 async function diffStats(cwd, { staged = false, paths = [] } = {}) {
   const dir = String(cwd || '').replace(/^~(?=\/|$)/, os.homedir());
-  const args = ['diff', '--numstat'];
+  const args = ['diff', '--no-ext-diff', '--numstat'];
   if (staged) args.push('--cached');
   if (Array.isArray(paths) && paths.length) {
     args.push('--');
@@ -160,7 +163,7 @@ async function commitDiff(cwd, { sha, maxBytes = MAX_DIFF_BYTES } = {}) {
   if (!/^[0-9a-f]{7,40}$/i.test(id)) {
     return { ok: false, patch: '', error: 'not a commit id', truncated: false };
   }
-  const res = await git(dir, ['show', '--no-color', '--patch', '--format=fuller', id]);
+  const res = await git(dir, ['show', '--no-ext-diff', '--no-color', '--patch', '--format=fuller', id]);
   const body = clamp(res.stdout, maxBytes);
   return { ok: res.ok, patch: body.text, truncated: body.truncated, error: res.error };
 }

@@ -59,7 +59,7 @@ function parseProposals(text) {
   return out;
 }
 
-const { atomicWriteJson, readJsonSafe } = require('./atomic');
+const { atomicWrite, atomicWriteJson, readJsonSafe } = require('./atomic');
 
 function readJson(file, fallback) {
   const data = readJsonSafe(file);
@@ -84,17 +84,18 @@ function resolve(cwd, slug, accept) {
   const have = listPending(cwd);
   const p = have.find((h) => h.slug === slug);
   if (!p) return { saved: false, missing: true };
-  atomicWriteJson(pendingFile(cwd), have.filter((h) => h !== p));
-  if (!accept) return { saved: false };
+  const rest = have.filter((h) => h !== p);
+  if (!accept) { atomicWriteJson(pendingFile(cwd), rest); return { saved: false }; }
   const dir = memDir(cwd);
   const file = path.join(dir, p.slug + '.md');
-  if (fs.existsSync(file)) return { saved: false, duplicate: true };
-  fs.writeFileSync(file, '---\nname: ' + p.slug + '\ndescription: ' + JSON.stringify(p.description)
+  if (fs.existsSync(file)) { atomicWriteJson(pendingFile(cwd), rest); return { saved: false, duplicate: true }; }
+  atomicWrite(file, '---\nname: ' + p.slug + '\ndescription: ' + JSON.stringify(p.description)
     + '\nmetadata:\n  type: ' + p.type + '\n  source: ' + (p.source || 'model-suggested') + '\n---\n\n' + p.body + '\n');
   const indexFile = path.join(dir, 'MEMORY.md');
   const title = p.slug.replace(/-/g, ' ').replace(/^./, (c) => c.toUpperCase());
   const index = fs.existsSync(indexFile) ? fs.readFileSync(indexFile, 'utf8') : '';
-  fs.writeFileSync(indexFile, index + (index && !index.endsWith('\n') ? '\n' : '') + '- [' + title + '](' + p.slug + '.md) — ' + p.description + '\n');
+  atomicWrite(indexFile, index + (index && !index.endsWith('\n') ? '\n' : '') + '- [' + title + '](' + p.slug + '.md) — ' + p.description + '\n');
+  atomicWriteJson(pendingFile(cwd), rest);
   return { saved: true };
 }
 

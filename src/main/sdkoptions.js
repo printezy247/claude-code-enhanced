@@ -273,12 +273,25 @@ function createFileSessionStore(file) {
     }
     return out;
   };
+  const same = (a, b) => a.projectKey === b.projectKey && a.sessionId === b.sessionId
+    && (a.subpath || '') === (b.subpath || '');
   return {
-    async load() { return read(); },
+    async load(key) {
+      const seen = new Set();
+      const entries = [];
+      for (const rec of read()) {
+        if (!rec || !rec.key || !same(rec.key, key)) continue;
+        for (const e of rec.entries || []) {
+          if (e && e.uuid) { if (seen.has(e.uuid)) continue; seen.add(e.uuid); }
+          entries.push(e);
+        }
+      }
+      return entries.length ? entries : null;
+    },
     async listSubkeys() { return []; },
-    async store(key, value) {
+    async append(key, entries) {
       try {
-        fs.appendFileSync(file, JSON.stringify({ key, value }) + '\n', { mode: 0o600 });
+        fs.appendFileSync(file, JSON.stringify({ key, entries }) + '\n', { mode: 0o600 });
       } catch { /* a failed mirror must not break the turn */ }
     },
   };

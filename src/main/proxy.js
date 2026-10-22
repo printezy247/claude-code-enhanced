@@ -17,7 +17,7 @@ function startProxy(resolveProvider, opts = {}) {
   // resolveProvider(uid) -> { baseUrl, apiKey } | null
   const token = opts.token || null;
   const port = opts.port || Number(process.env.CCE_PROXY_PORT || 0);
-  const server = http.createServer((req, res) => {
+  const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const m = url.pathname.match(/^\/px\/([a-z0-9]+)\/(.+)$/i);
     if (!m) { res.writeHead(404).end(); return; }
@@ -33,7 +33,9 @@ function startProxy(resolveProvider, opts = {}) {
         .end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'proxy token required' } }));
       return;
     }
-    const prov = resolveProvider(uid);
+    // May be async: an expired OAuth token is refreshed before the request goes out.
+    let prov = null;
+    try { prov = await resolveProvider(uid); } catch { prov = null; }
     if (!prov || !prov.baseUrl) { res.writeHead(404, { 'content-type': 'application/json' }).end(JSON.stringify({ error: 'unknown proxy provider' })); return; }
     prov._uid = uid;
     if (isGet && restPath === '/v1/models') {
@@ -372,9 +374,9 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         if (d.content) takeContent(d.content);
         if (d.tool_calls) {
           for (const tc of d.tool_calls) {
-            const k = tc.index != null ? tc.index : toolBuf.size;
+            const k = pickToolSlot(toolBuf, tc);
             const cur = toolBuf.get(k) || { id: tc.id || ('call_' + k + '_' + Date.now()), name: '', args: '' };
-            if (tc.id) cur.id = tc.id;
+            if (tc.id) { cur.id = tc.id; cur.real = true; }
             if (tc.function && tc.function.name) cur.name = tc.function.name;
             if (tc.function && tc.function.arguments) cur.args += tc.function.arguments;
             toolBuf.set(k, cur);
@@ -976,7 +978,22 @@ function parseToolJson(raw) {
 
 // Exported for tests: the text-channel tool-call recovery (#1) is the piece
 // small local models depend on, so it gets direct unit coverage.
+/**
+ * Which buffer slot does this streamed tool_call chunk belong to? Normally its
+ * `index`; but a provider that reuses an index for a NEW call (different id)
+ * would otherwise get two calls' arguments glued together.
+ */
+function pickToolSlot(toolBuf, tc) {
+  const k = tc.index != null ? tc.index : toolBuf.size;
+  const cur = toolBuf.get(k);
+  if (cur && cur.real && tc.id && cur.id !== tc.id) {
+    return Math.max(...toolBuf.keys(), k) + 1;
+  }
+  return k;
+}
+
 module.exports = {
+  pickToolSlot,
   startProxy,
   CCE_PROXY_PORT,
   isTokenValid,

@@ -13,9 +13,14 @@ const path = require('path');
 /** Atomically write `text` to `file` (0600 by default — these files hold secrets). */
 function atomicWrite(file, text, { mode = 0o600 } = {}) {
   const tmp = file + '.tmp-' + process.pid;
-  fs.writeFileSync(tmp, text, { mode });
-  try { fs.chmodSync(tmp, mode); } catch { /* best effort (Windows) */ }
-  fs.renameSync(tmp, file);
+  try {
+    fs.writeFileSync(tmp, text, { mode });
+    try { fs.chmodSync(tmp, mode); } catch { /* best effort (Windows) */ }
+    fs.renameSync(tmp, file);
+  } catch (e) {
+    try { fs.unlinkSync(tmp); } catch { /* nothing to clean */ }
+    throw e;
+  }
 }
 
 /** Atomically write `data` as JSON. */

@@ -108,7 +108,7 @@ function readZip(buf) {
     let data;
     try {
       if (method === 0) data = Buffer.from(raw);
-      else if (method === 8) data = zlib.inflateRawSync(raw);
+      else if (method === 8) data = safeInflate(raw, size);
       else { problems.push('unsupported compression method ' + method + ' for ' + name); continue; }
     } catch (e) {
       problems.push('could not decompress ' + name + ': ' + (e && e.message));
@@ -173,6 +173,16 @@ function isInside(root, value) {
   const abs = path.resolve(String(value));
   const base = path.resolve(root);
   return abs === base || abs.startsWith(base + path.sep);
+}
+
+// A plugin directory name: no leading dot, so '.', '..' and hidden dirs are out.
+const SAFE_NAME = /^[A-Za-z0-9_][A-Za-z0-9._-]{0,63}$/;
+
+// Per-entry inflate cap: a tiny archive must not balloon into gigabytes.
+const MAX_ENTRY_BYTES = 64 * 1024 * 1024;
+function safeInflate(raw, declaredSize) {
+  const cap = Math.min(MAX_ENTRY_BYTES, Math.max(declaredSize || 0, 1) + 1024);
+  return zlib.inflateRawSync(raw, { maxOutputLength: cap });
 }
 
 /** Every path-like value in the manifest, as [key, value] pairs. */
@@ -595,7 +605,7 @@ async function installPluginInner(opts) {
   if (!signature.ok) return fail(name, version, signature.problems);
   if (signature.problems.length) notes.push(...signature.problems);
 
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(name)) {
+  if (!SAFE_NAME.test(name)) {
     return fail(name, version, ['plugin name is not a safe directory name: ' + name]);
   }
 
@@ -739,7 +749,7 @@ async function uninstallPluginInner(opts) {
   if (!pluginName) {
     return { ok: false, name: '', path: '', problems: ['no plugin name given'], removed: false };
   }
-  if (!/^[A-Za-z0-9._-]{1,64}$/.test(pluginName)) {
+  if (!SAFE_NAME.test(pluginName)) {
     return { ok: false, name: pluginName, path: '', problems: ['plugin name is not a safe directory name: ' + pluginName], removed: false };
   }
   const dir = targetDir ? path.resolve(String(targetDir)) : defaultPluginsDir();
@@ -774,6 +784,7 @@ async function uninstallPluginInner(opts) {
 
 module.exports = {
   // reading
+  MAX_ENTRY_BYTES, safeInflate,
   readManifest, inspectPlugin, readZip, verifyManifest, verifySignature,
   // installing
   installPlugin, listPlugins, uninstallPlugin,
