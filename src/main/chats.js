@@ -982,6 +982,11 @@ class ChatManager extends EventEmitter {
     if (!chat) throw new Error('chat not found');
     await chat.q.setModel(model || undefined);
     chat.model = model || chat.model;
+    const uid = (chat.providerInstance && (chat.providerInstance._uid || chat.providerInstance.uid))
+      || (chat.provider && (chat.provider._uid || chat.provider.uid));
+    if (uid) {
+      try { const proxy = require('./proxy'); proxy.clearLastGoodModel(uid); } catch { /* ignore */ }
+    }
     return { model: chat.model };
   }
 

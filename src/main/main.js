@@ -4,9 +4,11 @@ const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, cl
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { fileURLToPath } = require('url');
 const { execFile, execFileSync } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
+const rendererDir = path.resolve(__dirname, '..', 'renderer');
 
 app.setName('claude-code-enhanced');
 if (process.env.CCE_NO_SANDBOX) app.commandLine.appendSwitch('no-sandbox');
@@ -409,13 +411,23 @@ function createWindow(initialState) {
   // Both happened before: clicking a link replaced the whole UI and left the
   // user with a blank page. #6
   w.webContents.on('will-navigate', (event, url) => {
-    const target = new URL(url);
-    if (target.protocol === 'file:') return;                 // our own page
-    event.preventDefault();
-    if (/^https?:$/.test(target.protocol)) shell.openExternal(url);
+    try {
+      const target = new URL(url);
+      if (target.protocol === 'file:') {
+        const filePath = fileURLToPath(url);
+        const rel = path.relative(rendererDir, filePath);
+        if (!rel.startsWith('..') && !path.isAbsolute(rel)) return;
+      }
+      event.preventDefault();
+      if (/^https?:$/.test(target.protocol)) shell.openExternal(url);
+    } catch {
+      event.preventDefault();
+    }
   });
   w.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
+    try {
+      if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
+    } catch { /* malformed url */ }
     return { action: 'deny' };
   });
   // Refuse every permission request the renderer could make: the app needs no
@@ -710,9 +722,6 @@ function createWindow(initialState) {
 // The event is passed on to the handler: only the sender's webContents id
 // proves which window a call came from, and ownership is what makes a
 // cross-window call refuseable. #feat-multi-window
-const { fileURLToPath } = require('url');
-const rendererDir = path.resolve(__dirname, '..', 'renderer');
-
 function isValidSender(e) {
   if (!e || !e.senderFrame || !e.senderFrame.url) return true;
   const url = String(e.senderFrame.url);
