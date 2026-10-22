@@ -168,7 +168,12 @@ async function addCustom(claudePath, { name, url, header = '', scope = 'user' })
   return redact(await run(claudePath, args, { timeout: 30_000 }), secretsOf(hdr));
 }
 
+const SAFE_SERVER_NAME = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}$/;
+
 async function remove(claudePath, { name }) {
+  if (!SAFE_SERVER_NAME.test(String(name || ''))) {
+    return { ok: false, output: '', error: 'invalid server name' };
+  }
   // Try global removal, then fall back through scopes.
   let res = await run(claudePath, ['mcp', 'remove', name], { timeout: 30_000 });
   if (res.ok) return res;

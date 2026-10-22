@@ -315,7 +315,12 @@ function writeClaudeCredentials(tokens) {
   try {
     fs.mkdirSync(dir, { recursive: true });
     let existing = {};
-    try { existing = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { /* new file */ }
+    if (fs.existsSync(file)) {
+      try { existing = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch {
+        // Unreadable: keep the bytes rather than drop the CLI's other keys.
+        try { fs.copyFileSync(file, file + '.corrupt-' + Date.now()); } catch { /* best effort */ }
+      }
+    }
     existing.claudeAiOauth = {
       accessToken: tokens.access,
       refreshToken: tokens.refresh || (existing.claudeAiOauth && existing.claudeAiOauth.refreshToken) || '',

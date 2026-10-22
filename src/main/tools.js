@@ -42,7 +42,7 @@ async function check() {
 
 // ---- Path / command policy helpers (B1) -------------------------------------
 // Write-capable tools: used to enforce read-only sessions and write-tool rules.
-const WRITE_TOOLS_LIST = ['Write', 'Edit', 'MultiEdit', 'NotebookEditCell'];
+const WRITE_TOOLS_LIST = ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'];
 const WRITE_TOOLS = new Set(WRITE_TOOLS_LIST);
 
 function isVmPath(p) {
@@ -55,7 +55,7 @@ function isVmPath(p) {
 
 function targetFilePath(toolName, input) {
   if (!input || typeof input !== 'object') return '';
-  return String(input.file_path || input.path || input.target || '');
+  return String(input.file_path || input.notebook_path || input.path || input.target || '');
 }
 
 function isOutsideDirs(filePath, allowedDirs) {
