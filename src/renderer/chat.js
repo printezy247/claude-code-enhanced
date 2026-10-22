@@ -2787,7 +2787,7 @@ const Chat = (() => {
       return origRemove(node);
     };
 
-    msgs.addEventListener('scroll', () => {
+    const onVirtScroll = () => {
       if (chat._allNodes.length === 0 || chat._virtLoading) return;
       const total = chat._allNodes.length;
       const s = chat._winStart;
@@ -2811,6 +2811,14 @@ const Chat = (() => {
         }
         chat._virtLoading = false;
       }
+    };
+    // At most one window check per frame: scroll fires far faster than that.
+    let virtQueued = false;
+    const raf = window.requestAnimationFrame ? (f) => window.requestAnimationFrame(f) : (f) => setTimeout(f, 16);
+    msgs.addEventListener('scroll', () => {
+      if (virtQueued) return;
+      virtQueued = true;
+      raf(() => { virtQueued = false; onVirtScroll(); });
     }, { passive: true });
   }
   function nearBottom(chat) {
