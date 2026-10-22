@@ -110,3 +110,58 @@ describe('window ownership registry', () => {
     expect(reg.ownerOf('chats', 'c1')).toBe(null);
   });
 });
+
+describe('per-window state restore', () => {
+  it('stores and reads state on a window', () => {
+    const reg = new WindowRegistry();
+    const a = fakeWin(1);
+    reg.add(a);
+    expect(reg.setState(1, { session: 's1', cwd: '/tmp', scrollback: 100 })).toBe(true);
+    expect(reg.stateOf(1)).toEqual({ session: 's1', cwd: '/tmp', scrollback: 100 });
+  });
+
+  it('merges state updates', () => {
+    const reg = new WindowRegistry();
+    reg.add(fakeWin(1));
+    reg.setState(1, { session: 's1' });
+    reg.setState(1, { cwd: '/tmp' });
+    expect(reg.stateOf(1)).toEqual({ session: 's1', cwd: '/tmp' });
+  });
+
+  it('returns null for an unknown window', () => {
+    const reg = new WindowRegistry();
+    expect(reg.stateOf(99)).toBeNull();
+    expect(reg.setState(99, { x: 1 })).toBe(false);
+  });
+
+  it('captures the last closed window state for restore', () => {
+    const reg = new WindowRegistry();
+    const a = fakeWin(1);
+    reg.add(a);
+    reg.setState(1, { session: 's1', cwd: '/tmp' });
+    reg.remove(1);
+    expect(reg.restoreState()).toEqual({ session: 's1', cwd: '/tmp' });
+  });
+
+  it('returns null when no window has been closed', () => {
+    const reg = new WindowRegistry();
+    expect(reg.restoreState()).toBeNull();
+  });
+
+  it('does not capture empty state', () => {
+    const reg = new WindowRegistry();
+    reg.add(fakeWin(1));
+    reg.remove(1);
+    expect(reg.restoreState()).toBeNull();
+  });
+
+  it('clearRestoreState forgets the captured state', () => {
+    const reg = new WindowRegistry();
+    const a = fakeWin(1);
+    reg.add(a);
+    reg.setState(1, { session: 's1' });
+    reg.remove(1);
+    reg.clearRestoreState();
+    expect(reg.restoreState()).toBeNull();
+  });
+});
