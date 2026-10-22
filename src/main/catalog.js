@@ -233,9 +233,32 @@ function protocolForNpm(npm) {
 const { resolveTemplate, placeholdersIn } = require('../shared/tpl.js');
 
 /** A generic catalog entry derived from a models.dev provider record. */
+function isSizeHint(id) {
+  const s = String(id || '').toLowerCase();
+  return /\b(mini|small|flash|haiku|nano|lite|tiny)\b/i.test(s)
+    || /[-_:](mini|small|flash|haiku|nano|lite|tiny|8b|7b|4b|3b|1b)/i.test(s);
+}
+
 function derive(md) {
   const best = modelsdev.bestModel(md.id);
-  const small = modelsdev.smallModel ? modelsdev.smallModel(md.id) : null;
+  const models = modelsdev.modelsFor(md.id) || [];
+  // Pick the cheapest/smallest model for background (title/summary) calls.
+  // Never invent a name: only ids that models.dev actually lists.
+  let smallId = '';
+  const hinted = models.filter(m => isSizeHint(m.id || m.name || ''));
+  const pool = hinted.length ? hinted : models;
+  if (pool.length) {
+    const sorted = pool.slice().sort((a, b) => {
+      const la = String(a.id || '').length;
+      const lb = String(b.id || '').length;
+      if (la !== lb) return la - lb;
+      const ca = (a.cost && (a.cost.input || a.cost.prompt)) || 999;
+      const cb = (b.cost && (b.cost.input || b.cost.prompt)) || 999;
+      return ca - cb;
+    });
+    smallId = sorted[0].id;
+  }
+  if (!smallId && models.length) smallId = models[0].id;
   const envVar = (md.env && md.env[0]) || null;
   return {
     id: md.id, md: md.id, modelsDevId: md.id, name: md.name, display: md.name, docsUrl: md.doc || '',
@@ -244,7 +267,7 @@ function derive(md) {
     baseUrl: md.api || '',
     envVar, keyHeader: 'bearer',
     defaultModel: best ? best.id : '',
-    defaultSmall: small ? small.id : (best ? best.id : ''),
+    defaultSmall: smallId,
     derived: true,
     capabilities: ['openai-compat'],
     blurb: md.api
