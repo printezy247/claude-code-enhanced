@@ -747,7 +747,7 @@ const Chat = (() => {
       d.__ed = null;
       d.__init = null;
     }
-    if (chat.alive) await ccx.invoke('chat:close', { id });
+    if (chat.alive) { try { await ccx.invoke('chat:close', { id }); } catch { /* tear down anyway */ } }
     chat.pane.remove(); chat.tabEl.remove(); chats.delete(id);
     if (window.__tabs) {
       // Clear before deleting: a stale busy flag would outlive the entry in
@@ -2861,6 +2861,7 @@ const Chat = (() => {
     else if (kind === 'hook') onHookEvent(chat, evt.msg);
     else if (kind === 'auth') onAuth(chat, evt);
     else if (kind === 'interrupted') {
+      endTurnCleanup(chat);
       if (evt.stillQueued) {
         chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' interrupted — ' + evt.stillQueued + ' queued message(s) still run next'));
         scrollDownSoft(chat);
@@ -3095,6 +3096,7 @@ const Chat = (() => {
       case 'engine_notification': onEngineNotification(chat, msg); break;
       case 'result': {
         chat.lastResult = msg;
+        endTurnCleanup(chat);
         // Local-only observability: token-per-turn log for later analysis. #obs
         try {
           const u = msg.usage || {};
@@ -3473,8 +3475,24 @@ const Chat = (() => {
     // Paint the last coalesced delta out fully before the finalized blocks
     // replace these — otherwise a short reply can lose its final sentence.
     for (const [, b] of live.blocks) if (b.type === 'text' && b.text) flushMarkdown(b);
-    for (const [, b] of live.blocks) { b.node && b.node.remove(); b.think && b.think.remove(); }
+    // Go through the patched removeChild so the virtualization list drops them
+    // too; a bare remove() left stale entries that rebuildWindow re-appended.
+    const drop = (n) => {
+      if (!n) return;
+      if (n.parentNode === chat.msgs) chat.msgs.removeChild(n); else n.remove();
+    };
+    for (const [, b] of live.blocks) { drop(b.node); drop(b.think); }
     chat.lives.delete(key);
+  }
+
+  /** A turn ended without message_stop (interrupt/error): sweep what it left. */
+  function endTurnCleanup(chat) {
+    if (chat.lives) for (const key of [...chat.lives.keys()]) clearLive(chat, key === 'main' ? null : key);
+    if (chat.tools) {
+      for (const ctx of chat.tools.values()) {
+        if (ctx.status === 'running' && ctx.setStatus) ctx.setStatus('err', 'cancelled');
+      }
+    }
   }
 
   /** JSON.parse that returns null instead of throwing on partial input. */
@@ -3492,7 +3510,7 @@ const Chat = (() => {
   const STREAM_COMMIT_MS = 50;
 
   function scheduleMarkdown(blk) {
-    if (blk._raf) return;
+    if (blk._raf || blk._timer) return;
     const paint = (final) => {
       blk._raf = null; blk._timer = null;
       const cut = splitThink(blk.text);
@@ -3599,8 +3617,11 @@ const Chat = (() => {
         if (blk.type === 'tool_use') {
           const card = live.tools.get(blk.toolId);
           if (card) {
-            card.setInput(tryJson(blk.json) || {});
-            card.setStatus('running');
+            const parsed = tryJson(blk.json);
+            card.setInput(parsed || {});
+            // Unparseable input = the stream was cut (max tokens, dropped link).
+            if (parsed === null) card.setStatus('err', 'tool input truncated');
+            else card.setStatus('running');
           }
         } else if (blk.type === 'thinking') {
           const secs = ((Date.now() - (blk.t0 || Date.now())) / 1000).toFixed(0);
@@ -3808,9 +3829,16 @@ const Chat = (() => {
       if (ctx.status === 'done' || ctx.status === 'err') renderOutput(chat, toolUseId, ctx);
       else if (ctx.liveText) writeLiveOutput(ctx);
     }
+    head.setAttribute('tabindex', '0');
+    head.setAttribute('role', 'button');
+    head.setAttribute('aria-expanded', 'false');
+    head.addEventListener('keydown', (ev) => {
+      if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); head.click(); }
+    });
     head.addEventListener('click', () => {
       const opening = body.classList.contains('hidden');
       body.classList.toggle('hidden');
+      head.setAttribute('aria-expanded', String(opening));
       if (opening) {
         const d = body.querySelector('.monaco-diff');
         if (d && d.__init) d.__init();
@@ -3871,8 +3899,11 @@ const Chat = (() => {
     // Bound the registry: entries are only needed to resolve results, and a
     // long session would otherwise hold every card's context forever. #8
     if (chat.tools.size > 300) {
-      const oldest = chat.tools.keys().next().value;
-      chat.tools.delete(oldest);
+      // Never evict a card still waiting on its result: it would spin forever.
+      let victim = null;
+      for (const [k, v] of chat.tools) { if (v.status !== 'running') { victim = k; break; } }
+      // All running (hard cap, e.g. a runaway turn): fall back to the oldest.
+      chat.tools.delete(victim !== null ? victim : chat.tools.keys().next().value);
     }
     // Callers set the card to 'running' after creation; when a result arrived
     // first they must resolve instead — see the earlyResolved guards there.
@@ -4216,7 +4247,8 @@ const Chat = (() => {
     // Showing only the notice looks like the tool returned nothing, so offer the
     // path. #50
     const spill = /Full output saved to:\s*(\S+)/.exec(String(text));
-    out.textContent = String(text).slice(0, 8000);
+    const full = String(text);
+    out.textContent = full.slice(0, 8000) + (full.length > 8000 ? '\n… (' + (full.length - 8000) + ' more characters not shown)' : '');
     if (spill) {
       const note = el('div', 'tool-spill');
       note.appendChild(el('span', 'hint', 'output spilled to file — '));
