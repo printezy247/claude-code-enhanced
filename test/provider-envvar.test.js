@@ -82,3 +82,49 @@ describe('environment-variable credentials', () => {
     expect(providers.resolveApiKey(provider, auth, { DEEPSEEK_API_KEY: 'deepseek-secret' })).toBe('deepseek-secret');
   });
 });
+
+// A SECOND env-auth provider, and the rule that makes both the resolver and
+// the proxy's secret cache agree: one shared list of env var names.
+describe('the shared env-var list', () => {
+  const auth = { resolve: () => ({}) };
+
+  it('resolves a second env-auth provider (Groq)', () => {
+    const provider = { uid: 'g1', presetId: 'groq', name: 'Groq' };
+    providers.useAuth(auth);
+    expect(providers.resolveApiKey(provider, auth, { GROQ_API_KEY: 'gsk-secret' })).toBe('gsk-secret');
+  });
+
+  it('names the env var of the second provider in the shared list', () => {
+    const provider = { uid: 'g1', presetId: 'groq', name: 'Groq' };
+    expect(providers.envVarNames(provider)).toContain('GROQ_API_KEY');
+  });
+
+  it('gives the resolver and the proxy secret cache the SAME list', () => {
+    // The proxy cache (main.js refreshSecretCache) reads envVarNames(); the
+    // resolver (resolveApiKey) reads the same helper. If they ever diverge,
+    // the proxy sends no credential while the resolver says there is one.
+    const provider = { uid: 'g1', presetId: 'groq', name: 'Groq' };
+    const names = providers.envVarNames(provider);
+    const key = providers.resolveApiKey(provider, auth, { GROQ_API_KEY: 'gsk-secret' });
+    expect(names.filter((n) => 'gsk-secret' === ({ GROQ_API_KEY: 'gsk-secret' })[n])).toHaveLength(1);
+    expect(key).toBe('gsk-secret');
+  });
+
+  it('never uses a configuration value as the credential', () => {
+    // Azure records AZURE_RESOURCE_NAME next to AZURE_API_KEY. Sending the
+    // resource name as a bearer token looks like a bad key, not a missing one.
+    const provider = { uid: 'az1', presetId: 'azure', name: 'Azure OpenAI' };
+    const names = providers.envVarNames(provider);
+    expect(names).toContain('AZURE_API_KEY');
+    expect(names).not.toContain('AZURE_RESOURCE_NAME');
+    const env = { AZURE_RESOURCE_NAME: 'my-resource', AZURE_API_KEY: 'azure-secret' };
+    expect(providers.resolveApiKey(provider, auth, env)).toBe('azure-secret');
+  });
+
+  it('finds the models.dev env var of a curated preset whose catalog id differs', () => {
+    // The Kimi preset is 'moonshotai' on models.dev.
+    const provider = { uid: 'k1', presetId: 'kimi', name: 'Kimi' };
+    expect(providers.envVarNames(provider)).toContain('MOONSHOT_API_KEY');
+    expect(providers.resolveApiKey(provider, auth, { MOONSHOT_API_KEY: 'sk-moon' })).toBe('sk-moon');
+  });
+});
