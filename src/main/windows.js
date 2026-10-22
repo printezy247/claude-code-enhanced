@@ -16,18 +16,21 @@
  */
 class WindowRegistry {
   constructor() {
-    // webContents.id -> { win, chats:Set<string>, sessions:Set<string> }
+    // webContents.id -> { win, chats:Set<string>, sessions:Set<string>, state:object }
     this.entries = new Map();
     // "chats:c1" -> true: the item died with its window. Its frames are
     // dropped, NOT routed to another window: a dead chat's output must not
     // appear in a live one. #F3
     this.dead = new Set();
+    // The state of the most recently closed window, so a reopened window can
+    // restore it (per-window state restore). #C7
+    this.lastClosedState = null;
   }
 
   /** Register a window. Returns the id that identifies it. */
-  add(win) {
+  add(win, state) {
     const id = win.webContents.id;
-    this.entries.set(id, { win, chats: new Set(), sessions: new Set() });
+    this.entries.set(id, { win, chats: new Set(), sessions: new Set(), state: state || {} });
     return id;
   }
 
@@ -43,9 +46,33 @@ class WindowRegistry {
     if (e) {
       for (const c of e.chats) this._markDead('chats', c);
       for (const s of e.sessions) this._markDead('sessions', s);
+      // Remember this window's state so a reopened window can restore it.
+      if (e.state && Object.keys(e.state).length) this.lastClosedState = { ...e.state };
     }
     this.entries.delete(id);
   }
+
+  /** Store per-window state (session/conversation, scrollback, cwd). */
+  setState(id, state) {
+    const e = this.entries.get(id);
+    if (!e) return false;
+    e.state = { ...(e.state || {}), ...(state || {}) };
+    return true;
+  }
+
+  /** Read a window's stored state. */
+  stateOf(id) {
+    const e = this.entries.get(id);
+    return e ? (e.state ? { ...e.state } : {}) : null;
+  }
+
+  /** The state captured from the most recently closed window, if any. */
+  restoreState() {
+    return this.lastClosedState ? { ...this.lastClosedState } : null;
+  }
+
+  /** Forget the captured closed-window state. */
+  clearRestoreState() { this.lastClosedState = null; }
 
   /**
    * Remember that an item is gone, so its late frames are dropped. #R1

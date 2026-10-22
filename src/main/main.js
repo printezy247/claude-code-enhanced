@@ -80,8 +80,7 @@ function refreshSecretCache() {
     // at all ("Go requires a credential").
     let apiKey = r.apiKey || '';
     if (!apiKey) {
-      const entry = providers.entryFor(p) || {};
-      const names = [p.envVar, entry.envVar, ...(Array.isArray(entry.env) ? entry.env : [])].filter(Boolean);
+      const names = providers.envVarNames ? providers.envVarNames(p) : [];
       const source = { ...(loginEnv() || {}), ...process.env };
       for (const name of names) {
         if (source[name]) { apiKey = String(source[name]).trim(); break; }
@@ -215,6 +214,7 @@ function createTray() {
     tray.setToolTip('Claude Code Enhanced');
     const menu = Menu.buildFromTemplate([
       { label: 'Show', click: () => showWindows() },
+      { label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => { const c = createWindow(); try { c.win.focus(); } catch { /* not ready */ } } },
       { type: 'separator' },
       { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
     ]);
@@ -406,7 +406,7 @@ function proxyBaseUrl(provider) {
 }
 
 // ---------- window ----------------------------------------------------------
-function createWindow() {
+function createWindow(initialState) {
   const w = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -429,8 +429,14 @@ function createWindow() {
   // The newest window is the active one: the tray, the dialogs and the
   // notifications act on it. #feat-multi-window
   win = w;
+  // Per-window state restore: a reopened window inherits the state captured
+  // from the last closed one unless an explicit state was passed in. #C7
+  if (initialState == null) {
+    const captured = windowRegistry.restoreState();
+    if (captured) { initialState = captured; windowRegistry.clearRestoreState(); }
+  }
   // Everything this window opens belongs to it.
-  const wcId = windowRegistry.add(w);
+  const wcId = windowRegistry.add(w, initialState || {});
   // Re-probe whenever a window regains focus while we still think the CLI is
   // absent. Startup can race a claude self-update (the ~/.local/bin/claude
   // symlink is briefly dangling), which stuck the "CLI not found" banner
