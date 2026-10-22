@@ -31,6 +31,7 @@ const INVOKE_CHANNELS = new Set([
   'session:fork', 'session:rename', 'session:tag',
   'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
   'file:read', 'git:info', 'project:files', 'project:scripts', 'skill:import',
+  'skills:toggle', 'agents:toggle',
   'dialog:pickDir', 'dialog:pickFiles', 'clipboard:write', 'shell:openExternal', 'shell:reveal',
 ]);
 const SEND_CHANNELS = new Set(['session:write']);

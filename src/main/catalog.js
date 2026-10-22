@@ -284,7 +284,10 @@ function derive(md) {
  * confusing "401 invalid key" instead of "no credential set", so only
  * secret-shaped names are ever read as a key.
  */
-const NON_SECRET_ENV = /(_ID|_NAME|_PROJECT|_LOCATION|_HOST|_ACCOUNT|_ENDPOINT|_REGION|_PORT|_PATH|_FILE|_CREDENTIALS|_ACCESS_KEY|_PRODUCT)$/i;
+// AWS_ACCESS_KEY_ID is excluded by the _ID rule, so _ACCESS_KEY must NOT be
+// here: SUBMODEL_INSTAGEN_ACCESS_KEY is the credential of the submodel
+// provider, and excluding it made that provider's env-var auth never resolve.
+const NON_SECRET_ENV = /(_ID|_NAME|_PROJECT|_LOCATION|_HOST|_ACCOUNT|_ENDPOINT|_REGION|_PORT|_PATH|_FILE|_CREDENTIALS|_PRODUCT)$/i;
 const SECRET_ENV = /(API_?KEY|_TOKEN$|_SECRET$|_KEY$|_PASSWORD$|_PAT$)/i;
 function isSecretEnv(name) {
   const n = String(name || '');
@@ -328,6 +331,12 @@ function build() {
       if (!Array.isArray(e.env)) e.env = secret.slice();
     }
     e.modelCount = rec ? Object.keys(rec.models || {}).length : 0;
+    // Every catalog entry IS the catalog: the marker lets the picker say
+    // "catalog-only" when a provider has no /models endpoint of its own.
+    e.source = 'catalog';
+    // A provider that cannot serve the main model falls back to its own
+    // small/fast model, which is by construction a model it really serves.
+    if (!e.fallbackModel) e.fallbackModel = e.defaultSmall || '';
     out.push(e);
     seen.add(e.id);
     if (e.modelsDevId) seen.add(e.modelsDevId);
@@ -336,6 +345,8 @@ function build() {
     if (seen.has(id) || CURATED.some(c => c.id === id)) continue;
     const e = derive(rec);
     e.modelCount = Object.keys(rec.models || {}).length;
+    e.source = 'catalog';
+    if (!e.fallbackModel) e.fallbackModel = e.defaultSmall || '';
     out.push(e);
   }
   buildCache = out;

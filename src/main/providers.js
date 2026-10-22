@@ -91,6 +91,10 @@ function makeInstance(entry, values = {}) {
     placeholders: entry.baseUrlTemplate ? placeholders : undefined,
     model: values.model || entry.defaultModel || '',
     smallFastModel: values.smallFastModel || entry.defaultSmall || '',
+    // A provider may name the model it falls back to when the main one is
+    // missing or overloaded. Declared here so it is persisted with the
+    // instance and editable in the provider UI. #A6
+    fallbackModel: values.fallbackModel !== undefined ? values.fallbackModel : (entry.fallbackModel || ''),
     envVar: (values.envVar !== undefined) ? values.envVar : (entry.envVar || null),
     models: values.models ? values.models.slice() : (entry.recommendedModels || []).slice(), blacklist: [], whitelist: [],
     envExtras: {}, headers: {},
@@ -216,6 +220,9 @@ function publicInstance(p) {
     docsUrl: entry.docsUrl || '',
     model: p.model || '',
     smallFastModel: p.smallFastModel || entry.defaultSmall || '',
+    // The model this provider falls back to: the instance's own choice, then
+    // the catalog's. Never a secret, so it travels to the renderer freely. #A6
+    fallbackModel: p.fallbackModel || entry.fallbackModel || '',
     options: p.options || {},
     headers: p.headers || {},
     models: Array.isArray(p.models) ? p.models : [],
@@ -416,6 +423,7 @@ function normalizeModelFields(instance) {
   const one = (m) => String(m || '').split(',')[0].trim();
   if ('model' in instance) instance.model = one(instance.model);
   if ('smallFastModel' in instance) instance.smallFastModel = one(instance.smallFastModel);
+  if ('fallbackModel' in instance) instance.fallbackModel = one(instance.fallbackModel);
   return instance;
 }
 

@@ -34,6 +34,14 @@ function modelContext(provider, model) {
   const id = String(model || (provider && provider.model) || '').trim();
   if (!id) return 0;
 
+  const cacheKey = `${pid || (provider && provider.baseUrl) || ''}:${id}`;
+  if (contextCache.has(cacheKey) && contextCache.get(cacheKey) > 0) {
+    return contextCache.get(cacheKey);
+  }
+  if (contextCache.has(id) && contextCache.get(id) > 0) {
+    return contextCache.get(id);
+  }
+
   let result = 0;
   if (pid) {
     const cleanId = modelsdev.normalizeModelId ? modelsdev.normalizeModelId(id) : id.replace(/-\d{4}-\d{2}-\d{2}$/, '');
@@ -72,4 +80,40 @@ function modelContext(provider, model) {
   return result;
 }
 
-module.exports = { modelContext, ENGINE_DEFAULT_WINDOW, contextCache };
+/** Probe provider's /models endpoint for context window (#A4) */
+async function probeContextWindow(provider, model) {
+  const id = String(model || (provider && provider.model) || '').trim();
+  if (!id) return 0;
+  const baseUrl = provider && (provider.baseUrl || '');
+  const pid = provider && (provider.presetId || provider.modelsDevId || provider.id || '');
+  const cacheKey = `${pid || baseUrl}:${id}`;
+  if (contextCache.has(cacheKey)) return contextCache.get(cacheKey);
+
+  if (!baseUrl) return 0;
+  try {
+    const url = baseUrl.replace(/\/+$/, '') + '/models';
+    const res = await fetch(url);
+    if (!res || !res.ok) {
+      contextCache.set(cacheKey, 0);
+      return 0;
+    }
+    const json = await res.json();
+    const list = Array.isArray(json) ? json : (Array.isArray(json && json.data) ? json.data : []);
+    const hit = list.find(m => m && (m.id === id || m.name === id));
+    if (hit) {
+      const ctx = Number(hit.context_length) || Number(hit.max_context_tokens) || Number(hit.context_window) || 0;
+      if (ctx > 0) {
+        contextCache.set(cacheKey, ctx);
+        contextCache.set(id, ctx);
+        return ctx;
+      }
+    }
+    contextCache.set(cacheKey, 0);
+    return 0;
+  } catch {
+    contextCache.set(cacheKey, 0);
+    return 0;
+  }
+}
+
+module.exports = { modelContext, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };

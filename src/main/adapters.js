@@ -213,7 +213,7 @@ function buildOpenAIBody(body, wantStream, prov) {
     const tc = body.tool_choice;
     if (tc === 'any' || (tc && tc.type === 'any')) out.tool_choice = 'required';
     else if (tc && tc.type === 'tool' && tc.name) out.tool_choice = { type: 'function', function: { name: tc.name } };
-    else if (tc === 'none') out.tool_choice = 'none';
+    else if (tc === 'none' || (tc && tc.type === 'none')) out.tool_choice = 'none';
     else out.tool_choice = 'auto';
   }
   // Both apply with or without tools: summaries and titles are tool-less calls

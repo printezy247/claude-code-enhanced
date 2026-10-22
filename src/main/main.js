@@ -1683,6 +1683,17 @@ function registerIpc() {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
+
+  // Skill and agent enable/disable (#C4)
+  const skilltoggle = require('./skilltoggle');
+  handle('skills:toggle', async ({ name, enabled }) => {
+    skilltoggle.setSkill(name, !enabled);
+    return { ok: true, enabled: skilltoggle.isSkillEnabled(name) };
+  });
+  handle('agents:toggle', async ({ name, enabled }) => {
+    skilltoggle.setAgent(name, !enabled);
+    return { ok: true, enabled: skilltoggle.isAgentEnabled(name) };
+  });
   // Ollama model manager: running models, catalog, load/unload with context size
   const ollamaBase = (p) => (p && p.baseUrl ? p.baseUrl.replace(/\/+$/, '') : null);
   handle('ollama:ps', async ({ uid }) => {

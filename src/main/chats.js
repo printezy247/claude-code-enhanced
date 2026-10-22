@@ -956,7 +956,17 @@ class ChatManager extends EventEmitter {
     chat.dynamicMcp = next;
     return res;
   }
-  async agents(id) { return await this._chat(id).q.supportedAgents(); }
+  async agents(id) {
+    const skilltoggle = require('./skilltoggle');
+    const raw = await this._chat(id).q.supportedAgents();
+    return (Array.isArray(raw) ? raw : []).map(a => {
+      const name = typeof a === 'string' ? a : (a && a.name) || '';
+      return {
+        ...(typeof a === 'object' && a !== null ? a : { name }),
+        enabled: skilltoggle.isAgentEnabled(name),
+      };
+    });
+  }
   async applyFlags(id, patch) { return await this._chat(id).q.applyFlagSettings(patch || {}); }
   // Output styles are files on disk; the CLI lists them after a reload. #feat-output-styles
   async styles(id) {
@@ -1455,7 +1465,14 @@ class ChatManager extends EventEmitter {
         const fm = text.split(/^---\s*$/m)[1] || '';
         const name = (fm.match(/^name:\s*(.+)$/m) || [])[1] || e.name;
         const description = (fm.match(/^description:\s*(.+)$/m) || [])[1] || '';
-        out.push({ name: name.trim(), description: description.trim(), source: root.startsWith(process.env.HOME || os.homedir()) ? 'user' : 'project' });
+        const n = name.trim();
+        const skilltoggle = require('./skilltoggle');
+        out.push({
+          name: n,
+          description: description.trim(),
+          source: root.startsWith(process.env.HOME || os.homedir()) ? 'user' : 'project',
+          enabled: skilltoggle.isSkillEnabled(n),
+        });
       }
     }
     return out;
