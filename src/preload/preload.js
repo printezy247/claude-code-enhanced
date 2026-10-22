@@ -1,5 +1,5 @@
 'use strict';
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 // Least-privilege IPC bridge. A generic invoke() that forwards any channel
 // would hand the renderer every main-process capability by name; the surface
@@ -36,7 +36,7 @@ const INVOKE_CHANNELS = new Set([
   'plugins:list', 'plugins:pick', 'plugins:install', 'plugins:uninstall',
   'mcp:list-tools', 'mcp:call-tool', 'mcp:list-resources', 'mcp:read-resource', 'mcp:authenticate',
   'skills:toggle', 'agents:toggle',
-  'dialog:pickDir', 'dialog:pickFiles', 'clipboard:write', 'shell:openExternal', 'shell:reveal',
+  'dialog:pickDir', 'dialog:pickFiles', 'clipboard:write', 'shell:openExternal', 'shell:reveal', 'file:share',
 ]);
 const SEND_CHANNELS = new Set(['session:write']);
 
@@ -51,6 +51,8 @@ const checkSend = guard(SEND_CHANNELS, 'send');
 
 contextBridge.exposeInMainWorld('ccx', {
   invoke: (channel, payload) => ipcRenderer.invoke(checkInvoke(channel), payload),
+  // The real disk path of a dropped File (File.path is gone in current Electron).
+  pathForFile: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
   send: (channel, payload) => ipcRenderer.send(checkSend(channel), payload),
   // Allowlist snapshot for the CI drift test (test/security.test.js asserts
   // every listed channel has a handler in main.js). Runtime code never reads it.

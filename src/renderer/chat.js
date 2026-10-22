@@ -151,7 +151,6 @@ const Chat = (() => {
         <span class="chat-header-sep"></span>
         <button class="chat-btn chat-mgr-btn hidden" title="Model manager: load / unload, context size, keep-alive"><span data-icon="gear"></span> models</button>
         <button class="chat-btn chat-stop hidden" title="Interrupt (Esc)"><span data-icon="square"></span> stop</button>
-        <button class="chat-btn chat-build-now hidden" title="Stop investigating and build now (Interrupt & steer to immediate implementation)"><span data-icon="bolt"></span> build now</button>
         <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work"><span data-icon="play"></span> continue</button>
         <button class="chat-btn hdr-more" title="Chat actions" aria-label="Chat actions"><span data-icon="dots"></span></button>
       </div>
@@ -203,7 +202,6 @@ const Chat = (() => {
       id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider),
       pane, msgs: pane.querySelector('.chat-msgs'), composer: pane.querySelector('.chat-input'),
       sendBtn: pane.querySelector('.chat-send'), stopBtn: pane.querySelector('.chat-stop'),
-      buildNowBtn: pane.querySelector('.chat-build-now'),
       statusLine: pane.querySelector('.chat-statusline .sl-left'),
       statusRight: pane.querySelector('.chat-statusline .sl-right'),
       dot: pane.querySelector('.chat-dot'), providerEl: pane.querySelector('.chat-provider'),
@@ -340,14 +338,6 @@ const Chat = (() => {
     });
     chat.effortBtn.addEventListener('click', () => cycleEffort(chat));
     chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id }));
-    if (chat.buildNowBtn) {
-      chat.buildNowBtn.addEventListener('click', async () => {
-        await ccx.invoke('chat:interrupt', { id });
-        chat.composer.value = 'Stop investigating. Apply the requested changes directly based on what you already know.';
-        chat.send();
-      });
-    }
-
     // Header overflow menu. 13 buttons wrapped onto three rows; everything that
     // is not model/mode/stop now lives behind one "⋯". #33
     const forkConversation = async () => {
@@ -501,6 +491,12 @@ const Chat = (() => {
     // paste images straight into the chat
     chat.composer.addEventListener('paste', (e) => {
       const items = [...(e.clipboardData?.items || [])];
+      const fileItem = items.find(i => i.kind === 'file' && !i.type.startsWith('image/'));
+      if (fileItem) {
+        const f = fileItem.getAsFile();
+        const p = f && ccx.pathForFile ? ccx.pathForFile(f) : '';
+        if (p) { e.preventDefault(); addFileRef(chat, p); return; }
+      }
       const imgItem = items.find(i => i.type.startsWith('image/'));
       if (!imgItem) return;
       e.preventDefault();
@@ -554,11 +550,27 @@ const Chat = (() => {
       const r = await ccx.invoke('dialog:pickFiles');
       if (r.ok && (r.files || []).length) applyAttachedFiles(chat, r.files);
     });
-    ['dragover', 'drop'].forEach(ev => chat.composer.addEventListener(ev, (e) => {
-      e.preventDefault();
-      if (ev === 'dragover') return;
-      if (e.dataTransfer && e.dataTransfer.files.length) attachFiles(chat, e.dataTransfer.files);
-    }));
+    // The whole chat is a drop target (not just the textbox); files with a real
+    // disk path go by reference, small images still travel inline.
+    let dragDepth = 0;
+    const dropFiles = (files) => {
+      for (const file of [...files]) {
+        const p = ccx.pathForFile ? ccx.pathForFile(file) : '';
+        if (String(file.type || '').startsWith('image/') && file.size < 4 * 1024 * 1024) attachFiles(chat, [file]);
+        else if (p) addFileRef(chat, p);
+        else attachFiles(chat, [file]);
+      }
+    };
+    chat.pane.addEventListener('dragenter', (e) => {
+      if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files'))) return;
+      e.preventDefault(); dragDepth++; chat.pane.classList.add('drop-active');
+    });
+    chat.pane.addEventListener('dragover', (e) => { e.preventDefault(); });
+    chat.pane.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) chat.pane.classList.remove('drop-active'); });
+    chat.pane.addEventListener('drop', (e) => {
+      e.preventDefault(); dragDepth = 0; chat.pane.classList.remove('drop-active');
+      if (e.dataTransfer && e.dataTransfer.files.length) dropFiles(e.dataTransfer.files);
+    });
     chat.composer.addEventListener('keydown', (e) => {
       // IME composition: Enter/arrows belong to the composition, not the app.
       if (e.isComposing || e.keyCode === 229) return;
@@ -798,11 +810,22 @@ const Chat = (() => {
     renderImageChips(chat);
   }
 
-  /** Files already read by the main process: images become blocks, text inlines. */
+  /** Mention a file by path so the agent reads it itself (PDFs, big or binary files). */
+  function addFileRef(chat, p) {
+    const ref = '@' + (/\s/.test(p) ? '"' + p + '"' : p);
+    const cur = chat.composer.value;
+    chat.composer.value = cur + (cur && !/\s$/.test(cur) ? ' ' : '') + ref + ' ';
+    autosize(chat.composer);
+    chat.composer.focus();
+  }
+
+  /** Files already read by the main process: images become blocks, text inlines, the rest go by path. */
   function applyAttachedFiles(chat, files) {
     for (const f of files) {
       if (f.base64 && f.mediaType) {
         chat.pendingImages.push({ media_type: f.mediaType, data: f.base64 });
+      } else if (f.ref && f.path) {
+        addFileRef(chat, f.path);
       } else if (f.text != null) {
         chat.composer.value += (chat.composer.value ? '\n' : '') + '@' + f.name + '\n' + f.text;
       } else if (f.error) {
@@ -2560,8 +2583,19 @@ const Chat = (() => {
       setTimeout(() => send(), 0);
       return true;
     }
+    if (PANE_COMMANDS[cmd]) {
+      const k = document.querySelector('#split-kind');
+      if (k) { k.value = PANE_COMMANDS[cmd]; k.dispatchEvent(new Event('change')); }
+      if (window.toggleSplit && !document.querySelector('#main.split')) window.toggleSplit(true);
+      return true;
+    }
+    if (cmd === '/attach') { chat.attachBtn.click(); return true; }
+    if (cmd === '/status') {
+      toast('model ' + (chat.model || 'default') + ' · mode ' + chat.mode + ' · ' + (chat.cwd || ''), 'ok');
+      return true;
+    }
     if (cmd === '/help') {
-      toast('Built-ins: /compact · /handoff · /clear · /cost · /model · /review · /help — every other /command runs in the engine', '');
+      toast('Built-ins: /compact · /handoff · /clear · /cost · /model · /review · /attach · /context · /status · /files · /changes · /diff · /terminal · /preview · /help — every other /command runs in the engine', '');
       return true;
     }
     return false; // engine-side command (skills, plugins, custom)
@@ -2875,6 +2909,11 @@ const Chat = (() => {
         scrollDownSoft(chat);
       }
     }
+    else if (kind === 'loop-guard') {
+      chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' stopped — the agent was repeating itself (' + String(evt.reason || 'same step again') + '). Send a new instruction to continue.'));
+      toast('Stopped a repeating loop', 'err');
+      scrollDownSoft(chat);
+    }
     else if (kind === 'error') appendError(chat, evt.error);
     else if (kind === 'exit') {
       chat.alive = false; chat.tabEl.classList.add('dead'); setBusy(chat, false);
@@ -2931,7 +2970,6 @@ const Chat = (() => {
     publishTabState(chat);
     chat.dot.classList.toggle('busy', busy);
     chat.stopBtn.classList.toggle('hidden', !busy);
-    if (chat.buildNowBtn) chat.buildNowBtn.classList.toggle('hidden', !busy);
     chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
     updateBusyUi(chat);
     if (busy) { chat.statusLine.textContent = 'working…'; startContextPolling(chat); }
@@ -3766,6 +3804,31 @@ const Chat = (() => {
     return depth;
   }
 
+  /** Buttons under a finished Write card: reveal the file, or save a copy. */
+  function addFileShare(chat, ctx) {
+    const file = String(ctx.input.file_path);
+    const bar = el('div', 'file-share');
+    bar.appendChild(el('span', 'fs-name mono', file.split('/').pop()));
+    const act = (label, action, hint) => {
+      const b = el('button', 'btn small', label);
+      b.title = hint;
+      b.addEventListener('click', async () => {
+        try {
+          const r = await ccx.invoke('file:share', { id: chat.id, path: file, action });
+          if (r && r.savedTo) toast('Saved to ' + r.savedTo, 'ok');
+        } catch (e) { toast(String((e && e.message) || e), 'err'); }
+      });
+      return b;
+    };
+    bar.appendChild(act('Show in folder', 'reveal', 'Open the file manager at this file'));
+    bar.appendChild(act('Save a copy…', 'save', 'Save a copy of this file where you choose'));
+    const copy = el('button', 'btn small', 'Copy path');
+    copy.addEventListener('click', () => { ccx.invoke('clipboard:write', { text: file }); toast('Path copied', 'ok'); });
+    bar.appendChild(copy);
+    ctx.shareBar = bar;
+    ctx.card.appendChild(bar);
+  }
+
   function makeToolCard(chat, toolUseId, name, input, parentId) {
     chat.msgs.querySelector('.chat-empty')?.remove();
     const card = el('div', 'tool-card kind-' + toolKind(name));
@@ -3802,6 +3865,7 @@ const Chat = (() => {
         if (note) title.textContent = note + ' — ' + toolTitle(name, ctx.input);
         else title.textContent = toolTitle(name, ctx.input);
         if (status === 'done' || status === 'err') renderOutput(chat, toolUseId);
+        if (status === 'done' && name === 'Write' && ctx.input && ctx.input.file_path && !ctx.shareBar) addFileShare(chat, ctx);
       },
       setInput(inp) { ctx.input = inp || {}; title.textContent = toolTitle(name, ctx.input); renderInput(); },
     };
@@ -4794,7 +4858,16 @@ const Chat = (() => {
     { name: 'cost', description: 'Tokens and cost so far' },
     { name: 'model', description: 'Switch model' },
     { name: 'help', description: 'What cce can do here' },
+    { name: 'attach', description: 'Attach files (any type) to this message' },
+    { name: 'context', description: 'Show the context window breakdown' },
+    { name: 'status', description: 'Model, mode and folder of this chat' },
+    { name: 'files', description: 'Open the Files tab' },
+    { name: 'changes', description: 'Open the Changes tab' },
+    { name: 'diff', description: 'Open the last edit diff' },
+    { name: 'terminal', description: 'Open a terminal in this folder' },
+    { name: 'preview', description: 'Open the Preview tab' },
   ];
+  const PANE_COMMANDS = { '/context': 'tasks', '/files': 'files', '/changes': 'changes', '/diff': 'diff', '/terminal': 'terminal', '/preview': 'preview' };
 
   /**
    * Every command the session offers, with descriptions. The engine only lists
@@ -4830,7 +4903,7 @@ const Chat = (() => {
     const q = now.slice(1).toLowerCase();
     const starts = all.filter(c => c.name.toLowerCase().startsWith(q));
     const contains = q ? all.filter(c => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q)) : [];
-    chat.slashItems = starts.concat(contains).slice(0, 14);
+    chat.slashItems = starts.concat(contains).slice(0, 24);
     if (!chat.slashItems.length) return hideSlash(chat);
     if (chat.slashIdx < 0 || chat.slashIdx >= chat.slashItems.length) chat.slashIdx = 0;
     renderSlash(chat);

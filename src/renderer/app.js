@@ -1036,6 +1036,61 @@ function renderSplit() {
     body.appendChild(el('div', 'hint', 'No edit diff yet in this chat.'));
   }
 }
+/**
+ * Tabs other than Overview can be hidden; the choice is remembered. Overview
+ * is never offered here, it is always on.
+ */
+const HIDEABLE_TABS = [
+  ['changes', 'Changes'], ['files', 'Files'], ['terminal', 'Terminal'], ['diff', 'Diff'], ['preview', 'Preview'],
+];
+function hiddenTabs() {
+  const v = lsGet('cce.splitHidden', []);
+  return new Set(Array.isArray(v) ? v.filter((k) => HIDEABLE_TABS.some(([id]) => id === k)) : []);
+}
+function applyHiddenTabs() {
+  const hidden = hiddenTabs();
+  document.querySelectorAll('#splitpane .split-tab').forEach((t) => {
+    if (t.dataset.kind !== 'tasks') t.classList.toggle('hidden', hidden.has(t.dataset.kind));
+  });
+  const k = document.querySelector('#split-kind');
+  if (k && hidden.has(k.value)) { k.value = 'tasks'; k.dispatchEvent(new Event('change')); }
+}
+function initSplitTabMenu() {
+  const btn = document.querySelector('#btn-split-tabs');
+  if (!btn) return;
+  applyHiddenTabs();
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = document.querySelector('#split-tabs-menu');
+    if (open) { open.remove(); return; }
+    const menu = el('div', 'split-tabs-menu');
+    menu.id = 'split-tabs-menu';
+    menu.setAttribute('role', 'menu');
+    const hidden = hiddenTabs();
+    for (const [kind, label] of HIDEABLE_TABS) {
+      const row = el('label', 'split-tabs-row');
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = !hidden.has(kind);
+      cb.addEventListener('change', () => {
+        const now = hiddenTabs();
+        if (cb.checked) now.delete(kind); else now.add(kind);
+        lsSet('cce.splitHidden', [...now]);
+        applyHiddenTabs();
+      });
+      row.appendChild(cb);
+      row.appendChild(el('span', '', label));
+      menu.appendChild(row);
+    }
+    btn.after(menu);
+    const close = (ev) => {
+      if (menu.contains(ev.target) || ev.target === btn) return;
+      menu.remove();
+      document.removeEventListener('click', close, true);
+    };
+    document.addEventListener('click', close, true);
+  });
+}
 window.toggleSplit = toggleSplit;
 window.renderSplit = renderSplit;
 // The agent's task list changed: redraw the Overview now (coalesced, so a burst
@@ -1065,30 +1120,18 @@ function renderTasks(target, cwd, only) {
   const pending = [];
   // A single-card update must not cancel a full render that is still in flight.
   const seq = only ? -1 : (target.__taskSeq = (target.__taskSeq || 0) + 1);
-  const openState = lsGet('cce.railCards', {});
-  // Collapsible cards: the header is a button that remembers its state, the
-  // badge on the right summarises the card while it is closed.
+  // Overview cards are always open (like the desktop app): the header is a
+  // plain title row, the badge on the right summarises the card.
   const card = (key, title, icon) => {
     const c = el('section', 'task-card');
     c.dataset.card = key;
-    const head = el('button', 'task-card-head');
-    head.appendChild(elIcon('span', 'tc-ico', CCEIcons.svg(icon, 14)));
+    const head = el('div', 'task-card-head');
+    head.appendChild(elIcon('span', 'tc-ico', CCEIcons.svg(icon, 12)));
     const h = el('h4', '', title);
     head.appendChild(h);
     const badge = el('span', 'tc-badge', '');
     head.appendChild(badge);
-    head.appendChild(elIcon('span', 'tc-caret', CCEIcons.svg('chevron', 12)));
     const inner = el('div', 'task-card-body');
-    const isOpen = openState[key] !== false;
-    c.classList.toggle('closed', !isOpen);
-    head.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    head.addEventListener('click', () => {
-      const now = c.classList.toggle('closed');
-      head.setAttribute('aria-expanded', now ? 'false' : 'true');
-      const st = lsGet('cce.railCards', {});
-      st[key] = !now;
-      lsSet('cce.railCards', st);
-    });
     c.appendChild(head);
     c.appendChild(inner);
     c.h = h; c.badge = badge; c.inner = inner;
@@ -2845,6 +2888,7 @@ function wireChrome() {
     k.dispatchEvent(new Event('change'));
   }));
   $('#btn-split-refresh')?.addEventListener('click', () => renderSplit());
+  initSplitTabMenu();
 
   // Layout toggles: left sidebar (Ctrl+\) and the right tasks panel. #feat-desktop-layout
   $('#btn-sidebar')?.addEventListener('click', () => toggleSidebar());

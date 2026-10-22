@@ -174,7 +174,7 @@ describe('conversation categories', () => {
 });
 
 describe('right rail', () => {
-  it('uses tabs, collapsible cards and shows the session', async () => {
+  it('uses tabs, always-open cards and shows the session', async () => {
     h.window.toggleSplit(true);
     await flush(4);
     const tabs = doc().querySelectorAll('#splitpane .split-tab');
@@ -183,8 +183,8 @@ describe('right rail', () => {
     expect(sess.textContent).toContain('model');
     const head = doc().querySelector('.task-card[data-card="context"] .task-card-head');
     click(head);
-    expect(head.closest('.task-card').classList.contains('closed')).toBe(true);
-    expect(head.getAttribute('aria-expanded')).toBe('false');
+    expect(head.closest('.task-card').classList.contains('closed')).toBe(false);
+    expect(head.querySelector('.tc-caret')).toBe(null);
   });
 
   it('the Files tab filters', async () => {

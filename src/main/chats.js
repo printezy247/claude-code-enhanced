@@ -14,6 +14,8 @@ const { promptAppend: bootstrapPrompt, syncedSkillsPlugin } = require('./bootstr
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { compactBashOutput, compactToolOutput, toolResultText, clampMaxChars } = require('./toolfilter');
 const managedconfig = require('./managedconfig');
+const { createLoopGuard } = require('./loopguard');
+const { absFor, shareablePath } = require('./fileshare');
 const sdkoptions = require('./sdkoptions');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
@@ -769,6 +771,8 @@ class ChatManager extends EventEmitter {
       providerInstance,
       push: stream.push, close: stream.close, lastResult: null,
       checkpoints: [],   // user-message uuids -> rewind anchors (file checkpointing)
+      guard: createLoopGuard(),   // stops an agent that repeats itself
+      written: new Set(),         // files the agent wrote: the only ones the UI may share
     };
     this.lastCreatedId = id;
     const abort = new AbortController();
@@ -814,7 +818,25 @@ class ChatManager extends EventEmitter {
             if (!chat.model) chat.model = msg.model || chat.model;
             this._rememberSession(dir, chat.sessionId);
           }
+          if (msg.type === 'assistant' && !msg.parent_tool_use_id && Array.isArray(msg.message && msg.message.content)) {
+            for (const b of msg.message.content) {
+              if (!b || b.type !== 'tool_use') continue;
+              const fp = b.input && (b.input.file_path || b.input.notebook_path);
+              if (fp && ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(b.name)) {
+                if (chat.written.size >= 500) chat.written.delete(chat.written.values().next().value);
+                chat.written.add(absFor(dir, fp));
+              }
+              const trip = chat.guard.record(b);
+              if (trip.tripped && !chat.guardTripped) {
+                chat.guardTripped = true;
+                this.emit('event', id, { kind: 'loop-guard', reason: trip.reason });
+                this.interrupt(id).catch(() => {});
+              }
+            }
+          }
           if (msg.type === 'result') {
+            chat.guard.reset();
+            chat.guardTripped = false;
             chat.lastResult = msg;
             // Two prompts sent back to back: the first result is not the end.
             // Stay busy (Stop stays visible) until the queue drains.
@@ -945,6 +967,8 @@ class ChatManager extends EventEmitter {
     const chat = this.chats.get(id);
     if (!chat || (!text && !(blocks && blocks.length))) return { ok: false };
     // Anthropic content blocks (e.g. pasted images) or plain text
+    if (chat.guard) chat.guard.reset();
+    chat.guardTripped = false;
     const content = blocks && blocks.length
       ? [...blocks, ...(text ? [{ type: 'text', text }] : [])]
       : text;
@@ -955,6 +979,12 @@ class ChatManager extends EventEmitter {
     chat.busy = true;
     this.emit('event', id, { kind: 'status', busy: true });
     return { ok: true };
+  }
+
+  /** The real path of a file the agent wrote in this chat, or null. */
+  shareable(id, p) {
+    const chat = this.chats.get(id);
+    return chat ? shareablePath(chat.written, chat.cwd || '', p) : null;
   }
 
   async steer(id, text, blocks) {

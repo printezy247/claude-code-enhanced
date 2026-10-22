@@ -2268,13 +2268,14 @@ function registerIpc() {
         const ext = path.extname(p).toLowerCase();
         const mediaType = MIME_BY_EXT[ext] || '';
         if (IMAGE_TYPES.test(mediaType)) {
-          if (st.size > MAX_IMAGE_BYTES) { files.push({ name, error: 'image larger than 4 MB' }); continue; }
+          if (st.size > MAX_IMAGE_BYTES) { files.push({ name, path: p, size: st.size, ref: true }); continue; }
           files.push({ name, mediaType, base64: fs.readFileSync(p).toString('base64') });
         } else if (/\.(md|txt|json|ya?ml|toml|ini|cfg|conf|log|sql|py|js|mjs|cjs|ts|tsx|jsx|sh|bash|zsh|c|h|cpp|hpp|rs|go|rb|java|kt|swift|html|css|scss|vue|svelte|xml|csv|env|gitignore|dockerfile|makefile)$/i.test(ext) || st.size <= MAX_TEXT_BYTES) {
-          if (st.size > MAX_TEXT_BYTES) { files.push({ name, error: 'file larger than 400 kB' }); continue; }
+          if (st.size > MAX_TEXT_BYTES) { files.push({ name, path: p, size: st.size, ref: true }); continue; }
           files.push({ name, text: fs.readFileSync(p, 'utf8').slice(0, 40000) });
         } else {
-          files.push({ name, error: 'unsupported file type' });
+          // PDFs, archives, binaries: hand the agent the path; its Read tool takes it from there.
+          files.push({ name, path: p, size: st.size, ref: true });
         }
       } catch (err) { files.push({ name, error: String(err.message || err) }); }
     }
@@ -2304,6 +2305,21 @@ function registerIpc() {
     shell.showItemInFolder(real);
     return {};
   });
+
+  // Share a file the agent wrote: show it in the file manager, or save a copy
+  // wherever the user picks. Only files this chat's agent wrote are allowed.
+  handle('file:share', owned('chats', async ({ id, path: p, action }, e) => {
+    const real = chats.shareable(id, p);
+    if (!real) throw new Error('that file was not written in this chat, or no longer exists');
+    if (action === 'reveal') { shell.showItemInFolder(real); return { ok: true }; }
+    if (action === 'save') {
+      const r = await dialog.showSaveDialog(senderWin(e), { defaultPath: path.basename(real) });
+      if (r.canceled || !r.filePath) return { ok: false, canceled: true };
+      await fs.promises.copyFile(real, r.filePath);
+      return { ok: true, savedTo: r.filePath };
+    }
+    throw new Error('unknown action');
+  }));
 
   // ----- settings -----
   handle('settings:get', async () => ({
