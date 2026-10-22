@@ -35,6 +35,8 @@ const tools = require('./tools');
 const automemory = require('./automemory');
 const localmodels = require('./localmodels');
 const worktrees = require('./worktrees');
+const gitsurface = require('./gitsurface');
+const workers = require('./workers');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
 const { startProxy, clearLastGoodModel } = require('./proxy');
@@ -1703,6 +1705,112 @@ function registerIpc() {
     skilltoggle.setAgent(name, !enabled);
     return { ok: true, enabled: skilltoggle.isAgentEnabled(name) };
   });
+  // The skills manager: the list on disk, one skill's content, the enabled
+  // state and a fresh scan. #p7-skills
+  handle('skills:list', async ({ skillsDir, cwd }) => ({
+    skills: skilltoggle.scanSkills({ skillsDir, cwd }),
+  }));
+  handle('skills:read', async ({ path }) => skilltoggle.readSkill(path));
+  handle('skills:set-enabled', async ({ name, enabled }) => {
+    const res = skilltoggle.setSkillEnabled(name, !!enabled);
+    return { ok: true, ...res };
+  });
+  // The plugin manager: a DXT/MCPB archive is verified (manifest, then
+  // signature) before anything is installed or registered. #p7-plugins
+  const plugins = require('./plugins');
+  handle('plugins:list', async () => ({
+    plugins: plugins.listPlugins(plugins.defaultPluginsDir()),
+  }));
+  handle('plugins:inspect', async ({ source }) => {
+    const info = plugins.inspectPlugin(source);
+    return {
+      ok: true,
+      manifest: info.manifest,
+      manifestCheck: plugins.verifyManifest(info.manifest, { root: info.root }),
+      signature: plugins.verifySignature(info.manifest, info.bytes),
+      problems: info.problems,
+    };
+  });
+  handle('plugins:install', async ({ source }) => await plugins.installPlugin({
+    source, targetDir: plugins.defaultPluginsDir(), cliPath: claudePath(),
+  }));
+  handle('plugins:uninstall', async ({ name }) => await plugins.uninstallPlugin({
+    name, targetDir: plugins.defaultPluginsDir(), cliPath: claudePath(),
+  }));
+
+  // ---- The host-side MCP client -----------------------------------------
+  // The desktop can hold an MCP connection in the host, not only in the CLI.
+  // CCE's client speaks HTTP and SSE (stdio stays with the CLI) and needs no
+  // dependency of its own. #p6-mcp-client
+  const mcpclient = require('./mcpclient');
+  // Only a server the user configured may be called: the name is resolved
+  // through the CLI's own MCP config, so a renderer cannot point the host at
+  // an arbitrary URL.
+  const mcpServerOf = async (name) => {
+    const def = await connectors.definition(claudePath(), String(name));
+    if (!def) throw new Error('no MCP server named ' + name);
+    const cfg = def.config || {};
+    if (cfg.type !== 'http' && cfg.type !== 'sse') {
+      throw new Error('the host client speaks HTTP and SSE only; ' + name + ' is ' + cfg.type);
+    }
+    return cfg;
+  };
+  handle('mcp:list-tools', async ({ name }) => {
+    const cfg = await mcpServerOf(name);
+    const client = new mcpclient.McpClient({
+      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
+    });
+    try {
+      await client.initialize();
+      return { ok: true, tools: await client.listTools() };
+    } finally {
+      await client.close();
+    }
+  });
+  handle('mcp:call-tool', async ({ name, tool, args }) => {
+    const cfg = await mcpServerOf(name);
+    const client = new mcpclient.McpClient({
+      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
+    });
+    try {
+      await client.initialize();
+      return { ok: true, result: await client.callTool(String(tool || ''), args || {}) };
+    } finally {
+      await client.close();
+    }
+  });
+  handle('mcp:list-resources', async ({ name }) => {
+    const cfg = await mcpServerOf(name);
+    const client = new mcpclient.McpClient({
+      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
+    });
+    try {
+      await client.initialize();
+      return { ok: true, resources: await client.listResources() };
+    } finally {
+      await client.close();
+    }
+  });
+  handle('mcp:read-resource', async ({ name, uri }) => {
+    const cfg = await mcpServerOf(name);
+    const client = new mcpclient.McpClient({
+      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
+    });
+    try {
+      await client.initialize();
+      return { ok: true, result: await client.readResource(String(uri || '')) };
+    } finally {
+      await client.close();
+    }
+  });
+  handle('mcp:authenticate', async ({ url, deviceUrl, tokenUrl, scopes }) => {
+    // The device code itself is shown to the user; the token is never
+    // returned in a message the UI would log.
+    const res = await mcpclient.deviceCodeAuth({
+      url: String(url || ''), oauth: { deviceUrl, tokenUrl, scopes },
+    });
+    return { ok: true, userCode: res.userCode, verificationUri: res.verificationUri, expiresIn: res.expiresIn };
+  });
   // Ollama model manager: running models, catalog, load/unload with context size
   const ollamaBase = (p) => (p && p.baseUrl ? p.baseUrl.replace(/\/+$/, '') : null);
   handle('ollama:ps', async ({ uid }) => {
@@ -1921,8 +2029,7 @@ function registerIpc() {
   });
 
   // git context for the chat header (project folder + linked GitHub repo)
-  handle('git:info', async ({ cwd }) => {
-    const dir = (cwd || '').replace(/^~(?=\/|$)/, os.homedir());
+  handle('git:info', async ({ cwd }) => {    const dir = (cwd || '').replace(/^~(?=\/|$)/, os.homedir());
     const run = (args) => new Promise((resolve) => {
       execFile('git', args, { cwd: dir, timeout: 5000 }, (err, stdout) => resolve(err ? '' : String(stdout).trim()));
     });
@@ -1943,6 +2050,19 @@ function registerIpc() {
     return { ok: true, remote, branch, repo, dirty: dirtyCount, files };
   });
 
+  // ---- The git surface (the desktop's side panel) ------------------------
+  // The diff, the stats, the commit list and one commit's patch. The status
+  // is cached for a few seconds, so a panel that polls does not spawn a git
+  // process per frame. #p8-git-surface
+  handle('git:diff', async ({ cwd, staged, paths, context }) =>
+    await gitsurface.diff(cwd, { staged: !!staged, paths, context }));
+  handle('git:diff-stats', async ({ cwd, staged, paths }) =>
+    await gitsurface.diffStats(cwd, { staged: !!staged, paths }));
+  handle('git:commits', async ({ cwd, limit }) => await gitsurface.commits(cwd, { limit }));
+  handle('git:commit-diff', async ({ cwd, sha }) => await gitsurface.commitDiff(cwd, { sha }));
+  handle('git:status', async ({ cwd }) => await gitsurface.status(cwd));
+  handle('git:cache-invalidate', async ({ cwd }) => gitsurface.invalidate(cwd));
+
   // package.json scripts / Makefile targets for the ▶ run menu
   handle('project:scripts', async ({ cwd }) => {
     const dir = (cwd || '').replace(/^~(?=\/|$)/, os.homedir());
@@ -1962,6 +2082,16 @@ function registerIpc() {
       execFile('git', ['ls-files'], { cwd: dir, timeout: 5000, maxBuffer: 8 * 1024 * 1024 }, (err, stdout) => resolve(err ? null : String(stdout)));
     });
     if (gitLs) return { files: gitLs.split('\n').filter(Boolean).slice(0, 3000) };
+    // The walk runs on a worker thread: a big folder used to block the main
+    // process (and with it the whole window) while it read the tree. The
+    // worker falls back to the in-process walk if it cannot start.
+    // #t0-workers
+    try {
+      const files = await workers.run('file-index', { dir, limit: 3000 });
+      if (Array.isArray(files)) return { files: files.slice(0, 3000) };
+    } catch (err) {
+      console.warn('[project:files] the file index worker failed:', String((err && err.message) || err));
+    }
     const files = [];
     const walk = (d, depth) => {
       if (depth > 6 || files.length > 2500) return;
@@ -1977,6 +2107,26 @@ function registerIpc() {
     };
     walk(dir, 0);
     return { files: files.slice(0, 3000) };
+  });
+
+  // Full-text search across the stored transcripts. The scan runs on a
+  // worker thread so a big ~/.claude/projects tree does not freeze the
+  // window. #t0-workers
+  handle('chats:search', async ({ query, dir, limit }) => {
+    const q = String(query || '').trim();
+    if (!q) return { query: q, matches: [], count: 0 };
+    const root = dir || path.join(process.env.HOME || os.homedir(), '.claude', 'projects');
+    try {
+      const res = await workers.run('transcript-search', { query: q, dir: root, limit: limit || 200 });
+      return {
+        query: q,
+        count: Array.isArray(res && res.matches) ? res.matches.length : 0,
+        matches: Array.isArray(res && res.matches) ? res.matches : [],
+      };
+    } catch (err) {
+      console.warn('[chats:search] the transcript search worker failed:', String((err && err.message) || err));
+      return { query: q, matches: [], count: 0, error: String((err && err.message) || err) };
+    }
   });
 
   // desktop-style history index: every session on disk, flat + recency-sorted
