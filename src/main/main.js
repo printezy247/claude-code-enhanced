@@ -1721,22 +1721,42 @@ function registerIpc() {
   // The plugin manager: a DXT/MCPB archive is verified (manifest, then
   // signature) before anything is installed or registered. #p7-plugins
   const plugins = require('./plugins');
+  // The renderer never names a file: the user picks it in a dialog and the
+  // main process keeps the path. A compromised renderer therefore cannot
+  // make the host read or install an arbitrary path.
+  const pickedPlugins = new Map();   // path -> picked at
+  const PLUGIN_PICK_TTL_MS = 10 * 60 * 1000;
   handle('plugins:list', async () => ({
     plugins: plugins.listPlugins(plugins.defaultPluginsDir()),
   }));
-  handle('plugins:inspect', async ({ source }) => {
+  handle('plugins:pick', async () => {
+    const res = await dialog.showOpenDialog(win, {
+      title: 'Choose a plugin (.dxt / .mcpb)',
+      properties: ['openFile'],
+      filters: [{ name: 'Plugin', extensions: ['dxt', 'mcpb', 'zip'] }],
+    });
+    if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
+    const source = res.filePaths[0];
     const info = plugins.inspectPlugin(source);
+    pickedPlugins.set(source, Date.now());
     return {
       ok: true,
+      source,
       manifest: info.manifest,
       manifestCheck: plugins.verifyManifest(info.manifest, { root: info.root }),
       signature: plugins.verifySignature(info.manifest, info.bytes),
       problems: info.problems,
     };
   });
-  handle('plugins:install', async ({ source }) => await plugins.installPlugin({
-    source, targetDir: plugins.defaultPluginsDir(), cliPath: claudePath(),
-  }));
+  handle('plugins:install', async ({ source }) => {
+    const picked = pickedPlugins.get(String(source || ''));
+    if (!picked || Date.now() - picked > PLUGIN_PICK_TTL_MS) {
+      throw new Error('pick the plugin file first — the install path must come from the file dialog');
+    }
+    return await plugins.installPlugin({
+      source, targetDir: plugins.defaultPluginsDir(), cliPath: claudePath(),
+    });
+  });
   handle('plugins:uninstall', async ({ name }) => await plugins.uninstallPlugin({
     name, targetDir: plugins.defaultPluginsDir(), cliPath: claudePath(),
   }));
@@ -1806,12 +1826,16 @@ function registerIpc() {
       await client.close();
     }
   });
-  handle('mcp:authenticate', async ({ url, deviceUrl, tokenUrl, scopes }) => {
+  handle('mcp:authenticate', async ({ name }) => {
+    // The server is resolved through the CLI's own MCP config, so the
+    // renderer cannot point the host's OAuth flow at an arbitrary host.
+    const cfg = await mcpServerOf(name);
+    const res = await mcpclient.deviceCodeAuth({
+      url: cfg.url,
+      oauth: { scopes: Array.isArray(cfg.scopes) ? cfg.scopes : undefined },
+    });
     // The device code itself is shown to the user; the token is never
     // returned in a message the UI would log.
-    const res = await mcpclient.deviceCodeAuth({
-      url: String(url || ''), oauth: { deviceUrl, tokenUrl, scopes },
-    });
     return { ok: true, userCode: res.userCode, verificationUri: res.verificationUri, expiresIn: res.expiresIn };
   });
   // Ollama model manager: running models, catalog, load/unload with context size

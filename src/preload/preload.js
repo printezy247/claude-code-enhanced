@@ -33,7 +33,7 @@ const INVOKE_CHANNELS = new Set([
   'file:read', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
   'git:status', 'git:cache-invalidate', 'project:files', 'project:scripts', 'skill:import',
   'skills:list', 'skills:read', 'skills:set-enabled',
-  'plugins:list', 'plugins:inspect', 'plugins:install', 'plugins:uninstall',
+  'plugins:list', 'plugins:pick', 'plugins:install', 'plugins:uninstall',
   'mcp:list-tools', 'mcp:call-tool', 'mcp:list-resources', 'mcp:read-resource', 'mcp:authenticate',
   'skills:toggle', 'agents:toggle',
   'dialog:pickDir', 'dialog:pickFiles', 'clipboard:write', 'shell:openExternal', 'shell:reveal',
