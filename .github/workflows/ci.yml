@@ -14,9 +14,71 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
       - run: npm ci
       # Fail the build on known-vulnerable runtime dependencies. Dev-only
       # tooling (electron-builder chain) is excluded: its advisories cannot
       # ship to users.
       - run: npm audit --omit=dev --audit-level=high
       - run: npm test
+      # Dependency-free E2E smoke harness (no playwright). Runs headless under xvfb.
+      - name: Install xvfb
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      - name: E2E smoke
+        run: xvfb-run -a node test/e2e/smoke.mjs
+
+  build:
+    # Builds the deb and lints it. Allowed to fail on a normal PR if the runner
+    # lacks a system library electron-builder needs; the test job is the gate.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+      - run: npm ci
+      - name: Install lintian
+        run: sudo apt-get update && sudo apt-get install -y lintian
+      - run: npm run dist
+      - run: npm run lint
+
+  mutation:
+    # Opt-in: runs stryker only when it is installed (it is not a dependency
+    # in this batch). Skips cleanly otherwise.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-node-modules-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-node-modules-
+      - run: npm ci
+      - name: Mutation testing (stryker, opt-in)
+        run: |
+          if [ -x node_modules/.bin/stryker ] || npx --no-install stryker --version >/dev/null 2>&1; then
+            npx stryker run
+          else
+            echo "skipped: stryker not installed"
+          fi

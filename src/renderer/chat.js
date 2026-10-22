@@ -245,6 +245,7 @@ const Chat = (() => {
       toolOriginals: new Map(),
     };
     chats.set(id, chat);
+    installVirtualization(chat);
     chat.msgs.addEventListener('scroll', () => {
       chat.follow = nearBottom(chat);
       updateLatestBtn(chat);
@@ -1543,6 +1544,24 @@ const Chat = (() => {
           panel.remove();
         });
         row.appendChild(use);
+        const on = s.enabled !== false;
+        const tog = el('button', 'switch' + (on ? ' on' : ''));
+        tog.setAttribute('role', 'switch');
+        tog.setAttribute('aria-checked', on ? 'true' : 'false');
+        tog.title = (on ? 'Disable' : 'Enable') + ' ' + s.name;
+        tog.textContent = on ? 'disable' : 'enable';
+        tog.addEventListener('click', async (e) => {
+          e.stopPropagation();
+          tog.disabled = true;
+          const next = tog.textContent === 'enable';
+          await ccx.invoke('skills:toggle', { name: s.name, enabled: next });
+          s.enabled = next;
+          tog.classList.toggle('on', next);
+          tog.textContent = next ? 'disable' : 'enable';
+          tog.setAttribute('aria-checked', next ? 'true' : 'false');
+          tog.disabled = false;
+        });
+        row.appendChild(tog);
         slist.appendChild(row);
       }
       if (uniq.length > 80) slist.appendChild(el('div', 'hint', `…and ${uniq.length - 80} more — type to filter`));
@@ -1569,6 +1588,24 @@ const Chat = (() => {
             panel.remove();
           });
           row.appendChild(use);
+          const on = a.enabled !== false;
+          const tog = el('button', 'switch' + (on ? ' on' : ''));
+          tog.setAttribute('role', 'switch');
+          tog.setAttribute('aria-checked', on ? 'true' : 'false');
+          tog.title = (on ? 'Disable' : 'Enable') + ' ' + a.name;
+          tog.textContent = on ? 'disable' : 'enable';
+          tog.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            tog.disabled = true;
+            const next = tog.textContent === 'enable';
+            await ccx.invoke('agents:toggle', { name: a.name, enabled: next });
+            a.enabled = next;
+            tog.classList.toggle('on', next);
+            tog.textContent = next ? 'disable' : 'enable';
+            tog.setAttribute('aria-checked', next ? 'true' : 'false');
+            tog.disabled = false;
+          });
+          row.appendChild(tog);
           alist.appendChild(row);
         }
         sec3.appendChild(alist);
@@ -2633,6 +2670,138 @@ const Chat = (() => {
     });
   }
 
+  /* ---------------- transcript virtualization (#C1) ---------------- */
+  // Keep only a bounded window of messages in the DOM so a 10k-message
+  // conversation does not create 10k nodes. Older nodes stay in chat._allNodes
+  // and come back when the user scrolls toward the top. #C1
+  const VIRT_WINDOW = 100;
+  const VIRT_PAGE = 100;
+  const VIRT_EST_HEIGHT = 60;
+  function installVirtualization(chat) {
+    chat._allNodes = [];
+    chat._winStart = 0;
+    chat._winEnd = 0;
+    chat._renderedStart = 0;   // alias kept for older code / tests
+    chat._renderedEnd = 0;
+    chat._virtLoading = false;
+    const msgs = chat.msgs;
+    const spacer = document.createElement('div');
+    spacer.className = 'virt-spacer';
+    spacer.style.height = '0px';
+    chat._topSpacer = spacer;
+    const origAppend = msgs.appendChild.bind(msgs);
+    const origRemove = msgs.removeChild.bind(msgs);
+    chat._origAppend = origAppend;
+    chat._origRemove = origRemove;
+
+    function removeEmpty() {
+      const empty = msgs.querySelector('.chat-empty');
+      if (empty && empty.parentNode === msgs) try { origRemove(empty); } catch { /* ignore */ }
+    }
+
+    function rebuildWindow(start) {
+      const total = chat._allNodes.length;
+      if (total === 0) {
+        for (const c of [...msgs.children]) if (c !== spacer) try { origRemove(c); } catch { /* ignore */ }
+        if (spacer.parentNode === msgs) try { origRemove(spacer); } catch { /* ignore */ }
+        spacer.style.height = '0px';
+        try { origAppend(spacer); } catch { /* ignore */ }
+        chat._winStart = 0; chat._winEnd = 0;
+        chat._renderedStart = 0; chat._renderedEnd = 0;
+        return;
+      }
+      let s = Math.max(0, Math.min(start, total - 1));
+      let e = Math.min(total, s + VIRT_WINDOW);
+      if (e - s < VIRT_WINDOW) s = Math.max(0, e - VIRT_WINDOW);
+      e = Math.min(total, s + VIRT_WINDOW);
+      if (total <= VIRT_WINDOW) { s = 0; e = total; }
+
+      const keepScroll = msgs.scrollTop;
+      for (const c of [...msgs.children]) if (c !== spacer) try { origRemove(c); } catch { /* ignore */ }
+      if (spacer.parentNode === msgs) try { origRemove(spacer); } catch { /* ignore */ }
+      spacer.style.height = (s * VIRT_EST_HEIGHT) + 'px';
+      try { origAppend(spacer); } catch { /* ignore */ }
+      for (let i = s; i < e; i++) {
+        const n = chat._allNodes[i];
+        if (n) try { origAppend(n); } catch { /* ignore */ }
+      }
+      chat._winStart = s;
+      chat._winEnd = e;
+      chat._renderedStart = s;
+      chat._renderedEnd = e;
+      try { msgs.scrollTop = keepScroll; } catch { /* read-only */ }
+    }
+
+    function evictTop() {
+      while (chat._winEnd - chat._winStart > VIRT_WINDOW) {
+        const node = chat._allNodes[chat._winStart];
+        if (node && node.parentNode === msgs) try { origRemove(node); } catch { /* ignore */ }
+        chat._winStart++;
+      }
+      chat._renderedStart = chat._winStart;
+      chat._renderedEnd = chat._winEnd;
+      spacer.style.height = (chat._winStart * VIRT_EST_HEIGHT) + 'px';
+      if (spacer.parentNode !== msgs) try { origAppend(spacer); } catch { /* ignore */ }
+      try { msgs.insertBefore(spacer, msgs.firstChild); } catch { /* ignore */ }
+    }
+
+    msgs.appendChild = function(node) {
+      if (node === spacer) return origAppend(node);
+      removeEmpty();
+      chat._allNodes.push(node);
+      const total = chat._allNodes.length;
+      const idx = total - 1;
+      if (chat.follow !== false) {
+        // Anchored at the bottom: paint the node and keep the tail window.
+        if (chat._winEnd === total - 1 || chat._winEnd === 0) {
+          if (spacer.parentNode !== msgs) try { origAppend(spacer); } catch { /* ignore */ }
+          try { msgs.insertBefore(spacer, msgs.firstChild); } catch { /* ignore */ }
+          origAppend(node);
+          chat._winEnd = total;
+          evictTop();
+        } else {
+          rebuildWindow(Math.max(0, total - VIRT_WINDOW));
+        }
+        try { msgs.scrollTop = msgs.scrollHeight; } catch { /* read-only */ }
+      } else {
+        // User is reading older messages: record the node, paint only if it
+        // falls inside the current window (it normally does not, since it is
+        // newer than the view).
+        if (idx >= chat._winStart && idx < chat._winEnd) {
+          rebuildWindow(chat._winStart);
+        }
+      }
+      chat._renderedStart = chat._winStart;
+      chat._renderedEnd = chat._winEnd;
+      return node;
+    };
+
+    msgs.addEventListener('scroll', () => {
+      if (chat._allNodes.length === 0 || chat._virtLoading) return;
+      const total = chat._allNodes.length;
+      const s = chat._winStart;
+      const e = chat._winEnd;
+      if (msgs.scrollTop < 120 && s > 0) {
+        chat._virtLoading = true;
+        const newS = Math.max(0, s - VIRT_PAGE);
+        const beforeH = msgs.scrollHeight;
+        const beforeT = msgs.scrollTop;
+        rebuildWindow(newS);
+        try { msgs.scrollTop = beforeT + (msgs.scrollHeight - beforeH); } catch { /* read-only */ }
+        chat._virtLoading = false;
+        return;
+      }
+      if (e < total && (msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 120)) {
+        chat._virtLoading = true;
+        const newS = Math.max(0, total - VIRT_WINDOW);
+        rebuildWindow(newS);
+        if (msgs.scrollTop + msgs.clientHeight >= msgs.scrollHeight - 40) {
+          try { msgs.scrollTop = msgs.scrollHeight; } catch { /* read-only */ }
+        }
+        chat._virtLoading = false;
+      }
+    }, { passive: true });
+  }
   function nearBottom(chat) {
     return chat.msgs.scrollHeight - chat.msgs.scrollTop - chat.msgs.clientHeight < 40;
   }

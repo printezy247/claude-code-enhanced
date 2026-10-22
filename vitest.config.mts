@@ -3,6 +3,10 @@
 // `// @vitest-environment jsdom` docblock at the top of the file.
 import { defineConfig } from 'vitest/config';
 
+// Clear the ambient token var for the whole run so an exported
+// CLAUDE_CODE_MAX_CONTEXT_TOKENS can never flake the suite (see D1).
+delete process.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS;
+
 export default defineConfig({
   test: {
     include: ['test/**/*.test.js'],

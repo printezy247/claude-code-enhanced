@@ -499,8 +499,18 @@ function isModelMissing(err) {
 
 /** A model this provider can serve in place of `missing`, or '' if none is known. */
 function fallbackModel(prov, missing) {
+  if (!prov) return '';
   const want = String(missing || '');
-  return [prov.fallbackModel, prov.smallFastModel, lastGoodModel.get(prov._uid), prov.model].find(x => x && x !== want) || '';
+  return [prov.fallbackModel, prov.smallFastModel, prov._uid ? lastGoodModel.get(prov._uid) : undefined, prov.model].find(x => x && x !== want) || '';
+}
+
+/** Structured error for malformed tool payload (#6) */
+function toolPayloadError(field, _raw) {
+  return {
+    type: 'invalid_request_error',
+    field: String(field || 'arguments'),
+    message: `Malformed tool payload in field '${field || 'arguments'}'`,
+  };
 }
 
 const CONTEXT_RE = /context.{0,20}(length|window|size)|maximum context|prompt is too long|(input|prompt|request).{0,24}too (long|large)|too many (input )?tokens|exceed.{0,40}(context|max.{0,12}tokens)/i;
@@ -977,6 +987,8 @@ module.exports = {
   inTokens,
   openaiBase,
   mapError,
+  fallbackModel,
+  toolPayloadError,
   toolArgsComplete,
   aggregateToAnthropic,
   clearLastGoodModel,

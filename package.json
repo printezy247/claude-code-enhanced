@@ -1,7 +1,7 @@
 {
   "name": "claude-code-enhanced",
   "productName": "Claude Code Enhanced",
-  "version": "0.9.37",
+  "version": "0.9.38",
   "description": "Chat UI, terminal sessions and MCP connectors for Claude Code.",
   "main": "src/main/main.js",
   "license": "MIT",
@@ -12,7 +12,7 @@
     "start": "electron .",
     "rebuild": "electron-builder install-app-deps",
     "smoke": "CCE_SMOKE=1 xvfb-run -a -s \"-screen 0 1280x860x24\" electron .",
-    "test": "vitest run",
+    "test": "env -u CLAUDE_CODE_MAX_CONTEXT_TOKENS vitest run",
     "test:watch": "vitest",
     "dist": "node scripts/vendor-monaco.js && electron-builder --linux",
     "vendor": "node scripts/vendor-monaco.js",

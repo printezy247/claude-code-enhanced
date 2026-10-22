@@ -442,6 +442,35 @@ describe('canUseTool host pipeline parity', () => {
     expect(res.message).toMatch(/denied by connector policy/);
   });
 
+  it('enforces always_ask on connector tools by suppressing the always-allow rule', async () => {
+    await openChat({ settings: { connectorToolPolicy: { mcp__db__read: 'always_ask' } } });
+    const ctx = { signal: new AbortController().signal, suggestions: [], toolUseID: 't_ask' };
+    const p = lastOptions.canUseTool('mcp__db__read', { query: 'x' }, ctx);
+    await until(() => events.some(e => e.kind === 'permission'));
+    const perm = events.find(e => e.kind === 'permission');
+    expect(perm).toBeTruthy();
+    expect(perm.toolName).toBe('mcp__db__read');
+    expect(perm.suppressAlwaysAllowRule).toBe(true);
+    // Not denied outright: the user still gets a prompt.
+    let res = null;
+    p.then(r => { res = r; });
+    // leave pending; just confirm no deny was returned synchronously
+    expect(res).toBeNull();
+  });
+
+  it('reads connector policy from the static tools.js sets too', async () => {
+    const toolsMod = require('../src/main/tools.js');
+    toolsMod.ALWAYS_DENY_TOOLS.add('mcp__static__nope');
+    try {
+      await openChat();
+      const res = await lastOptions.canUseTool('mcp__static__nope', {});
+      expect(res.behavior).toBe('deny');
+      expect(res.message).toMatch(/denied by connector policy/);
+    } finally {
+      toolsMod.ALWAYS_DENY_TOOLS.delete('mcp__static__nope');
+    }
+  });
+
   it('pins updatedInput on allow', async () => {
     const { id } = await openChat();
     const ctx = { signal: new AbortController().signal, suggestions: [], toolUseID: 't_pin' };

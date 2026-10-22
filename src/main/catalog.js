@@ -233,10 +233,33 @@ function protocolForNpm(npm) {
 const { resolveTemplate, placeholdersIn } = require('../shared/tpl.js');
 
 /** A generic catalog entry derived from a models.dev provider record. */
+function isSizeHint(id) {
+  const s = String(id || '').toLowerCase();
+  return /\b(mini|small|flash|haiku|nano|lite|tiny)\b/i.test(s)
+    || /[-_:](mini|small|flash|haiku|nano|lite|tiny|8b|7b|4b|3b|1b)/i.test(s);
+}
+
 function derive(md) {
   const best = modelsdev.bestModel(md.id);
-  const small = modelsdev.smallModel ? modelsdev.smallModel(md.id) : null;
-  const envVar = (md.env && md.env[0]) || null;
+  const models = modelsdev.modelsFor(md.id) || [];
+  // Pick the cheapest/smallest model for background (title/summary) calls.
+  // Never invent a name: only ids that models.dev actually lists.
+  let smallId = '';
+  const hinted = models.filter(m => isSizeHint(m.id || m.name || ''));
+  const pool = hinted.length ? hinted : models;
+  if (pool.length) {
+    const sorted = pool.slice().sort((a, b) => {
+      const la = String(a.id || '').length;
+      const lb = String(b.id || '').length;
+      if (la !== lb) return la - lb;
+      const ca = (a.cost && (a.cost.input || a.cost.prompt)) || 999;
+      const cb = (b.cost && (b.cost.input || b.cost.prompt)) || 999;
+      return ca - cb;
+    });
+    smallId = sorted[0].id;
+  }
+  if (!smallId && models.length) smallId = models[0].id;
+  const envVar = secretEnvNames(md.env)[0] || null;
   return {
     id: md.id, md: md.id, modelsDevId: md.id, name: md.name, display: md.name, docsUrl: md.doc || '',
     protocol: protocolForNpm(md.npm),
@@ -244,7 +267,7 @@ function derive(md) {
     baseUrl: md.api || '',
     envVar, keyHeader: 'bearer',
     defaultModel: best ? best.id : '',
-    defaultSmall: small ? small.id : (best ? best.id : ''),
+    defaultSmall: smallId,
     derived: true,
     capabilities: ['openai-compat'],
     blurb: md.api
@@ -254,12 +277,44 @@ function derive(md) {
 }
 
 /**
+ * models.dev records configuration values next to the secret: Azure lists
+ * AZURE_RESOURCE_NAME before AZURE_API_KEY, Vertex lists GOOGLE_VERTEX_PROJECT
+ * and GOOGLE_APPLICATION_CREDENTIALS (a FILE PATH), Bedrock lists AWS_REGION.
+ * Those are not credentials. Sending one as a bearer token produces a
+ * confusing "401 invalid key" instead of "no credential set", so only
+ * secret-shaped names are ever read as a key.
+ */
+// AWS_ACCESS_KEY_ID is excluded by the _ID rule, so _ACCESS_KEY must NOT be
+// here: SUBMODEL_INSTAGEN_ACCESS_KEY is the credential of the submodel
+// provider, and excluding it made that provider's env-var auth never resolve.
+const NON_SECRET_ENV = /(_ID|_NAME|_PROJECT|_LOCATION|_HOST|_ACCOUNT|_ENDPOINT|_REGION|_PORT|_PATH|_FILE|_CREDENTIALS|_PRODUCT)$/i;
+const SECRET_ENV = /(API_?KEY|_TOKEN$|_SECRET$|_KEY$|_PASSWORD$|_PAT$)/i;
+function isSecretEnv(name) {
+  const n = String(name || '');
+  if (!n) return false;
+  if (NON_SECRET_ENV.test(n)) return false;
+  return SECRET_ENV.test(n);
+}
+/** The credential-shaped names out of an env list, in order. */
+function secretEnvNames(list) {
+  return (Array.isArray(list) ? list : []).filter(isSecretEnv).map(String);
+}
+
+/**
  * The full picker list: curated entries first (declared order), then every
  * other models.dev provider alphabetically. Each entry gains
  * `modelCount` + `modelsDevId` for the UI.
+ *
+ * The list is memoised per models.dev snapshot: building it walks 200+
+ * providers, and every provider lookup (the env-var resolver, the renderer
+ * payload, the picker) would otherwise rebuild the whole thing. A models.dev
+ * refresh swaps the snapshot object, which invalidates the memo on its own.
  */
+let buildCache = null;
+let buildKey = null;
 function build() {
   const md = modelsdev.load();
+  if (buildCache && buildKey === md) return buildCache.slice();
   const seen = new Set();
   const out = [];
   for (const c of CURATED) {
@@ -267,7 +322,21 @@ function build() {
     const rec = md[e.modelsDevId];
     if (rec && !e.name) e.name = rec.name;
     if (!e.docsUrl && rec) e.docsUrl = rec.doc || '';
+    // models.dev records the environment variable an API-key provider reads.
+    // A curated entry that does not name one still has to be usable from the
+    // environment, so adopt the recorded name (and the whole list) here.
+    const secret = secretEnvNames(rec && rec.env);
+    if (secret.length) {
+      if (!e.envVar) e.envVar = secret[0];
+      if (!Array.isArray(e.env)) e.env = secret.slice();
+    }
     e.modelCount = rec ? Object.keys(rec.models || {}).length : 0;
+    // Every catalog entry IS the catalog: the marker lets the picker say
+    // "catalog-only" when a provider has no /models endpoint of its own.
+    e.source = 'catalog';
+    // A provider that cannot serve the main model falls back to its own
+    // small/fast model, which is by construction a model it really serves.
+    if (!e.fallbackModel) e.fallbackModel = e.defaultSmall || '';
     out.push(e);
     seen.add(e.id);
     if (e.modelsDevId) seen.add(e.modelsDevId);
@@ -276,9 +345,13 @@ function build() {
     if (seen.has(id) || CURATED.some(c => c.id === id)) continue;
     const e = derive(rec);
     e.modelCount = Object.keys(rec.models || {}).length;
+    e.source = 'catalog';
+    if (!e.fallbackModel) e.fallbackModel = e.defaultSmall || '';
     out.push(e);
   }
-  return out;
+  buildCache = out;
+  buildKey = md;
+  return out.slice();
 }
 
 /** One catalog entry by id. */
@@ -286,4 +359,4 @@ function byId(id) {
   return build().find(e => e.id === id) || null;
 }
 
-module.exports = { CURATED, CURATED_IDS, build, byId, derive, resolveTemplate, placeholdersIn, protocolForNpm };
+module.exports = { CURATED, CURATED_IDS, build, byId, derive, resolveTemplate, placeholdersIn, protocolForNpm, isSecretEnv, secretEnvNames };

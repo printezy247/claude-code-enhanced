@@ -169,6 +169,112 @@ describe('slow-but-connected servers', () => {
   });
 });
 
+describe('per-connector tool picker', () => {
+  const servers = [
+    { name: 'github', tools: [{ name: 'create_issue' }, { name: 'list_repos' }] },
+    { name: 'linear', tools: ['create_issue', 'list_teams'] },
+  ];
+
+  it('lists a connector’s tools', () => {
+    expect(connectors.connectorTools(servers, 'github')).toEqual([{ name: 'create_issue' }, { name: 'list_repos' }]);
+    expect(connectors.connectorTools(servers, 'linear')).toEqual(['create_issue', 'list_teams']);
+    expect(connectors.connectorTools(servers, 'nope')).toEqual([]);
+  });
+
+  it('persists the active selection per session', () => {
+    connectors.clearConnectorToolSelection('s1');
+    connectors.setActiveConnectorTools('s1', 'github', ['create_issue']);
+    expect(connectors.getActiveConnectorTools('s1', 'github')).toEqual(['create_issue']);
+    expect(connectors.isConnectorToolActive('s1', 'github', 'create_issue')).toBe(true);
+    expect(connectors.isConnectorToolActive('s1', 'github', 'list_repos')).toBe(false);
+  });
+
+  it('treats “no selection” as “all tools active”', () => {
+    connectors.clearConnectorToolSelection('s2');
+    expect(connectors.getActiveConnectorTools('s2', 'github')).toBeNull();
+    expect(connectors.isConnectorToolActive('s2', 'github', 'list_repos')).toBe(true);
+  });
+
+  it('filters a tool list down to the active ones', () => {
+    connectors.clearConnectorToolSelection('s3');
+    connectors.setActiveConnectorTools('s3', 'github', ['create_issue']);
+    const out = connectors.activeConnectorToolList('s3', 'github', servers[0].tools);
+    expect(out).toEqual([{ name: 'create_issue' }]);
+  });
+
+  it('keeps sessions independent', () => {
+    connectors.clearConnectorToolSelection('a');
+    connectors.clearConnectorToolSelection('b');
+    connectors.setActiveConnectorTools('a', 'github', ['create_issue']);
+    connectors.setActiveConnectorTools('b', 'github', ['list_repos']);
+    expect(connectors.getActiveConnectorTools('a', 'github')).toEqual(['create_issue']);
+    expect(connectors.getActiveConnectorTools('b', 'github')).toEqual(['list_repos']);
+  });
+
+  it('clears a selection', () => {
+    connectors.clearConnectorToolSelection('s4');
+    connectors.setActiveConnectorTools('s4', 'github', ['create_issue']);
+    connectors.clearConnectorToolSelection('s4', 'github');
+    expect(connectors.getActiveConnectorTools('s4', 'github')).toBeNull();
+  });
+});
+
+describe('MCP reconnect backoff', () => {
+  it('backs off exponentially up to the cap', () => {
+    const b = new connectors.McpReconnectBackoff({ base: 100, cap: 1000, maxAttempts: 10 });
+    expect(b.fail('x').delay).toBe(100);
+    expect(b.fail('x').delay).toBe(200);
+    expect(b.fail('x').delay).toBe(400);
+    expect(b.fail('x').delay).toBe(800);
+    expect(b.fail('x').delay).toBe(1000); // capped
+    expect(b.fail('x').delay).toBe(1000);
+  });
+
+  it('reports attempt count, next retry time and state', () => {
+    const b = new connectors.McpReconnectBackoff({ base: 50, cap: 5000, maxAttempts: 3 });
+    const r = b.fail('y');
+    expect(r.attempts).toBe(1);
+    expect(r.nextRetryAt).toBeGreaterThan(Date.now() - 5);
+    expect(r.state).toBe('reconnecting');
+    b.fail('y'); b.fail('y');
+    expect(b.status('y').state).toBe('failed');
+    expect(b.status('y').attempts).toBe(3);
+  });
+
+  it('a successful reconnect resets the counter', () => {
+    const b = new connectors.McpReconnectBackoff({ base: 50, cap: 5000, maxAttempts: 5 });
+    b.fail('z'); b.fail('z');
+    expect(b.status('z').attempts).toBe(2);
+    b.success('z');
+    expect(b.status('z').attempts).toBe(0);
+    expect(b.status('z').state).toBe('connected');
+    expect(b.status('z').nextRetryAt).toBeNull();
+  });
+
+  it('backs off independently per connector', () => {
+    const b = new connectors.McpReconnectBackoff({ base: 100, cap: 10000, maxAttempts: 10 });
+    b.fail('a'); b.fail('a'); b.fail('a');
+    b.fail('b');
+    expect(b.status('a').attempts).toBe(3);
+    expect(b.status('b').attempts).toBe(1);
+  });
+
+  it('exposes the module-level helpers', () => {
+    connectors.recordReconnectSuccess('mod');
+    const r = connectors.recordReconnectFailure('mod');
+    expect(r.attempts).toBe(1);
+    expect(connectors.reconnectStatus('mod').attempts).toBe(1);
+    connectors.recordReconnectSuccess('mod');
+    expect(connectors.reconnectStatus('mod').attempts).toBe(0);
+  });
+
+  it('reconnectDelay helper matches the formula', () => {
+    expect(connectors.reconnectDelay(1)).toBe(1000);
+    expect(connectors.reconnectDelay(2)).toBe(2000);
+    expect(connectors.reconnectDelay(10)).toBe(30000);
+  });
+});
+
 describe('status', () => {
   it('returns parsed servers from the CLI output', async () => {
     const claude = fakeClaude(`cat <<'EOF'\n${LIST}\nEOF`);
@@ -182,5 +288,52 @@ describe('status', () => {
     const res = await connectors.status(claude);
     expect(res.ok).toBe(false);
     expect(res.servers).toEqual([]);
+  });
+});
+
+// The B8 review's five findings. Each one was a real defect: a tool that
+// arrives as an object never matched, an empty connector name was read as
+// "clear everything", asking for a status invented a connector record, the
+// alias methods were dead weight, and the module-level backoff could not be
+// reset.
+describe('connector tool picker — the review findings', () => {
+  it('matches a tool that arrives as an object', () => {
+    connectors.clearConnectorToolSelection('o1');
+    connectors.setActiveConnectorTools('o1', 'github', ['create_issue']);
+    // The engine hands tools over as { name, ... } objects, not bare strings.
+    expect(connectors.isConnectorToolActive('o1', 'github', { name: 'create_issue' })).toBe(true);
+    expect(connectors.isConnectorToolActive('o1', 'github', { name: 'list_repos' })).toBe(false);
+  });
+
+  it('clears only the named connector, and keeps the others', () => {
+    connectors.clearConnectorToolSelection('o2');
+    connectors.setActiveConnectorTools('o2', 'github', ['create_issue']);
+    connectors.setActiveConnectorTools('o2', 'linear', ['list_teams']);
+    connectors.clearConnectorToolSelection('o2', 'github');
+    expect(connectors.getActiveConnectorTools('o2', 'github')).toBeNull();
+    expect(connectors.getActiveConnectorTools('o2', 'linear')).toEqual(['list_teams']);
+  });
+
+  it('clears the whole session when no connector is named', () => {
+    connectors.clearConnectorToolSelection('o3');
+    connectors.setActiveConnectorTools('o3', 'github', ['create_issue']);
+    connectors.clearConnectorToolSelection('o3');
+    expect(connectors.getActiveConnectorTools('o3', 'github')).toBeNull();
+  });
+
+  it('does not invent a connector record when asked for a status', () => {
+    const b = new connectors.McpReconnectBackoff();
+    const before = b.all().length;
+    b.status('never-touched');
+    expect(b.all().length).toBe(before);
+  });
+
+  it('clears every connector backoff state at once', () => {
+    connectors.recordReconnectFailure('m1');
+    connectors.recordReconnectFailure('m2');
+    expect(connectors.reconnectStatus('m1').attempts).toBe(1);
+    connectors.clearReconnectBackoff();
+    expect(connectors.reconnectStatus('m1').attempts).toBe(0);
+    expect(connectors.reconnectStatus('m2').attempts).toBe(0);
   });
 });

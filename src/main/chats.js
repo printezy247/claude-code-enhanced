@@ -47,34 +47,13 @@ const PERM_TIMEOUT_MESSAGE = 'The user did not answer this permission request wi
   + 'Do not retry this call or a variant of it. Finish anything that needs no permission, then stop and tell '
   + 'the user exactly which action is waiting for their approval.';
 
-const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEditCell']);
-
-function isVmPath(p) {
-  if (!p || typeof p !== 'string') return false;
-  const norm = p.replace(/\\/g, '/');
-  return /^\/(proc|sys|dev)(\/|$)/i.test(norm)
-    || /^\/private\/var\/vm(\/|$)/i.test(norm)
-    || /^\\\\\.\\/i.test(p);
-}
-
-function targetFilePath(toolName, input) {
-  if (!input || typeof input !== 'object') return '';
-  return String(input.file_path || input.path || input.target || '');
-}
-
-function isOutsideDirs(filePath, allowedDirs) {
-  if (!filePath || !allowedDirs || !allowedDirs.length) return false;
-  try {
-    const home = os.homedir();
-    const resolved = path.resolve(filePath.replace(/^~(?=\/|$)/, home));
-    const claudeDir = path.resolve(home, '.claude');
-    if (resolved === claudeDir || resolved.startsWith(claudeDir + path.sep)) return false;
-    return !allowedDirs.some((dir) => {
-      const rDir = path.resolve(String(dir).replace(/^~(?=\/|$)/, home));
-      return resolved === rDir || resolved.startsWith(rDir + path.sep);
-    });
-  } catch { return false; }
-}
+// Policy helpers live in tools.js (single source of truth); alias locally so
+// the rest of this module keeps reading the same names. #B1
+const toolPolicy = require('./tools');
+const WRITE_TOOLS = toolPolicy.WRITE_TOOLS;
+const isVmPath = toolPolicy.isVmPath;
+const targetFilePath = toolPolicy.targetFilePath;
+const isOutsideDirs = toolPolicy.isOutsideDirs;
 
 /** Chat models are assumed to have this window unless told otherwise. */
 const { ENGINE_DEFAULT_WINDOW } = require('./modelcontext');
@@ -512,53 +491,59 @@ class ChatManager extends EventEmitter {
     // (parallel tool calls, subagents). The old single-slot UI dropped all but
     // the last card and left the rest to time out. #2
     options.canUseTool = async (toolName, input, ctx = {}) => {
-      input = input || {};
+      // Pin the judged input: clone up front so a later mutation of the
+      // caller's object cannot change this decision, and so any "allow"
+      // (prompt path via answer()) returns the input that was actually judged
+      // (updatedInput), not a stale original. #B1 updatedInput pinning.
+      input = input && typeof input === 'object' ? { ...input } : (input || {});
       const targetPath = targetFilePath(toolName, input);
 
       // 1. VM-path denial
       if (targetPath && isVmPath(targetPath)) {
-        return { behavior: 'deny', message: 'Path is in a restricted VM or system location.' };
+        return { behavior: 'deny', message: toolPolicy.MESSAGES.vmPath };
       }
 
       // 2. Read-only session policy
       if (settings && settings.readOnly && WRITE_TOOLS.has(toolName)) {
-        return { behavior: 'deny', message: 'Session is read-only in this session.' };
+        return { behavior: 'deny', message: toolPolicy.MESSAGES.readOnly };
       }
 
       // 3. Write-tool block rules
       if (settings && Array.isArray(settings.blockedTools) && settings.blockedTools.includes(toolName)) {
-        return { behavior: 'deny', message: 'Tool blocked by policy.' };
+        return { behavior: 'deny', message: toolPolicy.MESSAGES.blockedTool };
       }
 
       // 4. Path outside allowed working directories
       if (targetPath && settings && settings.restrictToCwd) {
         const allowed = [dir, ...(settings.allowedDirectories || [])];
         if (isOutsideDirs(targetPath, allowed)) {
-          return { behavior: 'deny', message: 'Path is outside allowed working directories.' };
+          return { behavior: 'deny', message: toolPolicy.MESSAGES.outsideAllowed };
         }
       }
 
-      // 5. Connector tool policy (always_ask / always_deny)
-      if (settings && settings.connectorToolPolicy && settings.connectorToolPolicy[toolName]) {
-        const pol = settings.connectorToolPolicy[toolName];
-        if (pol === 'always_deny') {
-          return { behavior: 'deny', message: 'Tool use denied by connector policy.' };
-        }
-        if (pol === 'always_ask') {
-          ctx.suppressAlwaysAllowRule = true;
-        }
+      // 5. Connector tool policy (always_ask / always_deny) — settings override
+      // wins, then the static sets held in tools.js. #B1
+      const connPol = toolPolicy.connectorPolicy(toolName, settings);
+      if (connPol === 'always_deny') {
+        return { behavior: 'deny', message: toolPolicy.MESSAGES.connectorDeny };
+      }
+      const alwaysAsk = connPol === 'always_ask';
+      if (alwaysAsk) {
+        // always_ask must win over bypass/yolo and over any allow rule: the
+        // user is asked every time, never silently allowed. #B1
+        ctx.suppressAlwaysAllowRule = true;
       }
 
       // 6. Auto-allow safe inspection / web tools and bypass modes
-      if (effMode === 'bypassPermissions' || !!yolo) {
+      if (!alwaysAsk && (effMode === 'bypassPermissions' || !!yolo)) {
         return { behavior: 'allow' };
       }
-      if (['WebFetch', 'WebSearch'].includes(toolName)) {
+      if (!alwaysAsk && ['WebFetch', 'WebSearch'].includes(toolName)) {
         if (!settings || !Array.isArray(settings.blockedTools) || !settings.blockedTools.includes(toolName)) {
           return { behavior: 'allow' };
         }
       }
-      if (settings && Array.isArray(settings.allowedTools) && settings.allowedTools.includes(toolName)) {
+      if (!alwaysAsk && settings && Array.isArray(settings.allowedTools) && settings.allowedTools.includes(toolName)) {
         return { behavior: 'allow' };
       }
 
@@ -971,7 +956,17 @@ class ChatManager extends EventEmitter {
     chat.dynamicMcp = next;
     return res;
   }
-  async agents(id) { return await this._chat(id).q.supportedAgents(); }
+  async agents(id) {
+    const skilltoggle = require('./skilltoggle');
+    const raw = await this._chat(id).q.supportedAgents();
+    return (Array.isArray(raw) ? raw : []).map(a => {
+      const name = typeof a === 'string' ? a : (a && a.name) || '';
+      return {
+        ...(typeof a === 'object' && a !== null ? a : { name }),
+        enabled: skilltoggle.isAgentEnabled(name),
+      };
+    });
+  }
   async applyFlags(id, patch) { return await this._chat(id).q.applyFlagSettings(patch || {}); }
   // Output styles are files on disk; the CLI lists them after a reload. #feat-output-styles
   async styles(id) {
@@ -1470,7 +1465,14 @@ class ChatManager extends EventEmitter {
         const fm = text.split(/^---\s*$/m)[1] || '';
         const name = (fm.match(/^name:\s*(.+)$/m) || [])[1] || e.name;
         const description = (fm.match(/^description:\s*(.+)$/m) || [])[1] || '';
-        out.push({ name: name.trim(), description: description.trim(), source: root.startsWith(process.env.HOME || os.homedir()) ? 'user' : 'project' });
+        const n = name.trim();
+        const skilltoggle = require('./skilltoggle');
+        out.push({
+          name: n,
+          description: description.trim(),
+          source: root.startsWith(process.env.HOME || os.homedir()) ? 'user' : 'project',
+          enabled: skilltoggle.isSkillEnabled(n),
+        });
       }
     }
     return out;
@@ -1509,3 +1511,8 @@ module.exports.leanEngineEnv = leanEngineEnv;
 module.exports.pluginOverrides = pluginOverrides;
 module.exports.sandboxNpmCache = sandboxNpmCache;
 module.exports.PERM_TIMEOUT_MESSAGE = PERM_TIMEOUT_MESSAGE;
+// B1 policy helpers re-exported for tests/consumers that import from chats.js.
+module.exports.WRITE_TOOLS = WRITE_TOOLS;
+module.exports.isVmPath = isVmPath;
+module.exports.targetFilePath = targetFilePath;
+module.exports.isOutsideDirs = isOutsideDirs;

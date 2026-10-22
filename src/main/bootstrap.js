@@ -153,7 +153,10 @@ function syncedSkillsPlugin() {
     fs.mkdirSync(path.join(plugin, 'skills'), { recursive: true });
     fs.writeFileSync(path.join(plugin, '.claude-plugin', 'plugin.json'),
       JSON.stringify({ name: 'cce-synced', description: 'Skills synced from Claude Desktop', version: '1.0.0' }));
-    for (const [name, dir] of found) fs.symlinkSync(dir, path.join(plugin, 'skills', name), 'dir');
+    const skilltoggle = require('./skilltoggle');
+    for (const [name, dir] of found) {
+      if (skilltoggle.isSkillEnabled(name)) fs.symlinkSync(dir, path.join(plugin, 'skills', name), 'dir');
+    }
   } catch { return null; }
   return plugin;
 }

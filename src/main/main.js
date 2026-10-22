@@ -80,8 +80,7 @@ function refreshSecretCache() {
     // at all ("Go requires a credential").
     let apiKey = r.apiKey || '';
     if (!apiKey) {
-      const entry = providers.entryFor(p) || {};
-      const names = [p.envVar, entry.envVar, ...(Array.isArray(entry.env) ? entry.env : [])].filter(Boolean);
+      const names = providers.envVarNames ? providers.envVarNames(p) : [];
       const source = { ...(loginEnv() || {}), ...process.env };
       for (const name of names) {
         if (source[name]) { apiKey = String(source[name]).trim(); break; }
@@ -91,6 +90,8 @@ function refreshSecretCache() {
   }
 }
 function secretFor(uid) { return secretCache.get(uid) || {}; }
+// providers.ensureFreshAuth rebuilds the cache after a successful refresh.
+providers.setRefreshSecretCache(refreshSecretCache);
 
 // OAuth flows in flight, keyed by a short session id handed to the renderer.
 const oauthSessions = new Map();
@@ -110,64 +111,15 @@ const oauthReaper = setInterval(() => {
   }
 }, 60 * 1000);
 oauthReaper.unref();
-
 /**
- * Refresh an OAuth provider's token if it is expired (or about to). Copilot
- * short-lived tokens are re-minted from the long-lived GitHub token.
+ * Refresh an OAuth provider's token if it is expired (or about to).
+ *
+ * The implementation lives in providers.js -- ONE copy, so the retry, the
+ * backoff and the authExpired flag cannot drift between two copies. This
+ * only injects the main-process dependencies.
  */
 async function ensureFreshAuth(inst) {
-  if (!inst) return;
-  const rec = auth.get(inst.uid);
-  if (!rec || rec.type !== 'oauth') return;
-  const soon = rec.expires && rec.expires - Date.now() < 120_000;
-  if (!soon && !rec.expired) return;
-  const entry = providers.entryFor(inst) || {};
-  const cfg = entry.oauth || {};
-  
-  const doRefresh = async () => {
-    if (cfg.exchange === 'copilot' || (rec.meta && rec.meta.copilot)) {
-      return await oauth.refreshCopilot(rec.refresh);
-    } else if (rec.refresh && cfg.tokenUrl) {
-      return await oauth.refreshTokens(cfg, rec.refresh);
-    }
-    return null;
-  };
-
-  try {
-    let tokens = await doRefresh();
-    if (!tokens) return;
-    auth.setOAuth(inst.uid, {
-      access: tokens.access,
-      refresh: tokens.refresh || rec.refresh,
-      expires: tokens.expires,
-      meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
-    });
-    inst.authExpired = false;
-    refreshSecretCache();
-  } catch (err) {
-    // Retry once with a brief backoff
-    try {
-      await new Promise(r => setTimeout(r, 600));
-      const tokens = await doRefresh();
-      if (tokens) {
-        auth.setOAuth(inst.uid, {
-          access: tokens.access,
-          refresh: tokens.refresh || rec.refresh,
-          expires: tokens.expires,
-          meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
-        });
-        inst.authExpired = false;
-        refreshSecretCache();
-        return;
-      }
-    } catch { /* second attempt failed */ }
-
-    console.error('[auth] refresh failed for ' + inst.name + ':', String((err && err.message) || err));
-    inst.authExpired = true;
-    if (rec.expires && rec.expires < Date.now()) {
-      auth.setOAuth(inst.uid, { ...rec, meta: { ...(rec.meta || {}), expired: true } });
-    }
-  }
+  return providers.ensureFreshAuth(inst, { auth, oauth, refreshSecretCache });
 }
 
 /**
@@ -215,6 +167,7 @@ function createTray() {
     tray.setToolTip('Claude Code Enhanced');
     const menu = Menu.buildFromTemplate([
       { label: 'Show', click: () => showWindows() },
+      { label: 'New Window', accelerator: 'CmdOrCtrl+Shift+N', click: () => { const c = createWindow(); try { c.win.focus(); } catch { /* not ready */ } } },
       { type: 'separator' },
       { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } },
     ]);
@@ -406,7 +359,7 @@ function proxyBaseUrl(provider) {
 }
 
 // ---------- window ----------------------------------------------------------
-function createWindow() {
+function createWindow(initialState) {
   const w = new BrowserWindow({
     width: 1280,
     height: 820,
@@ -429,8 +382,14 @@ function createWindow() {
   // The newest window is the active one: the tray, the dialogs and the
   // notifications act on it. #feat-multi-window
   win = w;
+  // Per-window state restore: a reopened window inherits the state captured
+  // from the last closed one unless an explicit state was passed in. #C7
+  if (initialState == null) {
+    const captured = windowRegistry.restoreState();
+    if (captured) { initialState = captured; windowRegistry.clearRestoreState(); }
+  }
   // Everything this window opens belongs to it.
-  const wcId = windowRegistry.add(w);
+  const wcId = windowRegistry.add(w, initialState || {});
   // Re-probe whenever a window regains focus while we still think the CLI is
   // absent. Startup can race a claude self-update (the ~/.local/bin/claude
   // symlink is briefly dangling), which stuck the "CLI not found" banner
@@ -1723,6 +1682,17 @@ function registerIpc() {
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  // Skill and agent enable/disable (#C4)
+  const skilltoggle = require('./skilltoggle');
+  handle('skills:toggle', async ({ name, enabled }) => {
+    skilltoggle.setSkill(name, !enabled);
+    return { ok: true, enabled: skilltoggle.isSkillEnabled(name) };
+  });
+  handle('agents:toggle', async ({ name, enabled }) => {
+    skilltoggle.setAgent(name, !enabled);
+    return { ok: true, enabled: skilltoggle.isAgentEnabled(name) };
   });
   // Ollama model manager: running models, catalog, load/unload with context size
   const ollamaBase = (p) => (p && p.baseUrl ? p.baseUrl.replace(/\/+$/, '') : null);

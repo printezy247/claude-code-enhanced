@@ -311,7 +311,135 @@ async function status(claudePath) {
   return { ok: true, servers, output: res.output };
 }
 
+// ---------- Per-connector tool picker: active tool selection per session --------
+// For each connector (MCP server) a session may choose which of its tools are
+// active. No selection means "all tools active" (the safe default). The selection
+// is keyed by session id so two sessions can differ.
+const connectorToolSelections = new Map(); // sessionId -> { connectorName: string[] }
+
+function connectorTools(servers, name) {
+  const s = (servers || []).find(x => x && String(x.name) === String(name));
+  return s && Array.isArray(s.tools) ? s.tools.slice() : [];
+}
+
+function setActiveConnectorTools(sessionId, connector, tools) {
+  if (!sessionId) throw new Error('sessionId required');
+  const sid = String(sessionId);
+  if (!connectorToolSelections.has(sid)) connectorToolSelections.set(sid, {});
+  const sel = connectorToolSelections.get(sid);
+  sel[String(connector)] = Array.isArray(tools) ? tools.map(String) : [];
+  return sel[String(connector)].slice();
+}
+
+function getActiveConnectorTools(sessionId, connector) {
+  const sid = String(sessionId);
+  const sel = connectorToolSelections.get(sid);
+  if (!sel || !Object.prototype.hasOwnProperty.call(sel, String(connector))) return null;
+  return sel[String(connector)].slice();
+}
+
+function isConnectorToolActive(sessionId, connector, tool) {
+  const active = getActiveConnectorTools(sessionId, connector);
+  if (active === null) return true; // no selection => all tools active
+  // A tool may arrive as an object ({ name: 'create_issue' }) or as a bare
+  // name. Comparing the object itself would never match the stored name, so
+  // every tool of the connector looked inactive.
+  const name = (tool && typeof tool === 'object') ? tool.name : tool;
+  return active.includes(String(name));
+}
+
+function clearConnectorToolSelection(sessionId, connector) {
+  const sid = String(sessionId);
+  const sel = connectorToolSelections.get(sid);
+  if (!sel) return;
+  // "no connector" clears the whole session; an empty-string connector is a
+  // connector whose name happens to be empty and must be cleared on its own.
+  if (connector === undefined || connector === null) connectorToolSelections.delete(sid);
+  else delete sel[String(connector)];
+}
+
+// Return the subset of a connector's tools that are active for the session.
+// With no stored selection every tool stays active (the safe default).
+function activeConnectorToolList(sessionId, connector, available) {
+  const tools = Array.isArray(available) ? available.slice() : [];
+  const active = getActiveConnectorTools(sessionId, connector);
+  if (active === null) return tools;
+  return tools.filter((t) => {
+    const name = (t && typeof t === 'object') ? t.name : t;
+    return active.includes(String(name));
+  });
+}
+
+// ---------- MCP reconnect backoff (per connector) -----------------------------
+// One broken connector must not delay another's reconnect: every connector keeps
+// its own attempt counter, delay and next-retry time.
+const RECONNECT_BASE_DELAY_MS = 1000;
+const RECONNECT_MAX_DELAY_MS = 30000;
+const RECONNECT_MAX_ATTEMPTS = 8;
+
+function reconnectDelay(attempt) {
+  const n = Math.max(1, Math.floor(Number(attempt) || 1));
+  const raw = RECONNECT_BASE_DELAY_MS * Math.pow(2, n - 1);
+  return Math.min(RECONNECT_MAX_DELAY_MS, raw);
+}
+
+class McpReconnectBackoff {
+  constructor(opts = {}) {
+    this.base = Number(opts.base) > 0 ? Number(opts.base) : RECONNECT_BASE_DELAY_MS;
+    this.cap = Number(opts.cap) > 0 ? Number(opts.cap) : RECONNECT_MAX_DELAY_MS;
+    this.maxAttempts = Number(opts.maxAttempts) > 0 ? Number(opts.maxAttempts) : RECONNECT_MAX_ATTEMPTS;
+    this.entries = new Map(); // name -> { attempts, nextRetryAt, state }
+  }
+  _entry(name) {
+    const key = String(name);
+    if (!this.entries.has(key)) this.entries.set(key, { attempts: 0, nextRetryAt: null, state: 'connected' });
+    return this.entries.get(key);
+  }
+  // A READ must not create an entry: asking a connector's status would
+  // otherwise leave a "connected" record for a connector nobody touched.
+  _peek(name) {
+    return this.entries.get(String(name)) || { attempts: 0, nextRetryAt: null, state: 'connected' };
+  }
+  fail(name) {
+    const e = this._entry(name);
+    e.attempts += 1;
+    const delay = Math.min(this.cap, this.base * Math.pow(2, e.attempts - 1));
+    e.nextRetryAt = Date.now() + delay;
+    e.state = e.attempts >= this.maxAttempts ? 'failed' : 'reconnecting';
+    return { name: String(name), attempts: e.attempts, delay, nextRetryAt: e.nextRetryAt, state: e.state };
+  }
+  success(name) {
+    const e = this._entry(name);
+    e.attempts = 0;
+    e.nextRetryAt = null;
+    e.state = 'connected';
+    return { name: String(name), attempts: 0, delay: 0, nextRetryAt: null, state: 'connected' };
+  }
+  status(name) {
+    const e = this._peek(name);
+    return { name: String(name), attempts: e.attempts, nextRetryAt: e.nextRetryAt, state: e.state };
+  }
+  all() { return [...this.entries.keys()].map(n => this.status(n)); }
+  clear(name) { this.entries.delete(String(name)); }
+  /** Forget every connector's backoff state (app restart, manual reset). */
+  clearAll() { this.entries.clear(); }
+}
+
+const reconnectBackoff = new McpReconnectBackoff();
+function recordReconnectFailure(name) { return reconnectBackoff.fail(name); }
+function recordReconnectSuccess(name) { return reconnectBackoff.success(name); }
+function reconnectStatus(name) { return reconnectBackoff.status(name); }
+/** Clear the module-level backoff state for every connector. */
+function clearReconnectBackoff() { reconnectBackoff.clearAll(); }
+
 module.exports = {
   PRESETS, add, addCustom, remove, list, status, parseMcpList, parseMcpGet, normalizeHeader,
   parseMcpDefinition, definition, definitions,
+  // C3 tool picker
+  connectorTools, setActiveConnectorTools, getActiveConnectorTools, isConnectorToolActive,
+  clearConnectorToolSelection, connectorToolSelections, activeConnectorToolList,
+  // C6 reconnect backoff
+  McpReconnectBackoff, reconnectBackoff, reconnectDelay, recordReconnectFailure,
+  recordReconnectSuccess, reconnectStatus, clearReconnectBackoff,
+  RECONNECT_BASE_DELAY_MS, RECONNECT_MAX_DELAY_MS, RECONNECT_MAX_ATTEMPTS,
 };
