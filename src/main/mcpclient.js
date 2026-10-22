@@ -111,6 +111,7 @@ class McpClient {
     this.headers = { ...(headers || {}) };
     this.transport = transport === 'sse' ? 'sse' : 'http';
     this.timeoutMs = Number(timeoutMs) > 0 ? Number(timeoutMs) : 30000;
+    this._inflight = new Set();
     this.fetchImpl = fetchImpl || globalThis.fetch;
     if (typeof this.fetchImpl !== 'function') throw new Error('MCP: no fetch implementation — pass fetchImpl');
     /** Server → client notifications (`notifications/tools/list_changed`, …). */
@@ -208,6 +209,9 @@ class McpClient {
   /** Close the session. Safe to call more than once. */
   async close() {
     try { this._streamAbort?.abort(); } catch { /* already gone */ }
+    // In-flight HTTP calls too: a stalled server must not outlive the client.
+    for (const c of this._inflight) { try { c.abort(); } catch { /* done */ } }
+    this._inflight.clear();
     this._streamAbort = null;
     this._stream = null;
     this._failPending(new Error('MCP client closed'));
@@ -485,6 +489,7 @@ class McpClient {
     let attempt = 0;
     for (;;) {
       const controller = new AbortController();
+      this._inflight.add(controller);
       let timedOut = false;
       const timer = setTimeout(() => { timedOut = true; controller.abort(); }, this.timeoutMs);
       let res = null;
@@ -493,7 +498,11 @@ class McpClient {
       } catch (err) {
         if (timedOut) throw new Error(`MCP timeout: ${label} timed out after ${this.timeoutMs}ms`);
         const aborted = /abort/i.test(String((err && err.name) || '') + String((err && err.message) || ''));
-        if (attempt === 0 && !aborted) {
+        // A tool call may already have run when the socket died: only a
+        // connect-phase failure is safe to repeat for it.
+        const code = String((err && err.cause && err.cause.code) || (err && err.code) || '');
+        const connectFail = /^(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT)$/.test(code);
+        if (attempt === 0 && !aborted && (connectFail || label !== 'tools/call')) {
           attempt++;
           await new Promise((r) => setTimeout(r, 250));
           continue;
@@ -501,6 +510,9 @@ class McpClient {
         throw err;
       } finally {
         clearTimeout(timer);
+        // Keep it findable while the body streams (close() aborts it); drop it later.
+        if (res) setTimeout(() => this._inflight.delete(controller), this.timeoutMs * 4).unref();
+        else this._inflight.delete(controller);
       }
       if (res.status === 429 && attempt === 0) {
         attempt++;

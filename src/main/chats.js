@@ -372,7 +372,7 @@ class ChatManager extends EventEmitter {
     const options = {
       cwd: dir,
       permissionMode: effMode,
-      allowDangerouslySkipPermissions: !!yolo,
+      allowDangerouslySkipPermissions: !!yolo || effMode === 'bypassPermissions',
       // 'local' was missing, so .claude/settings.local.json was never loaded — that
       // is where the CLI stores its own "always allow" rules, so approving a
       // tool in a terminal tab had no effect on chat tabs. #12
@@ -869,6 +869,7 @@ class ChatManager extends EventEmitter {
         // it, so no timer outlives the chat and no dead engine is polled. The
         // chat is gone, so no end-of-stream event is needed. #F2
         this._stopTasksForChat(id, false);
+        this._settlePending(id);
         stream.close();
       }
     })();
@@ -976,7 +977,11 @@ class ChatManager extends EventEmitter {
     this._stopTasksForChat(id, true);
     let stillQueued = 0;
     try {
-      const r = await chat.q.interrupt();
+      // A wedged engine must not leave Stop hanging: give up after 5 s.
+      const r = await Promise.race([
+        chat.q.interrupt(),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('interrupt timed out')), 5000).unref()),
+      ]);
       stillQueued = (r && Array.isArray(r.still_queued)) ? r.still_queued.length : 0;
     } catch (err) { console.warn('[chat] interrupt:', (err && err.message) || err); }
     // Permission cards still pending for this chat are answered here, so a
@@ -1094,10 +1099,16 @@ class ChatManager extends EventEmitter {
       tools: names.map((t) => ({ name: t, permission_policy: sdkPolicy })),
     };
     // Always send the full accumulated set: a partial payload drops servers.
-    const next = { ...(chat.dynamicMcp || {}), [key]: updated };
-    const res = await chat.q.setMcpServers(next);
-    chat.dynamicMcp = next;
-    return res;
+    // Serialise per chat: two quick changes must not both start from the old set.
+    const run = async () => {
+      const next = { ...(chat.dynamicMcp || {}), [key]: updated };
+      const res = await chat.q.setMcpServers(next);
+      chat.dynamicMcp = next;
+      return res;
+    };
+    const turn = (chat.mcpQueue || Promise.resolve()).then(run, run);
+    chat.mcpQueue = turn.catch(() => {});
+    return turn;
   }
   async agents(id) {
     const skilltoggle = require('./skilltoggle');
@@ -1570,12 +1581,8 @@ class ChatManager extends EventEmitter {
     }
   }
 
-  close(id) {
-    const chat = this.chats.get(id);
-    // A poll that outlives its chat would keep asking the engine for output
-    // nobody is watching. #feat-live-output
-    this._stopTasksForChat(id, false);
-    // Deny anything still waiting so no promise is left hanging after close. #20
+  /** Deny every permission/elicitation card still waiting so no promise hangs. #20 */
+  _settlePending(id) {
     for (const entry of this._permsOf(id)) {
       if (this._dropPerm(entry.requestId)) {
         this.emit('event', id, { kind: 'permission-cleared', requestId: entry.requestId, reason: 'closed' });
@@ -1589,6 +1596,14 @@ class ChatManager extends EventEmitter {
         try { entry.resolve({ action: 'cancel' }); } catch { /* resolved already */ }
       }
     }
+  }
+
+  close(id) {
+    const chat = this.chats.get(id);
+    // A poll that outlives its chat would keep asking the engine for output
+    // nobody is watching. #feat-live-output
+    this._stopTasksForChat(id, false);
+    this._settlePending(id);
     if (!chat) return;
     clearTimeout(chat.watchdog);       // never fire "engine did not start" on a closed tab
     try { chat.close && chat.close(); } catch { /* stream already ended */ }

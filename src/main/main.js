@@ -2358,9 +2358,11 @@ if (!gotLock) {
     refreshSecretCache();
     if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: store ready');
 
-    const proxy = await startProxy((uid) => {
+    const proxy = await startProxy(async (uid) => {
       const inst = store.providers.find(x => x.uid === uid);
       if (!inst || !inst.baseUrl) return null;
+      // Long chats outlive short-lived OAuth tokens: refresh (single-flight) per request.
+      await ensureFreshAuth(inst);
       const s = secretFor(uid);
       return {
         baseUrl: inst.baseUrl,

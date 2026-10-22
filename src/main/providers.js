@@ -448,7 +448,18 @@ function chatModelFor(instance, picked) {
  * refresh is retried once with backoff; it never throws, marks the provider
  * `authExpired`, and leaves a still-valid stored token untouched.
  */
-async function ensureFreshAuth(inst, authOrDeps, oauthModOverride) {
+const refreshFlights = new Map();   // uid -> in-flight refresh (single-flight)
+function ensureFreshAuth(inst, authOrDeps, oauthModOverride) {
+  if (!inst || !inst.uid) return Promise.resolve();
+  const live = refreshFlights.get(inst.uid);
+  if (live) return live;
+  const p = ensureFreshAuthOnce(inst, authOrDeps, oauthModOverride)
+    .finally(() => refreshFlights.delete(inst.uid));
+  refreshFlights.set(inst.uid, p);
+  return p;
+}
+
+async function ensureFreshAuthOnce(inst, authOrDeps, oauthModOverride) {
   let auth = authOrDeps;
   let oauthMod = oauthModOverride;
   let refreshSecretCache = refreshSecretCacheFn;
@@ -508,8 +519,10 @@ async function ensureFreshAuth(inst, authOrDeps, oauthModOverride) {
 
     console.error('[auth] refresh failed for ' + (inst.name || inst.uid) + ':', String((err && err.message) || err));
     inst.authExpired = true;
-    if (rec.expires && rec.expires < Date.now()) {
-      auth.setOAuth(inst.uid, { ...rec, meta: { ...(rec.meta || {}), expired: true } });
+    // Re-read: never write the stale record back over tokens saved meanwhile.
+    const latest = auth.get(inst.uid) || rec;
+    if (latest.expires && latest.expires < Date.now()) {
+      auth.setOAuth(inst.uid, { ...latest, meta: { ...(latest.meta || {}), expired: true } });
     }
   }
 }
