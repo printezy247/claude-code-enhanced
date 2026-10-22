@@ -1,5 +1,13 @@
 # Claude Desktop 2.42304.2 — REA review and CCE upgrade plan
 
+> **Historical.** This review covers the **2.42304.2** build (SDK 0.3.299).
+> The current review is **[claude-desktop-3.1623.3-parity.md](claude-desktop-3.1623.3-parity.md)**,
+> which covers the shipped **3.1623.3** build (SDK **0.3.308**): a much larger
+> surface — 62 IPC services with 1 027 methods, its own MCP runtime, 35 internal
+> MCP servers, a four-state connector policy, DXT plugin install, artifacts,
+> side chat and scheduled tasks. Keep this file for the method and the
+> evidence trail; act on the newer one.
+
 Source: `/var/cache/apt/archives/claude-desktop_2.42304.2_amd64.deb`
 (`/usr/lib/claude-desktop/resources/app.asar`, `@ant/desktop` 2.42304.2,
 `@anthropic-ai/claude-agent-sdk` 0.3.299).
