@@ -19,6 +19,7 @@ beforeEach(async () => {
       'git:info': { ok: true, repo: 'me/proj', branch: 'main', dirty: 0, files: [] },
       'chat:context': { ok: true, usage: { totalTokens: 5000, maxTokens: 100000, percentage: 5 } },
       'file:share': { ok: true },
+      'dialog:pickFiles': { ok: true, files: [{ name: 'my doc.pdf', path: '/home/x/my doc.pdf', size: 9, ref: true }, { name: 'big.zip', path: '/home/x/big.zip', size: 9e6, ref: true }] },
     },
   });
   calls = h.calls;
@@ -82,5 +83,32 @@ describe('file sharing', () => {
     await flush();
     const call = calls.find((c) => c.channel === 'file:share');
     expect(call.payload).toMatchObject({ id: 'c1', path: '/work/proj/out.txt', action: 'save' });
+  });
+});
+
+describe('attaching files', () => {
+  it('attaches PDFs and other files by path instead of refusing them', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    click(chat.attachBtn);
+    await flush();
+    expect(chat.composer.value).toContain('@"/home/x/my doc.pdf"');
+    expect(chat.composer.value).toContain('@/home/x/big.zip');
+  });
+});
+
+describe('pane slash commands', () => {
+  it('/files opens the Files tab', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    chat.composer.value = '/files';
+    chat.send();
+    await flush(4);
+    expect(doc().querySelector('#split-kind').value).toBe('files');
+  });
+  it('/status shows the chat state without sending to the engine', async () => {
+    const chat = h.window.Chat.chats.get('c1');
+    chat.composer.value = '/status';
+    chat.send();
+    await flush();
+    expect(calls.find((c) => c.channel === 'chat:send')).toBeUndefined();
   });
 });

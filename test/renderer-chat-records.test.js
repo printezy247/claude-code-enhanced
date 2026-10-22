@@ -51,7 +51,7 @@ describe('"/" in the composer', () => {
   it('filters by prefix, then by any part of the name', async () => {
     const { h, chat } = await open();
     await type(h, chat, '/rev');
-    expect(items(chat)).toEqual(['/review', '/ecc:code-review [pr]']);
+    expect(items(chat)).toEqual(['/review', '/preview', '/ecc:code-review [pr]']);
   });
 
   it('puts the picked command in the composer', async () => {
@@ -65,7 +65,7 @@ describe('"/" in the composer', () => {
   it('still offers cce\'s own commands when the session lists none', async () => {
     const { h, chat } = await open({ commands: [] });
     await type(h, chat, '/co');
-    expect(items(chat)).toEqual(['/compact', '/cost']);
+    expect(items(chat)).toEqual(['/compact', '/cost', '/context']);
   });
 });
 

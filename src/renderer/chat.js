@@ -491,6 +491,12 @@ const Chat = (() => {
     // paste images straight into the chat
     chat.composer.addEventListener('paste', (e) => {
       const items = [...(e.clipboardData?.items || [])];
+      const fileItem = items.find(i => i.kind === 'file' && !i.type.startsWith('image/'));
+      if (fileItem) {
+        const f = fileItem.getAsFile();
+        const p = f && ccx.pathForFile ? ccx.pathForFile(f) : '';
+        if (p) { e.preventDefault(); addFileRef(chat, p); return; }
+      }
       const imgItem = items.find(i => i.type.startsWith('image/'));
       if (!imgItem) return;
       e.preventDefault();
@@ -544,11 +550,27 @@ const Chat = (() => {
       const r = await ccx.invoke('dialog:pickFiles');
       if (r.ok && (r.files || []).length) applyAttachedFiles(chat, r.files);
     });
-    ['dragover', 'drop'].forEach(ev => chat.composer.addEventListener(ev, (e) => {
-      e.preventDefault();
-      if (ev === 'dragover') return;
-      if (e.dataTransfer && e.dataTransfer.files.length) attachFiles(chat, e.dataTransfer.files);
-    }));
+    // The whole chat is a drop target (not just the textbox); files with a real
+    // disk path go by reference, small images still travel inline.
+    let dragDepth = 0;
+    const dropFiles = (files) => {
+      for (const file of [...files]) {
+        const p = ccx.pathForFile ? ccx.pathForFile(file) : '';
+        if (String(file.type || '').startsWith('image/') && file.size < 4 * 1024 * 1024) attachFiles(chat, [file]);
+        else if (p) addFileRef(chat, p);
+        else attachFiles(chat, [file]);
+      }
+    };
+    chat.pane.addEventListener('dragenter', (e) => {
+      if (!(e.dataTransfer && [...(e.dataTransfer.types || [])].includes('Files'))) return;
+      e.preventDefault(); dragDepth++; chat.pane.classList.add('drop-active');
+    });
+    chat.pane.addEventListener('dragover', (e) => { e.preventDefault(); });
+    chat.pane.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) chat.pane.classList.remove('drop-active'); });
+    chat.pane.addEventListener('drop', (e) => {
+      e.preventDefault(); dragDepth = 0; chat.pane.classList.remove('drop-active');
+      if (e.dataTransfer && e.dataTransfer.files.length) dropFiles(e.dataTransfer.files);
+    });
     chat.composer.addEventListener('keydown', (e) => {
       // IME composition: Enter/arrows belong to the composition, not the app.
       if (e.isComposing || e.keyCode === 229) return;
@@ -788,11 +810,22 @@ const Chat = (() => {
     renderImageChips(chat);
   }
 
-  /** Files already read by the main process: images become blocks, text inlines. */
+  /** Mention a file by path so the agent reads it itself (PDFs, big or binary files). */
+  function addFileRef(chat, p) {
+    const ref = '@' + (/\s/.test(p) ? '"' + p + '"' : p);
+    const cur = chat.composer.value;
+    chat.composer.value = cur + (cur && !/\s$/.test(cur) ? ' ' : '') + ref + ' ';
+    autosize(chat.composer);
+    chat.composer.focus();
+  }
+
+  /** Files already read by the main process: images become blocks, text inlines, the rest go by path. */
   function applyAttachedFiles(chat, files) {
     for (const f of files) {
       if (f.base64 && f.mediaType) {
         chat.pendingImages.push({ media_type: f.mediaType, data: f.base64 });
+      } else if (f.ref && f.path) {
+        addFileRef(chat, f.path);
       } else if (f.text != null) {
         chat.composer.value += (chat.composer.value ? '\n' : '') + '@' + f.name + '\n' + f.text;
       } else if (f.error) {
@@ -2550,8 +2583,19 @@ const Chat = (() => {
       setTimeout(() => send(), 0);
       return true;
     }
+    if (PANE_COMMANDS[cmd]) {
+      const k = document.querySelector('#split-kind');
+      if (k) { k.value = PANE_COMMANDS[cmd]; k.dispatchEvent(new Event('change')); }
+      if (window.toggleSplit && !document.querySelector('#main.split')) window.toggleSplit(true);
+      return true;
+    }
+    if (cmd === '/attach') { chat.attachBtn.click(); return true; }
+    if (cmd === '/status') {
+      toast('model ' + (chat.model || 'default') + ' · mode ' + chat.mode + ' · ' + (chat.cwd || ''), 'ok');
+      return true;
+    }
     if (cmd === '/help') {
-      toast('Built-ins: /compact · /handoff · /clear · /cost · /model · /review · /help — every other /command runs in the engine', '');
+      toast('Built-ins: /compact · /handoff · /clear · /cost · /model · /review · /attach · /context · /status · /files · /changes · /diff · /terminal · /preview · /help — every other /command runs in the engine', '');
       return true;
     }
     return false; // engine-side command (skills, plugins, custom)
@@ -4814,7 +4858,16 @@ const Chat = (() => {
     { name: 'cost', description: 'Tokens and cost so far' },
     { name: 'model', description: 'Switch model' },
     { name: 'help', description: 'What cce can do here' },
+    { name: 'attach', description: 'Attach files (any type) to this message' },
+    { name: 'context', description: 'Show the context window breakdown' },
+    { name: 'status', description: 'Model, mode and folder of this chat' },
+    { name: 'files', description: 'Open the Files tab' },
+    { name: 'changes', description: 'Open the Changes tab' },
+    { name: 'diff', description: 'Open the last edit diff' },
+    { name: 'terminal', description: 'Open a terminal in this folder' },
+    { name: 'preview', description: 'Open the Preview tab' },
   ];
+  const PANE_COMMANDS = { '/context': 'tasks', '/files': 'files', '/changes': 'changes', '/diff': 'diff', '/terminal': 'terminal', '/preview': 'preview' };
 
   /**
    * Every command the session offers, with descriptions. The engine only lists
@@ -4850,7 +4903,7 @@ const Chat = (() => {
     const q = now.slice(1).toLowerCase();
     const starts = all.filter(c => c.name.toLowerCase().startsWith(q));
     const contains = q ? all.filter(c => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q)) : [];
-    chat.slashItems = starts.concat(contains).slice(0, 14);
+    chat.slashItems = starts.concat(contains).slice(0, 24);
     if (!chat.slashItems.length) return hideSlash(chat);
     if (chat.slashIdx < 0 || chat.slashIdx >= chat.slashItems.length) chat.slashIdx = 0;
     renderSlash(chat);

@@ -1591,3 +1591,6 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .task-card .ctx-used { font-size: 11px; }
 .task-card .tc-badge { font-size: 11px; padding: 0 6px; }
 .task-card .btn.small { font-size: 11px; padding: 3px 8px; }
+
+.chat-pane.drop-active { position: relative; outline: 2px dashed var(--accent); outline-offset: -6px; }
+.chat-pane.drop-active::after { content: 'Drop files to attach'; position: absolute; inset: auto 0 90px 0; text-align: center; color: var(--accent); font-size: 13px; pointer-events: none; }
