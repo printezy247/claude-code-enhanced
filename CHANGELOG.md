@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.56] — 2026-10-23
+
+### Added
+- **Request rail**: a thin column of ticks on the left edge of the chat, one per request you sent. Hover a tick to read the request, click to jump to it. It shows only while the left sidebar is hidden and steps aside when the sidebar is open.
+
 ## [0.9.55] — 2026-10-23
 
 ### Changed
