@@ -42,6 +42,20 @@ describe('provider toggle in the model dropdown (#feat-provider-toggle)', () => 
     expect(label).toContain('Provider Two');
   });
 
+  it('shows the current provider\'s model as selected, with other providers listed after it', async () => {
+    h = loadRenderer({ ipc: ipcFor({ 'chat:create': { ok: true, id: 'c1', cwd: '/tmp', model: 'sonnet', permissionMode: 'acceptEdits', provider: P1 } }) });
+    await flush();
+    const chat = h.window.Chat.chats.get('c1');
+    const o = h.window.document.createElement('option');
+    o.value = '__prov:p1'; chat.modelSel.appendChild(o);
+    chat.modelSel.value = '__prov:p1';
+    chat.modelSel.dispatchEvent(new h.window.Event('change'));   // rebuild with providers:all loaded
+    await flush();
+    const vals = [...chat.modelSel.options].map(x => x.value);
+    expect(vals.findIndex(v => v.startsWith('__pm:'))).toBeGreaterThan(vals.indexOf('sonnet'));
+    expect(chat.modelSel.value).toBe('sonnet');
+  });
+
   it('asks the main process for the chosen provider AND model', async () => {
     h = loadRenderer({
       ipc: ipcFor({ 'chat:set-provider': () => ({ ok: true, id: 'c9', provider: { ...P2 }, model: 'm2', permissionMode: 'acceptEdits' }) }),

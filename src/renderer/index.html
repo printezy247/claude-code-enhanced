@@ -123,12 +123,11 @@
       </section>
     </main>
 
+    <!-- Tool panel: Changes / Files / Terminal / Diff / Preview. Closed until one is opened. -->
     <div id="splitter" title="Drag to resize"></div>
-    <section id="splitpane">
+    <section id="splitpane" aria-label="Tools">
       <div class="split-head">
-        <button class="split-tab split-overview" role="tab" data-kind="tasks" title="Overview — session, context, connectors, tasks, changes (always shown)"><span data-icon="layers"></span><span>Overview</span></button>
-        <span class="split-sep" aria-hidden="true"></span>
-        <div class="split-tabs" role="tablist" aria-label="Side panel views">
+        <div class="split-tabs" role="tablist" aria-label="Tool panel views">
           <button class="split-tab" role="tab" data-kind="changes" title="Working tree changes"><span data-icon="branch"></span><span>Changes</span></button>
           <button class="split-tab" role="tab" data-kind="files" title="Project files"><span data-icon="folder"></span><span>Files</span></button>
           <button class="split-tab" role="tab" data-kind="terminal" title="Terminal in this folder"><span data-icon="terminal"></span><span>Terminal</span></button>
@@ -136,20 +135,30 @@
           <button class="split-tab" role="tab" data-kind="preview" title="Preview a dev server"><span data-icon="globe"></span><span>Preview</span></button>
         </div>
         <span class="spacer"></span>
-        <button class="icon-btn" id="btn-split-tabs" title="Choose which tabs to show" aria-label="Choose which side panel tabs to show" aria-haspopup="true"><span data-icon="dots"></span></button>
-        <button class="icon-btn" id="btn-split-refresh" title="Refresh" aria-label="Refresh the side panel"><span data-icon="refresh"></span></button>
+        <button class="icon-btn" id="btn-split-tabs" title="Choose which tabs to show" aria-label="Choose which tool tabs to show" aria-haspopup="true"><span data-icon="dots"></span></button>
+        <button class="icon-btn" id="btn-split-refresh" title="Refresh" aria-label="Refresh the tool panel"><span data-icon="refresh"></span></button>
         <select id="split-kind" class="sr-only" tabindex="-1" aria-hidden="true">
-          <option value="tasks">Overview</option>
-          <option value="terminal">Terminal</option>
-          <option value="files">Files</option>
           <option value="changes">Working tree changes</option>
+          <option value="files">Files</option>
+          <option value="terminal">Terminal</option>
           <option value="diff">Last edit diff</option>
           <option value="preview">Preview</option>
         </select>
-        <button class="icon-btn" id="btn-split-close" title="Close the side panel (Alt+V)" aria-label="Close the side panel"><span data-icon="close"></span></button>
+        <button class="icon-btn" id="btn-split-close" title="Close the tool panel (Alt+V)" aria-label="Close the tool panel"><span data-icon="close"></span></button>
       </div>
       <div class="split-body" id="split-body"></div>
     </section>
+
+    <!-- Overview: always docked on the right (environment, context, connectors, changes;
+         tasks and background work only while there are some). -->
+    <aside id="overviewpane" aria-label="Overview">
+      <div class="ov-head">
+        <span class="ico" data-icon="layers"></span><b>Overview</b>
+        <span class="spacer"></span>
+        <button class="icon-btn" id="btn-overview-refresh" title="Refresh" aria-label="Refresh the overview"><span data-icon="refresh"></span></button>
+      </div>
+      <div class="ov-body" id="overview-body"></div>
+    </aside>
   </div>
 
   <!-- Status messages must be announced, not just drawn. -->

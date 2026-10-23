@@ -30,11 +30,22 @@ const click = (el) => el.dispatchEvent(new h.window.MouseEvent('click', { bubble
 const ev = (e) => h.window.Chat.handleEvent(Object.assign({ id: 'c1' }, e));
 
 describe('side panel', () => {
-  it('keeps Overview outside the hideable tab strip', () => {
-    expect(doc().querySelector('#splitpane .split-overview')).toBeTruthy();
-    expect(doc().querySelector('#splitpane .split-tabs .split-tab[data-kind="tasks"]')).toBe(null);
+  it('docks the Overview on the right, outside the tool panel and its tabs', () => {
+    expect(doc().querySelector('#overviewpane #overview-body')).toBeTruthy();
+    expect(doc().querySelector('#splitpane .split-overview')).toBe(null);
+    expect(doc().querySelector('.split-tab[data-kind="tasks"]')).toBe(null);
+    expect(doc().querySelector('#overviewpane').classList.contains('hidden')).toBe(false);
+    // Nothing in the tool panel can close or hide the Overview.
+    expect(doc().querySelector('#overviewpane #btn-split-close')).toBe(null);
+    expect(doc().querySelector('#overviewpane #btn-split-tabs')).toBe(null);
   });
-  it('hides and restores other tabs, never Overview', async () => {
+  it('fills the Overview without opening the tool panel, which starts closed', async () => {
+    await flush(4);
+    expect(doc().body.classList.contains('split-open')).toBe(false);
+    expect(doc().querySelectorAll('#overview-body .task-card').length).toBeGreaterThan(0);
+    expect(doc().querySelector('#overview-body').textContent).toContain('/work/proj');
+  });
+  it('hides and restores tool tabs from the chooser', async () => {
     h.window.toggleSplit(true);
     await flush(4);
     click(doc().querySelector('#btn-split-tabs'));
@@ -43,15 +54,28 @@ describe('side panel', () => {
     rows[1].checked = false;   // Files
     rows[1].dispatchEvent(new h.window.Event('change', { bubbles: true }));
     expect(doc().querySelector('.split-tab[data-kind="files"]').classList.contains('hidden')).toBe(true);
-    expect(doc().querySelector('.split-tab[data-kind="tasks"]').classList.contains('hidden')).toBe(false);
     rows[1].checked = true;
     rows[1].dispatchEvent(new h.window.Event('change', { bubbles: true }));
     expect(doc().querySelector('.split-tab[data-kind="files"]').classList.contains('hidden')).toBe(false);
   });
-  it('overview cards cannot be collapsed', async () => {
+  it('moves to another tab when the open one is hidden, and closes the panel when none is left', async () => {
     h.window.toggleSplit(true);
     await flush(4);
-    const cards = doc().querySelectorAll('#split-body .task-card');
+    const kind = doc().querySelector('#split-kind');
+    kind.value = 'files';
+    kind.dispatchEvent(new h.window.Event('change'));
+    click(doc().querySelector('#btn-split-tabs'));
+    const rows = [...doc().querySelectorAll('#split-tabs-menu input')];
+    rows[1].checked = false;   // hide the open Files tab
+    rows[1].dispatchEvent(new h.window.Event('change', { bubbles: true }));
+    expect(kind.value).not.toBe('files');
+    for (const r of rows) { r.checked = false; r.dispatchEvent(new h.window.Event('change', { bubbles: true })); }
+    expect(doc().body.classList.contains('split-open')).toBe(false);
+    expect(doc().querySelectorAll('#overview-body .task-card').length).toBeGreaterThan(0);   // Overview stays
+  });
+  it('overview cards cannot be collapsed', async () => {
+    await flush(4);
+    const cards = doc().querySelectorAll('#overview-body .task-card');
     expect(cards.length).toBeGreaterThan(0);
     for (const c of cards) expect(c.querySelector('button.task-card-head')).toBe(null);
   });

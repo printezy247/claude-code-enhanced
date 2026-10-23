@@ -34,7 +34,7 @@ beforeEach(async () => {
   await flush(4);
 });
 
-const panel = () => h.window.document.querySelector('#split-body').textContent;
+const panel = () => h.window.document.querySelector('#overview-body').textContent;
 
 describe('right-hand session rail', () => {
   it('shows environment, context, connectors and tasks', async () => {
@@ -52,7 +52,7 @@ describe('right-hand session rail', () => {
   it('is exactly four cards like the desktop app; Tasks joins only when a list exists', async () => {
     h.window.toggleSplit(true);
     await flush(4);
-    const keys = () => [...h.window.document.querySelectorAll('#split-body > [data-card]')].map((c) => c.dataset.card);
+    const keys = () => [...h.window.document.querySelectorAll('#overview-body > [data-card]')].map((c) => c.dataset.card);
     expect(keys()).toEqual(['environment', 'context', 'connectors', 'changes']);
     h.window.Chat.handleEvent({ id: 'c1', kind: 'message', msg: { type: 'assistant', message: { content: [
       { type: 'tool_use', id: 't1', name: 'TodoWrite', input: { todos: [{ content: 'Do it', status: 'pending' }] } }] } } });
@@ -64,7 +64,7 @@ describe('right-hand session rail', () => {
   it('a Background card appears when the model starts a background task, and goes when it ends', async () => {
     h.window.toggleSplit(true);
     await flush(4);
-    const card = () => h.window.document.querySelector('#split-body [data-card="background"]');
+    const card = () => h.window.document.querySelector('#overview-body [data-card="background"]');
     expect(card()).toBeNull();
     h.window.Chat.handleEvent({ id: 'c1', kind: 'task', msg: { subtype: 'task_started', task_id: 'b1', description: 'npm run dev', is_backgrounded: true } });
     await new Promise((r) => setTimeout(r, 250));

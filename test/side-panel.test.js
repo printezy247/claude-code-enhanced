@@ -24,7 +24,7 @@ beforeEach(async () => {
 });
 
 const send = (msg) => h.window.Chat.handleEvent(Object.assign({ id: 'c1', kind: 'message' }, msg));
-const panel = () => h.window.document.querySelector('#split-body').textContent;
+const panel = () => h.window.document.querySelector('#overview-body').textContent;
 const toolUse = (id, name, input) => send({ msg: { type: 'assistant', message: { content: [{ type: 'tool_use', id, name, input }] } } });
 const toolResult = (id, text) => send({ msg: { type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: id, content: text }] } } });
 
@@ -48,9 +48,9 @@ describe('tasks side panel', () => {
     toolResult('t3', 'Updated task #1 status');
     await flush();
     expect(h.window.Chat.chats.get('c1').todos.map((t) => t.status)).toEqual(['completed', 'pending']);
-    h.window.toggleSplit(true);
+    await new Promise((r) => setTimeout(r, 250));   // the Overview redraws after its coalescing delay
     await flush(4);
-    const card = h.window.document.querySelector('#split-body [data-card="tasks"]');
+    const card = h.window.document.querySelector('#overview-body [data-card="tasks"]');
     expect(card.querySelector('.tc-badge').textContent).toBe('1/2');
     expect(card.querySelector('li.done .task-text').textContent).toBe('Typecheck the tree');
     expect(card.querySelector('li.todo .task-text').textContent).toBe('Run the tests');
@@ -65,7 +65,7 @@ describe('tasks side panel', () => {
     ] });
     toolResult('t1', 'ok');
     await new Promise((r) => setTimeout(r, 200));   // the coalescing delay
-    const card = h.window.document.querySelector('#split-body [data-card="tasks"]');
+    const card = h.window.document.querySelector('#overview-body [data-card="tasks"]');
     expect(card.querySelector('.task-now').textContent).toBe('Fixing the bug');
     expect(card.querySelector('li.active .task-text').textContent).toBe('Fix the bug');
   });
