@@ -155,7 +155,6 @@ const Chat = (() => {
         <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work"><span data-icon="play"></span> continue</button>
         <button class="chat-btn hdr-more" title="Chat actions" aria-label="Chat actions"><span data-icon="dots"></span></button>
       </div>
-      <div class="chat-ctxbar hidden" title="Context window usage"><i></i></div>
       <div class="chat-body">
         <div class="chat-msgs">
           <div class="chat-empty">
@@ -215,8 +214,6 @@ const Chat = (() => {
       latestBtn: pane.querySelector('.chat-latest'),
       todos: [],
       moreBtn: pane.querySelector('.hdr-more'),
-      ctxBar: pane.querySelector('.chat-ctxbar'),
-      ctxFill: pane.querySelector('.chat-ctxbar i'),
       imgs: pane.querySelector('.chat-imgs'),
       contBtn: pane.querySelector('.chat-cont-btn'),
       busyModeBtn: pane.querySelector('.chat-busy-mode'),
@@ -1981,11 +1978,6 @@ const Chat = (() => {
     if (n !== chat.ctxSeq || !r || !r.ok || !r.usage) return;
     const u = r.usage;
     const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
-    chat.ctxBar.classList.remove('hidden');
-    chat.ctxFill.style.width = pct.toFixed(1) + '%';
-    chat.ctxFill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
-    chat.ctxBar.title = 'context: ' + (u.totalTokens || 0).toLocaleString() + ' / '
-      + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)';
     chat.ctxUsage = u;
     if (chat.compactBtn) {
       const ring = chat.compactBtn.querySelector('.ctx-ring');
@@ -2775,37 +2767,52 @@ const Chat = (() => {
     body.appendChild(rail);
     body.appendChild(tip);
     let queued = false;
+    let items = [];
+    const textOf = (m) => (m.dataset.text || '').trim();
     const paint = () => {
       queued = false;
-      const items = [...chat.msgs.querySelectorAll(':scope > .user-msg')];
+      if (!rail.isConnected) return;
+      items = [...chat.msgs.querySelectorAll(':scope > .user-msg')];
       rail.classList.toggle('empty', !items.length);
       rail.textContent = '';
       items.forEach((m, i) => {
-        const text = (m.dataset.text || m.textContent || '').trim();
         const b = el('button', 'req-tick');
         b.type = 'button';
-        b.setAttribute('aria-label', 'Request ' + (i + 1) + ': ' + text.slice(0, 80));
-        b.addEventListener('click', () => {
-          chat.follow = false;
-          m.scrollIntoView({ block: 'start', behavior: 'smooth' });
-          m.classList.add('req-flash');
-          setTimeout(() => m.classList.remove('req-flash'), 1200);
-        });
-        const show = () => {
-          tip.textContent = text.length > 280 ? text.slice(0, 280) + '…' : text;
-          tip.classList.remove('hidden');
-          const br = b.getBoundingClientRect(), pr = body.getBoundingClientRect();
-          tip.style.top = Math.max(4, Math.min(br.top - pr.top - 8, pr.height - tip.offsetHeight - 4)) + 'px';
-        };
-        b.addEventListener('mouseenter', show);
-        b.addEventListener('focus', show);
-        b.addEventListener('mouseleave', () => tip.classList.add('hidden'));
-        b.addEventListener('blur', () => tip.classList.add('hidden'));
+        b.dataset.i = String(i);
+        b.setAttribute('aria-label', 'Request ' + (i + 1) + ': ' + textOf(m).slice(0, 80));
         rail.appendChild(b);
       });
     };
-    new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(paint); } })
-      .observe(chat.msgs, { childList: true });
+    const tickOf = (e) => e.target.closest && e.target.closest('.req-tick');
+    const show = (e) => {
+      const b = tickOf(e), m = b && items[Number(b.dataset.i)];
+      if (!m) return;
+      const text = textOf(m);
+      tip.textContent = text.length > 280 ? text.slice(0, 280) + '…' : text;
+      tip.classList.remove('hidden');
+      const br = b.getBoundingClientRect(), pr = body.getBoundingClientRect();
+      tip.style.top = Math.max(4, Math.min(br.top - pr.top - 8, pr.height - tip.offsetHeight - 4)) + 'px';
+    };
+    const hide = () => tip.classList.add('hidden');
+    rail.addEventListener('mouseover', show);
+    rail.addEventListener('focusin', show);
+    rail.addEventListener('mouseout', hide);
+    rail.addEventListener('focusout', hide);
+    rail.addEventListener('click', (e) => {
+      const b = tickOf(e), m = b && items[Number(b.dataset.i)];
+      if (!m) return;
+      chat.follow = false;
+      m.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      m.classList.add('req-flash');
+      setTimeout(() => m.classList.remove('req-flash'), 1200);
+    });
+    // Only a request added or removed changes the rail; streamed blocks do not.
+    const isReq = (n) => n.nodeType === 1 && n.classList.contains('user-msg');
+    new MutationObserver((recs) => {
+      if (queued || !recs.some((r) => [...r.addedNodes, ...r.removedNodes].some(isReq))) return;
+      queued = true;
+      requestAnimationFrame(paint);
+    }).observe(chat.msgs, { childList: true });
     paint();
   }
 
@@ -4973,6 +4980,20 @@ const Chat = (() => {
       const mgr = el('button', 'btn small', '⚙ model manager');
       mgr.addEventListener('click', () => { if (window.openOllamaManager && chat.provider) window.openOllamaManager(chat.provider); });
       row.appendChild(mgr);
+      g.appendChild(row);
+      e.appendChild(g);
+    }
+    // The engine maps Opus/Sonnet/Haiku to whatever the Claude settings (or the
+    // provider's small model) name; when that model is missing, say so and offer a way out.
+    const gone = !ctx && m.match(/model_not_found|may not exist or you may not have access/i);
+    if (gone) {
+      const pick = (m.match(/selected model \(([^)]+)\)/i) || [])[1];
+      const g = el('div', 'ctx-guide');
+      g.appendChild(el('div', 'hint', (pick ? '"' + pick + '"' : 'That model') + ' is not available to this provider. Opus, Sonnet and Haiku are only names: the engine swaps in whatever your Claude settings map them to. Pick one of the provider\'s own models in the model menu, or go back to its default.'));
+      const row = el('div', 'perm-actions');
+      const def = el('button', 'btn small primary', 'Use the provider default');
+      def.addEventListener('click', () => { switchModel(chat, '').then(() => { chat.modelSel.value = ''; }); });
+      row.appendChild(def);
       g.appendChild(row);
       e.appendChild(g);
     }
