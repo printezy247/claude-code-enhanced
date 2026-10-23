@@ -2,6 +2,17 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.57] — 2026-10-23
+
+### Changed
+- **The orange progress strip under the top bar is gone**, so the chat reaches the top. Context use is still shown by the ring in the composer footbar and the Overview card.
+- **The chat is centred in the window** on wide screens: the Overview floats over the right margin instead of pushing the chat off-centre (below 1500 px it docks as before). The top strip is hidden on the Usage, Providers, Connectors and Settings pages.
+- Code pruned after review: dead context-bar code removed, the request rail uses one set of delegated listeners and repaints only when a request is added or removed.
+
+### Fixed
+- **Context "+N more" could not be expanded.** Its open/closed state now lives on the Overview itself and reacts on press, so a refresh can no longer swallow or undo it.
+- A "model not found" error (for example Haiku mapped to a model the provider lacks) now explains what happened and offers a one-click return to the provider's default model.
+
 ## [0.9.56] — 2026-10-23
 
 ### Added

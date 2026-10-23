@@ -128,6 +128,7 @@ function switchView(view) {
   // for any caller that has not been updated.
   if (view === 'terminal') view = 'conversations';
   state.view = view;
+  document.body.dataset.view = view;
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
   document.querySelectorAll('.view').forEach(v =>
@@ -1164,7 +1165,6 @@ window.refreshTasksRail = (chatId, only = 'tasks') => {
  * Tasks (the agent's todo list), Changes (uncommitted files). #feat-desktop-layout
  */
 const CTX_VISIBLE = 5;
-let ctxExpanded = false;
 /** Which Overview cards are folded away. Connectors start folded: it is the longest card. */
 function ovClosedMap() {
   const v = lsGet('cce.ovClosed', null);
@@ -1425,15 +1425,10 @@ function renderTasks(target, cwd, only) {
       const catRows = [...ctxBreak.children];
       if (catRows.length > CTX_VISIBLE + 1) {
         const extra = catRows.slice(CTX_VISIBLE);
-        extra.forEach((r) => r.classList.toggle('hidden', !ctxExpanded));
-        const more = el('button', 'btn tiny ctx-more', ctxExpanded ? 'show less' : '+' + extra.length + ' more');
-        more.addEventListener('click', () => {
-          ctxExpanded = !ctxExpanded;
-          target.__taskSeq = (target.__taskSeq || 0) + 1;   // drop any render already in flight
-          target.__taskHtml = null;
-          extra.forEach((r) => r.classList.toggle('hidden', !ctxExpanded));
-          more.textContent = ctxExpanded ? 'show less' : '+' + extra.length + ' more';
-        });
+        extra.forEach((r) => r.classList.add('ctx-extra'));
+        const more = el('button', 'btn tiny ctx-more');
+        more.type = 'button';
+        more.dataset.n = String(extra.length);   // label comes from CSS, state from #overview-body.ctx-open
         ctxBreak.appendChild(more);
       }
     }));
@@ -3103,6 +3098,13 @@ function wireChrome() {
   });
   // Restore the persisted layout. The Overview is always docked; the tool panel
   // (changes / files / terminal / diff / preview) stays closed until it is opened.
+  // "+N more" in the Context card: state lives on the stable #overview-body, so a
+  // refresh that swaps the card cannot undo it, and pointerdown beats a swap that
+  // lands between press and release.
+  const ovBody = $('#overview-body');
+  const flipCtx = () => ovBody.classList.toggle('ctx-open');
+  ovBody?.addEventListener('pointerdown', (e) => { if (e.button === 0 && e.target.closest('.ctx-more')) flipCtx(); });
+  ovBody?.addEventListener('click', (e) => { if (e.detail === 0 && e.target.closest('.ctx-more')) flipCtx(); });
   $('#btn-overview-refresh')?.addEventListener('click', () => { window.__connCache = {}; renderOverview(); });
   $('#btn-overview-fold')?.addEventListener('click', () => {
     const cards = [...document.querySelectorAll('#overview-body .task-card')];

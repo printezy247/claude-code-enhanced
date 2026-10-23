@@ -541,10 +541,6 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .chip.mcp-warn { color: var(--warn); border-color: var(--warn); }
 .chip.mcp-off { opacity: .5; }
 
-/* context meter (chat header -> body) */
-.chat-ctxbar { height: 3px; background: var(--bg3); }
-.chat-ctxbar.hidden { display: none; }
-.chat-ctxbar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s ease, background .4s; }
 
 /* ask-question option preview */
 .ask-preview { margin-top: 6px; }
@@ -1592,7 +1588,9 @@ body.split-open #splitter { display: block; }
 #overview-body .ctx-cat .ctx-name { white-space: normal; overflow-wrap: anywhere; }
 #overview-body .task-rows { max-height: none; }
 #overview-body .ctx-more { margin-top: 3px; }
-#overview-body .ctx-cat.hidden { display: none; }
+#overview-body:not(.ctx-open) .ctx-cat.ctx-extra { display: none; }
+#overview-body .ctx-more::before { content: '+' attr(data-n) ' more'; }
+#overview-body.ctx-open .ctx-more::before { content: 'show less'; }
 #overview-body .conn-row .ctx-tokens { white-space: nowrap; }
 /* The chat keeps a usable width; the tool panel gives way first. */
 #main { min-width: 420px; }
@@ -1702,10 +1700,11 @@ body.ov-hidden #overviewpane { display: none; }
 /* ===== One top strip across the whole work area; the columns sit below it ===== */
 #workarea { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
 #cols { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: row; }
-#workarea > #tabbar { width: 100%; box-sizing: border-box; border-bottom: 1px solid var(--border); background: var(--bg); }
+#workarea > #tabbar { background: var(--bg); }
+body[data-view]:not([data-view="conversations"]) #tabbar { display: none; }
 #overview-body .ctx-more { position: relative; z-index: 1; cursor: pointer; width: 100%; }
-#overview-body .task-list li { cursor: pointer; }
-#overview-body .task-list li .task-mark { cursor: pointer; }
+.task-list li[role="checkbox"] { cursor: pointer; }
+.task-list li[role="checkbox"]:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 4px; }
 
 /* ===== Request rail: ticks on the left edge to jump between the user's requests ===== */
 .req-rail, .req-tip { display: none; }
@@ -1726,3 +1725,14 @@ body.sb-hidden .req-tip:not(.hidden) {
   white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text);
 }
 .user-msg.req-flash .user-bubble { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ===== Wide windows: the Overview floats over the right margin so the chat sits in the window's centre ===== */
+@media (min-width: 1500px) {
+  body:not(.split-open) #cols { position: relative; }
+  body:not(.split-open) #overviewpane {
+    position: absolute; right: 0; top: 0; bottom: 0; z-index: 4; pointer-events: none;
+  }
+  body:not(.split-open) #overviewpane .ov-head,
+  body:not(.split-open) #overview-body .task-card { pointer-events: auto; }
+  body:not(.split-open) #overview-body { overflow: hidden auto; }
+}
