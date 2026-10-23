@@ -33,6 +33,12 @@
         </svg>
         <span class="logo-text">Claude Code<br /><em>Enhanced</em></span>
       </div>
+      <!-- The three things you do between chats, right under the logo. -->
+      <div class="sb-actions">
+        <button class="btn primary" id="qa-new" title="Start a fresh session (Ctrl+Shift+T)"><span data-icon="plus"></span><span>New chat</span></button>
+        <button class="icon-btn" id="qa-resume" title="Reopen the most recent conversation for this folder" aria-label="Resume the latest conversation"><span data-icon="refresh"></span></button>
+        <button class="icon-btn" id="qa-reopen" title="Reopen the last closed tab" aria-label="Reopen the last closed tab" disabled><span data-icon="undo"></span></button>
+      </div>
       <nav id="nav" aria-label="Sections">
         <button class="nav-btn active" data-view="conversations" aria-current="page"><span class="ico" data-icon="layers"></span><span>Conversations</span><span id="sess-count" class="badge" role="status" aria-live="polite" aria-label="open conversations">0</span></button>
         <button class="nav-btn" data-view="usage"><span class="ico" data-icon="chart"></span><span>Usage</span></button>
@@ -40,30 +46,24 @@
         <button class="nav-btn" data-view="connectors"><span class="ico" data-icon="plug2"></span><span>Connectors</span></button>
         <button class="nav-btn" data-view="settings"><span class="ico" data-icon="gear"></span><span>Settings</span></button>
       </nav>
+      <!-- Open chats and terminals (what the tab bar used to be), then every past conversation. -->
+      <div id="sb-open" class="sb-open hidden" role="list" aria-label="Open chats"></div>
+      <div id="sb-convos"></div>
       <div id="claude-banner" class="hidden"></div>
       <div class="sidebar-foot" id="foot-info"></div>
     </aside>
 
     <main id="main">
       <section id="view-conversations" class="view active">
+        <!-- One line: sidebar toggle, the active chat's title and actions, then the panel buttons. -->
         <div id="tabbar">
-          <button id="btn-sidebar" title="Show / hide the left sidebar (Ctrl+\)" aria-label="Toggle sidebar">☰</button>
-          <button id="btn-convo-drop" title="Conversations — past and open chats (Ctrl+B)">
-            <span class="ico" data-icon="layers"></span><span>Conversations</span><span class="caret" data-icon="chevron"></span>
-          </button>
-          <button id="btn-tasks" title="Tasks panel — environment, context, todos, changes (Alt+V)">◫ tasks</button>
-          <button id="btn-new-window" class="btn small" style="align-self:center;margin-bottom:6px" title="Open a new window (Ctrl+Shift+N)" aria-label="Open a new window (Ctrl+Shift+N)">⧉ window</button>
-          <div id="tabs"></div>
-        </div>
-        <!-- Quick actions: the three things you actually do between chats. -->
-        <div id="convo-quick" class="convo-quick">
-          <button class="btn small primary" id="qa-new" title="Start a fresh session (Ctrl+Shift+T)">＋ New chat</button>
-          <button class="btn small" id="qa-resume" title="Reopen the most recent conversation for this folder">↻ Resume latest</button>
-          <button class="btn small" id="qa-browse" title="Browse every conversation (Ctrl+B)">▤ All conversations</button>
-          <button class="btn small ghost" id="qa-reopen" title="Reopen the last closed tab" disabled>↶ Closed tab</button>
+          <button id="btn-sidebar" class="icon-btn" title="Show / hide the left sidebar (Ctrl+\)" aria-label="Toggle sidebar"><span data-icon="list"></span></button>
           <span id="qa-chat-slot"></span>
           <span class="spacer"></span>
-          <span class="hint" id="qa-hint">Ctrl+B browse · Ctrl+Shift+T new</span>
+          <button id="btn-tasks" class="icon-btn" title="Tool panel: changes, files, terminal, diff, preview (Alt+V)" aria-label="Toggle the tool panel"><span data-icon="split"></span></button>
+          <button id="btn-new-window" class="icon-btn" title="Open a new window (Ctrl+Shift+N)" aria-label="Open a new window (Ctrl+Shift+N)"><span data-icon="expand"></span></button>
+          <!-- Kept for the tab registry; the sidebar's Open list is what you see. -->
+          <div id="tabs" hidden></div>
         </div>
         <div id="terminals"></div>
         <div id="statusbar">

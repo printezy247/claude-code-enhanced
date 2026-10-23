@@ -180,6 +180,7 @@ window.__activate = (id) => {
   // home folder and "start a chat" while a chat was open.
   const changed = state.activeId !== id;
   state.activeId = id;
+  renderOpenTabs();
   // Preview and terminal do not depend on the tab; re-rendering them reloaded
   // the iframe on every switch.
   const kind = document.querySelector('#split-kind')?.value || 'changes';
@@ -334,6 +335,8 @@ function renderConversationList() {  // Async data can land after the window is 
     else if (!showArchived && s.tag === 'archived') return false;
     if (view === 'pinned' && !pinned.has(s.sessionId)) return false;
     if (view === 'open' && !openIds.has(s.sessionId)) return false;
+    // Open conversations are listed above, under Open: no second copy here.
+    if (view === 'all' && !q && openIds.has(s.sessionId)) return false;
     return !q || String(s.preview || '').toLowerCase().includes(q)
       || String(s.cwd || s.folder || '').toLowerCase().includes(q)
       || String(s.branch || '').toLowerCase().includes(q);
@@ -720,42 +723,34 @@ async function loadConversationList() {
   renderConversationList();
 }
 
-/** Show or hide the Conversations dropdown. Opens with a fresh disk read. */
+/**
+ * The conversation list lives in the left sidebar for good, so there is nothing
+ * to open or close. This (Ctrl+B) reveals the sidebar, reloads the list from
+ * disk and puts the cursor in the search box.
+ */
 function toggleConversations(force) {
   const drop = ensureConvoDrop();
-  const open = force !== undefined ? force : drop.classList.contains('hidden');
-  drop.classList.toggle('hidden', !open);
-  document.querySelector('#btn-convo-drop')?.classList.toggle('active', open);
-  if (open) {
-    loadConversationList();
-    drop.querySelector('.convo-search')?.focus();
-  }
+  if (force === false) return;
+  toggleSidebar(false);
+  loadConversationList();
+  drop.querySelector('.convo-search')?.focus();
 }
 
 window.toggleConversations = toggleConversations;
 
-/** Build the dropdown panel once; all list markup lives here, not in index.html. */
+/** Build the sidebar's conversation list once; all list markup lives here, not in index.html. */
 function ensureConvoDrop() {
   let drop = document.querySelector('#convo-drop');
   if (drop) return drop;
-  drop = el('div', 'hidden');
+  drop = el('div', '');
   drop.id = 'convo-drop';
   drop.innerHTML = `
-    <div class="convo-title">
-      <span class="ico" data-icon="layers"></span><b>Conversations</b>
-      <span class="spacer"></span>
-      <button class="icon-btn" id="btn-convo-new" title="New chat (Ctrl+Shift+T)" aria-label="New chat"><span data-icon="plus"></span></button>
-      <button class="icon-btn" id="btn-convo-refresh" title="Reload from disk" aria-label="Reload"><span data-icon="refresh"></span></button>
-      <button class="icon-btn" id="btn-convo-hide" title="Close (Ctrl+B)" aria-label="Close"><span data-icon="close"></span></button>
-    </div>
-    <div class="convo-tabs" role="tablist" aria-label="Conversation categories">
-      <button class="convo-tab active" role="tab" data-view="all">All <span class="ct-n">0</span></button>
-      <button class="convo-tab" role="tab" data-view="open">Open <span class="ct-n">0</span></button>
-      <button class="convo-tab" role="tab" data-view="pinned">Pinned <span class="ct-n">0</span></button>
-      <button class="convo-tab" role="tab" data-view="archived">Archived <span class="ct-n">0</span></button>
-    </div>
     <div class="convo-head">
-      <input class="convo-search" type="text" placeholder="Search text, folder or branch…" />
+      <input class="convo-search" type="text" placeholder="Search conversations…" aria-label="Search conversations" />
+      <button class="icon-btn" id="btn-convo-filters" title="Group, sort and filter" aria-label="Group, sort and filter" aria-expanded="false"><span data-icon="list"></span></button>
+      <button class="icon-btn" id="btn-convo-refresh" title="Reload from disk" aria-label="Reload"><span data-icon="refresh"></span></button>
+    </div>
+    <div class="convo-filters hidden">
       <select class="convo-groupby" title="Group by">
         <option value="folder">by project</option>
         <option value="date">by date</option>
@@ -769,18 +764,28 @@ function ensureConvoDrop() {
         <option value="">all folders</option>
       </select>
     </div>
+    <div class="convo-tabs" role="tablist" aria-label="Conversation categories">
+      <button class="convo-tab active" role="tab" data-view="all">All <span class="ct-n">0</span></button>
+      <button class="convo-tab" role="tab" data-view="open">Open <span class="ct-n">0</span></button>
+      <button class="convo-tab" role="tab" data-view="pinned">Pinned <span class="ct-n">0</span></button>
+      <button class="convo-tab" role="tab" data-view="archived">Archived <span class="ct-n">0</span></button>
+    </div>
     <div class="convo-list" id="convo-list"></div>
     <div class="convo-foot">
       <span id="convo-foot"></span>
       <label class="convo-archived-wrap" title="Also list archived conversations under All">
-        <input class="convo-archived" type="checkbox" /> include archived
+        <input class="convo-archived" type="checkbox" /> archived
       </label>
     </div>`;
-  document.querySelector('#view-conversations').appendChild(drop);
+  document.querySelector('#sb-convos').appendChild(drop);
   paintDeclaredIcons(drop);
   drop.querySelector('#btn-convo-refresh').addEventListener('click', () => loadConversationList());
-  drop.querySelector('#btn-convo-hide').addEventListener('click', () => toggleConversations(false));
-  drop.querySelector('#btn-convo-new').addEventListener('click', () => { toggleConversations(false); document.querySelector('#qa-new')?.click(); });
+  const filtersBtn = drop.querySelector('#btn-convo-filters');
+  filtersBtn.addEventListener('click', () => {
+    const box = drop.querySelector('.convo-filters');
+    const open = box.classList.toggle('hidden') === false;
+    filtersBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  });
   for (const t of drop.querySelectorAll('.convo-tab')) {
     t.addEventListener('click', () => { convoView = t.dataset.view; renderConversationList(); });
   }
@@ -790,17 +795,57 @@ function ensureConvoDrop() {
   drop.querySelector('.convo-sort').addEventListener('change', () => renderConversationList());
   drop.querySelector('.convo-filter').addEventListener('change', () => renderConversationList());
   drop.querySelector('.convo-archived').addEventListener('change', () => renderConversationList());
-  // Clicking outside closes it; Escape is handled globally.
-  document.addEventListener('mousedown', (e) => {
-    const d = document.querySelector('#convo-drop');
-    if (!d || d.classList.contains('hidden')) return;
-    if (d.contains(e.target)) return;
-    if (e.target.closest && e.target.closest('#btn-convo-drop')) return;
-    if (e.target.closest && e.target.closest('.convo-menu')) return;
-    toggleConversations(false);
-  });
   return drop;
 }
+
+/* ---- open chats and terminals: what the tab bar used to show ---- */
+let openTabsTimer = null;
+/** Repaint the sidebar's Open list (coalesced: a busy chat flips state often). */
+function renderOpenTabs() {
+  if (openTabsTimer) return;
+  openTabsTimer = setTimeout(() => { openTabsTimer = null; paintOpenTabs(); }, 0);
+}
+window.onTabsChanged = renderOpenTabs;
+
+function paintOpenTabs() {
+  const box = document.querySelector('#sb-open');
+  if (!box) return;
+  const entries = [...tabRegistry.entries()].filter(([, m]) => m.tabEl);
+  box.innerHTML = '';
+  box.classList.toggle('hidden', !entries.length);
+  if (!entries.length) return;
+  box.appendChild(el('div', 'sb-open-head', 'Open'));
+  for (const [id, meta] of entries) {
+    const chat = meta.kind === 'chat' ? Chat.chats.get(id) : null;
+    const row = el('div', 'sb-open-row' + (id === state.activeId ? ' active' : '')
+      + (meta.tabEl.classList.contains('dead') ? ' dead' : ''));
+    row.setAttribute('role', 'listitem');
+    row.tabIndex = 0;
+    const label = String((meta.tabEl.firstChild && meta.tabEl.firstChild.textContent) || '').replace(/^⌘\s*/, '') || 'session';
+    const state0 = meta.needsYou ? 'attn' : (meta.busy || (chat && chat.busy)) ? 'busy' : 'idle';
+    const dot = el('span', 'sb-dot ' + state0);
+    dot.title = state0 === 'attn' ? 'waiting on you' : state0 === 'busy' ? 'working' : 'idle';
+    row.appendChild(dot);
+    if (meta.kind !== 'chat') row.appendChild(elIcon('span', 'sb-kind', CCEIcons.svg('terminal', 12)));
+    const txt = el('span', 'sb-open-label', label);
+    txt.title = label + (meta.cwd ? '\n' + meta.cwd : '');
+    row.appendChild(txt);
+    const x = elIcon('button', 'sb-open-close', CCEIcons.svg('close', 12));
+    x.title = 'Close';
+    x.setAttribute('aria-label', 'Close ' + label);
+    x.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const close = meta.tabEl.querySelector('.close');
+      if (close) close.click();
+    });
+    row.appendChild(x);
+    const open = () => { meta.tabEl.click(); switchView('conversations'); };
+    row.addEventListener('click', open);
+    row.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
+    box.appendChild(row);
+  }
+}
+window.paintOpenTabs = paintOpenTabs;
 
 const basenameOf = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() || String(p || '');
 
@@ -1468,8 +1513,7 @@ window.rekeyTab = (oldId, newId) => {
 
 /** Chat.js calls this when a tab learns its engine session id. */
 window.onConvoSessionsChanged = () => {
-  const drop = document.querySelector('#convo-drop');
-  if (drop && !drop.classList.contains('hidden') && convoSessions.length) renderConversationList();
+  if (document.querySelector('#convo-drop') && convoSessions.length) renderConversationList();
 };
 
 function fitSize(s) {
@@ -1613,10 +1657,9 @@ function paintReopenButton() {
   if (!b) return;
   const last = recentlyClosed[recentlyClosed.length - 1];
   b.disabled = !last;
-  if (last) {
-    b.textContent = '↶ ' + (last.kind === 'pty' ? 'Terminal' : 'Chat') + (last.cwd ? ' · ' + basenameOf(last.cwd) : '');
-    b.title = 'Reopen ' + (last.kind === 'pty' ? 'terminal' : 'chat') + ' in ' + (last.cwd || '~');
-  }
+  b.title = last
+    ? 'Reopen ' + (last.kind === 'pty' ? 'terminal' : 'chat') + ' in ' + (last.cwd || '~')
+    : 'Reopen the last closed tab';
 }
 
 async function reopenLastClosed() {
@@ -1633,7 +1676,7 @@ async function reopenLastClosed() {
  */
 async function resumeLatest() {
   const btn = document.querySelector('#qa-resume');
-  if (btn) { btn.disabled = true; btn.textContent = '↻ looking…'; }
+  if (btn) { btn.disabled = true; btn.classList.add('busy'); }
   try {
     const active = tabRegistry.get(state.activeId);
     const cwd = (active && active.cwd) || (state.settings && state.settings.defaultCwd) || '';
@@ -1648,7 +1691,7 @@ async function resumeLatest() {
   } catch (err) {
     toast(String((err && err.message) || err), 'err');
   } finally {
-    if (btn) { btn.disabled = false; btn.textContent = '↻ Resume latest'; }
+    if (btn) { btn.disabled = false; btn.classList.remove('busy'); }
   }
 }
 
@@ -1660,6 +1703,7 @@ const tabRegistryHas = (sessionId) => [...tabRegistry.values()].some((m) => m.se
  * distinction users of the newer agent desktops rely on to know where to look.
  */
 function updateSessionCount() {
+  renderOpenTabs();
   const badge = $('#sess-count');
   if (!badge) return;
   const nav = badge.closest('.nav-btn');
@@ -2946,10 +2990,17 @@ function wireChrome() {
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.addEventListener('click', () => switchView(b.dataset.view)));
   paintDeclaredIcons();
+  // The conversation list and the Open list live in the sidebar from the start.
+  ensureConvoDrop();
+  loadConversationList().catch(() => {});
+  const tabsEl = $('#tabs');
+  if (tabsEl && typeof MutationObserver === 'function') {
+    // A tab was added, closed, renamed or marked dead: repaint the Open list.
+    new MutationObserver(() => renderOpenTabs()).observe(tabsEl, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['class'] });
+  }
+  renderOpenTabs();
   $('#qa-new').addEventListener('click', openNewSessionModal);
-  $('#btn-convo-drop').addEventListener('click', () => toggleConversations());
   $('#qa-resume').addEventListener('click', resumeLatest);
-  $('#qa-browse').addEventListener('click', () => toggleConversations());
   $('#qa-reopen').addEventListener('click', reopenLastClosed);
   paintReopenButton();
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
@@ -3057,12 +3108,13 @@ function wireChrome() {
       }
       return;
     }
-    // Escape closes the Conversations dropdown before anything else claims it.
+    // Escape in the sidebar search clears it and hands focus back to the chat.
     if (e.key === 'Escape') {
-      const drop = document.querySelector('#convo-drop');
-      if (drop && !drop.classList.contains('hidden')) {
+      const search = document.querySelector('#convo-drop .convo-search');
+      if (search && document.activeElement === search) {
         e.preventDefault();
-        toggleConversations(false);
+        if (search.value) { search.value = ''; renderConversationList(); }
+        else { search.blur(); const m = tabRegistry.get(state.activeId); if (m && m.focus) m.focus(); }
         return;
       }
     }

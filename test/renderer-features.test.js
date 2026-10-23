@@ -414,18 +414,13 @@ describe('shortcuts (#16, #17)', () => {
     expect(win.tabRegistry.size).toBeGreaterThanOrEqual(1);
   });
 
-  it('Ctrl+B opens and closes the Conversations dropdown', () => {
+  it('Ctrl+B reveals the sidebar and focuses the conversation search', () => {
     const win = h.window;
-    const isOpen = () => {
-      const d = win.document.querySelector('#convo-drop');
-      return !!d && !d.classList.contains('hidden');
-    };
     win.switchView('conversations');
-    expect(isOpen()).toBe(false);
+    win.document.body.classList.add('sb-hidden');
     win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true }));
-    expect(isOpen()).toBe(true);
-    win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true, cancelable: true }));
-    expect(isOpen()).toBe(false);
+    expect(win.document.body.classList.contains('sb-hidden')).toBe(false);
+    expect(win.document.activeElement).toBe(win.document.querySelector('#convo-drop .convo-search'));
   });
 });
 

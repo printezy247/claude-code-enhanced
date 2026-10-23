@@ -52,9 +52,8 @@ async function boot(extra = {}) {
   const h = loadRenderer({ ipc: bootIpc(extra, sessions) });
   await flush(10);
   h.window.switchView('conversations');
-  // The list is a dropdown now: open it the way the button does.
-  h.window.document.querySelector('#btn-convo-drop')
-    .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  // The list lives in the sidebar; Ctrl+B reloads it from disk and focuses the search.
+  h.window.toggleConversations(true);
   await flush(10);
   return h;
 }
@@ -176,12 +175,17 @@ describe('branch from any message (#52)', () => {
 });
 
 describe('conversations quick actions', () => {
-  it('all four buttons exist and are wired', async () => {
+  it('New, Resume and Reopen sit in the sidebar; there is no All-conversations button any more', async () => {
     const h = loadRenderer({ ipc: bootIpc() });
     await flush(10);
-    for (const id of ['#qa-new', '#qa-resume', '#qa-browse', '#qa-reopen']) {
-      expect(h.window.document.querySelector(id), id).toBeTruthy();
+    for (const id of ['#qa-new', '#qa-resume', '#qa-reopen']) {
+      const b = h.window.document.querySelector(id);
+      expect(b, id).toBeTruthy();
+      expect(b.closest('#sidebar'), id + ' is in the sidebar').toBeTruthy();
+      expect(b.getAttribute('aria-label') || b.textContent.trim(), id + ' has a name').toBeTruthy();
     }
+    expect(h.window.document.querySelector('#qa-browse')).toBeNull();
+    expect(h.window.document.querySelector('#convo-quick')).toBeNull();
   });
 
   it('Resume latest opens the newest conversation for the active folder', async () => {
@@ -194,12 +198,11 @@ describe('conversations quick actions', () => {
     expect(created.payload.resume).toBe('a1');
   });
 
-  it('All conversations toggles the dropdown', async () => {
-    const h = await boot();   // boot opens it
+  it('the list is always there: opening it only focuses the search', async () => {
+    const h = await boot();
     expect(h.window.document.querySelector('#convo-drop').classList.contains('hidden')).toBe(false);
-    click(h, h.window.document.querySelector('#qa-browse'));
-    await flush();
-    expect(h.window.document.querySelector('#convo-drop').classList.contains('hidden')).toBe(true);
+    h.window.toggleConversations(false);   // nothing to close
+    expect(h.window.document.querySelector('#convo-drop').classList.contains('hidden')).toBe(false);
   });
 
   it('the reopen button is disabled until something is closed', async () => {
@@ -216,7 +219,7 @@ describe('recently closed tabs', () => {
     await flush();
     const btn = h.window.document.querySelector('#qa-reopen');
     expect(btn.disabled).toBe(false);
-    expect(btn.textContent).toContain('Chat');
+    expect(btn.title).toMatch(/Reopen chat/);
     click(h, btn);
     await flush();
     const created = h.calls.filter((c) => c.channel === 'chat:create');
