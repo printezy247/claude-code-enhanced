@@ -189,12 +189,20 @@ function createTray() {
 // ---------- claude CLI detection -------------------------------------------
 function detectClaude() {
   return new Promise((resolve) => {
+    const isWin = process.platform === 'win32';
     const candidates = [
       process.env.CCE_CLAUDE_PATH,
-      path.join(os.homedir(), '.local', 'bin', 'claude'),
-      '/usr/local/bin/claude',
-      '/usr/bin/claude',
-      '/snap/bin/claude',
+      ...(isWin
+        ? [
+            path.join(process.env.ProgramFiles || 'C:\Program Files', 'Claude', 'Claude.exe'),
+            path.join(process.env['ProgramFiles(x86)'] || 'C:\Program Files (x86)', 'Claude', 'Claude.exe'),
+          ]
+        : [
+            path.join(os.homedir(), '.local', 'bin', 'claude'),
+            '/usr/local/bin/claude',
+            '/usr/bin/claude',
+            '/snap/bin/claude',
+          ]),
     ].filter(Boolean);
     const found = candidates.find(p => { try { return fs.existsSync(p); } catch { return false; } });
     if (!found) return resolve({ found: false, path: '', version: '' });
@@ -743,10 +751,17 @@ function isValidSender(e) {
   return false;
 }
 
+const IPC_MAX_PAYLOAD_BYTES = 1000000;
 function handle(channel, fn) {
   ipcMain.handle(channel, async (e, payload) => {
     if (!isValidSender(e)) {
       return { ok: false, error: 'Blocked IPC from unauthorized origin: ' + (e.senderFrame && e.senderFrame.url) };
+    }
+    if (payload != null) {
+      try {
+        const sz = Buffer.byteLength(JSON.stringify(payload));
+        if (sz > IPC_MAX_PAYLOAD_BYTES) return { ok: false, error: 'IPC payload too large (' + sz + ' bytes)' };
+      } catch { /* not stringifyable */ }
     }
     try { return { ok: true, ...(await fn(payload || {}, e)) }; }
     catch (err) { return { ok: false, error: String(err.message || err) }; }
@@ -977,6 +992,10 @@ function registerIpc() {
   // OpenCode-style dynamic model discovery: query the provider's own
   // /v1/models endpoint (Ollama, LM Studio, llama.cpp, LiteLLM, OpenRouter…)
   // so every server-side model appears in the selector without manual config.
+  // Light in-memory cache (30s) so opening many chats against the same provider
+  // does not hammer /v1/models on every create.
+  const modelListCache = new Map(); // key -> { ts, models }
+  const MODEL_LIST_TTL_MS = 30000;
   const listModelsLive = async ({ uid, baseUrl: directBase, apiKey: directKey, protocol: directProtocol }) => {
     const p = store.providers.find(x => x.uid === uid);
     const base = directBase || (p && p.baseUrl);
@@ -1055,7 +1074,12 @@ function registerIpc() {
       } catch { /* not an Ollama server — keep the /v1/models result */ }
       // OpenRouter-style catalogs report context_length per model
       models = models.map(m => ({ ...m, ctx: m.ctx ?? null }));
-      return { models };
+      const result = { models };
+      if (uid) {
+        const ck = base + '|' + protocol + (key ? '|keyed' : '');
+        modelListCache.set(ck, { ts: Date.now(), models: result.models });
+      }
+      return result;
     } catch (err) {
       // Fallback: Ollama tags + per-model context probe (so unusable ones get filtered)
       try {
@@ -1065,16 +1089,31 @@ function registerIpc() {
         const probed = await Promise.all(names.slice(0, 40).map(async (n) => ({
           id: n, ctx: await ollamaModelCtx(base, n),
         })));
-        return { models: probed };
+        const result2 = { models: probed };
+        if (uid) {
+          const ck = base + '|' + protocol + (key ? '|keyed' : '');
+          modelListCache.set(ck, { ts: Date.now(), models: result2.models });
+        }
+        return result2;
       } catch (err2) {
         return { models: [], error: String((err2 && err2.message) || err2) };
       }
     }
   };
+  const listModelsCached = async (args) => {
+    const p = store.providers.find(x => x.uid === args.uid);
+    const base = args.baseUrl || (p && p.baseUrl);
+    const protocol = args.protocol || (p && p.protocol) || 'openai';
+    const key = args.apiKey || '';
+    const ck = base + '|' + protocol + (key ? '|keyed' : '');
+    const cached = modelListCache.get(ck);
+    if (cached && Date.now() - cached.ts < MODEL_LIST_TTL_MS) return { models: cached.models };
+    return (await listModelsLive(args)) || {};
+  };
   // Declared models (saved list + preset recommendations) are always offered,
   // so a failed or empty live listing never hides what the user configured.
   handle('provider:listModels', async (args) => {
-    const r = (await listModelsLive(args)) || {};
+    const r = (await listModelsCached(args)) || {};
     // Context-pinned copies the app creates for Ollama are an implementation detail.
     if (Array.isArray(r.models)) r.models = r.models.filter(m => !localmodels.isCtxVariant(m.id));
     const p = store.providers.find(x => x.uid === args.uid);
@@ -2024,6 +2063,11 @@ function registerIpc() {
     for (const s of sessions.list()) add(s.cwd);
     return roots;
   };
+  // Sensitive files that should not be read through the file:read bridge even
+  // when they live under an open project (secrets, keys, tokens). The agent can
+  // still read these itself through the claude CLI; this only blocks the host
+  // bridge that the renderer uses for diffs and @-mentions.
+  const SENSITIVE_RE = /\.env$|\.env\.|\.pem$|\.key$|id_(rsa|ed25519|ecdsa)|\.gnupg|google_credentials|service_account|credentials\.json$|secrets\./i;
   handle('file:read', async ({ path: p, maxBytes }) => {
     if (!p) throw new Error('path required');
     const home = process.env.HOME || os.homedir();
@@ -2034,6 +2078,7 @@ function registerIpc() {
     if (!roots.some((r) => target === r || target.startsWith(r + path.sep))) {
       throw new Error('path is outside any open project');
     }
+    if (SENSITIVE_RE.test(target)) throw new Error('that file is not readable here');
     const limit = Math.min(Number(maxBytes) > 0 ? Number(maxBytes) : 200000, 2000000);
     const st = fs.statSync(target);
     if (!st.isFile()) throw new Error('not a file');
@@ -2269,10 +2314,13 @@ function registerIpc() {
         const mediaType = MIME_BY_EXT[ext] || '';
         if (IMAGE_TYPES.test(mediaType)) {
           if (st.size > MAX_IMAGE_BYTES) { files.push({ name, path: p, size: st.size, ref: true }); continue; }
-          files.push({ name, mediaType, base64: fs.readFileSync(p).toString('base64') });
+          const b = fs.readFileSync(p); totalBytes += b.length;
+          if (totalBytes > MAX_TOTAL_BYTES) { files.push({ name, path: p, size: st.size, ref: true }); continue; }
+          files.push({ name, mediaType, base64: b.toString('base64') });
         } else if (/\.(md|txt|json|ya?ml|toml|ini|cfg|conf|log|sql|py|js|mjs|cjs|ts|tsx|jsx|sh|bash|zsh|c|h|cpp|hpp|rs|go|rb|java|kt|swift|html|css|scss|vue|svelte|xml|csv|env|gitignore|dockerfile|makefile)$/i.test(ext) || st.size <= MAX_TEXT_BYTES) {
           if (st.size > MAX_TEXT_BYTES) { files.push({ name, path: p, size: st.size, ref: true }); continue; }
-          files.push({ name, text: fs.readFileSync(p, 'utf8').slice(0, 40000) });
+          const t = fs.readFileSync(p, 'utf8'); totalBytes += t.length;
+          files.push({ name, text: t.slice(0, 40000) });
         } else {
           // PDFs, archives, binaries: hand the agent the path; its Read tool takes it from there.
           files.push({ name, path: p, size: st.size, ref: true });
@@ -2287,8 +2335,11 @@ function registerIpc() {
     return {};
   });
 
+  // Allowlist for external URL opening. A compromised renderer must not
+  // open arbitrary URLs in the system browser. The default allows https/http.
+  const ALLOWED_EXTERNAL_RE = /^https?:\/\//;
   handle('shell:openExternal', async ({ url }) => {
-    if (/^https?:\/\//.test(url)) await shell.openExternal(url);
+    if (typeof url === 'string' && ALLOWED_EXTERNAL_RE.test(url)) await shell.openExternal(url);
     return {};
   });
 
@@ -2362,6 +2413,20 @@ function registerIpc() {
 // many windows: the second launch opens a window in the running app instead
 // of starting a rival one. #feat-multi-window
 const gotLock = app.requestSingleInstanceLock();
+// Global shortcut to bring the app front when it is hidden in the tray.
+// Opt-in: only register when the user has close-to-tray on, mirroring the
+// tray behaviour (without a tray, minimize-to-windowlist is the OS default).
+if (store.settings && store.settings.closeToTray) {
+  app.setUserTasks([
+    {
+      label: 'Bring Claude Code Enhanced to front',
+      toolTip: 'Show the window (same as clicking the tray icon)',
+      program: process.execPath,
+      args: ['.'],
+      options: { args: [] },
+    },
+  ]);
+}
 if (!gotLock) {
   app.quit();
 } else {
@@ -2417,6 +2482,20 @@ if (!gotLock) {
     registerIpc();
     createWindow();
     if (store.settings.closeToTray) createTray();
+    // Global shortcut: bring the app to front when hidden in the tray.
+    // Ctrl+Shift+C is mnemonic for "Claude". Only when close-to-tray is on.
+    if (store.settings.closeToTray) {
+      const { globalShortcut } = require('electron');
+      globalShortcut.register('CommandOrControl+Shift+C', () => {
+        const wins = BrowserWindow.getAllWindows().filter(w => !w.isDestroyed());
+        if (wins.length) {
+          const front = wins[wins.length - 1];
+          if (front.isMinimized()) front.restore();
+          front.focus();
+          front.show();
+        }
+      });
+    }
     detectClaude().then((info) => {
       claudeInfo = info;
       if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
@@ -2429,7 +2508,16 @@ if (!gotLock) {
 }
 
 app.on('window-all-closed', () => { if (!store.settings.closeToTray) app.quit(); });
-app.on('before-quit', () => { app.isQuitting = true; sessions.killAll(); chats.killAll(); });
+app.on('before-quit', () => {
+  app.isQuitting = true;
+  sessions.killAll();
+  chats.killAll();
+  setTimeout(() => {
+    for (const s of sessions.list()) {
+      if (s.pid != null) try { process.kill(s.pid, 'SIGKILL'); } catch { /* gone */ }
+    }
+  }, 5000).unref();
+});
 
 // ---------- exports ---------------------------------------------------------
 // The main process is the app's entry point, but it is also the only place

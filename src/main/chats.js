@@ -492,6 +492,8 @@ class ChatManager extends EventEmitter {
       if (npmCache) {
         options.sandbox.filesystem = { allowWrite: [npmCache] };
         options.env.npm_config_cache = npmCache;
+      } else if (settings && settings.sandbox && settings.sandbox.enabled) {
+        console.warn('[cce] sandbox enabled but ~/.cache/claude-code-enhanced/npm is not writable — npx may fail in sandboxed chats');
       }
     }
     // Run the user's real claude executable (same auth/skills as the TUI);
@@ -920,8 +922,8 @@ class ChatManager extends EventEmitter {
       // pending `wake` promise — a suspended generator keeps the whole chat
       // (SDK stream + closures) alive after close. #sec
       close() {
-        closed = true;
         const w = wake; wake = null;
+        closed = true;
         if (w) w(undefined);
       },
       iterate: async function* () {
