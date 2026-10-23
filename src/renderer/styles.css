@@ -1278,7 +1278,7 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 }
 .chat-footbar .foot-pick:hover { border-color: var(--accent-line); }
 .chat-footbar select.foot-pick { padding: 0 6px; }
-.chat-footbar .chat-model-foot { flex: 0 1 220px; min-width: 120px; max-width: 220px; }
+.chat-footbar .chat-model-foot { flex: 1 1 130px; min-width: 120px; max-width: 220px; }
 .chat-footbar .chat-mode-foot { width: 120px; flex: none; }
 .chat-footbar .chat-effort { color: var(--muted); }
 .chat-footbar .caret .ic { width: 11px; height: 11px; opacity: .7; }

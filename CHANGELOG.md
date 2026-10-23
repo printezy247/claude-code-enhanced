@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.47] — 2026-10-23
+
+### Fixed
+- Composer footbar: the model picker shrinks to fit, so the ctx/compact button stays on the same row as the other buttons.
+
 ## [0.9.46] — 2026-10-23
 
 ### Fixed
