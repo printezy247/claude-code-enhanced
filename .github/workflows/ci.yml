@@ -54,7 +54,9 @@ jobs:
       - run: npm ci
       - name: Install lintian
         run: sudo apt-get update && sudo apt-get install -y lintian
-      - run: npm run dist
+      # On a push electron-builder sees CI and tries to publish to a release, which
+      # fails without a token and left every push to main red. Only build here.
+      - run: npm run dist -- --publish never
       - run: npm run lint
       # Keep the installable package: a build that only lints it is of no use to
       # someone who wants to try the change. Download it from the run's page.
