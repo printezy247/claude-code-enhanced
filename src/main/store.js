@@ -36,7 +36,8 @@ const DEFAULT_SETTINGS = {
   // (30k) limit. #feat-output-filter
   outputFilter: 'on',
   outputFilterMaxChars: 8000,
-  autoNudge: true,         // once per prompt, re-prompt a model that ends a turn on "Let me …" without acting
+  autoNudge: false,         // off by default: avoids burning whole turns on closing remarks
+  thinkingBudget: 2048,     // sensible default to prevent unbounded thinking token burn (blank/0 = model default)
   localNumCtx: 73728,        // context to load local Ollama models with (claude base prompt ≈66K tokens; more costs RAM)
   forceCtx: {},             // per-model override: { "qwen3-4b": 32000 } skips the floor (#11)
   // ---- The SDK options the desktop app passes (0.9.40) ----

@@ -183,13 +183,18 @@ async function promptAppend(cwd, opts = {}) {
         + '`rtk` (for example `rtk git status`, `rtk read <path>`) so their output stays compact.');
     }
     if (caps.superpowers) {
-      lines.push('- Method: superpowers is installed. Invoke the `brainstorming` skill before '
-        + 'implementing anything non-trivial, then `writing-plans` and `test-driven-development`.');
+      if (opts.enableBrainstorming) {
+        lines.push('- Method: superpowers is installed. Invoke the `brainstorming` skill before '
+          + 'implementing anything non-trivial, then `writing-plans` and `test-driven-development`.');
+      } else {
+        lines.push('- Method: superpowers is available. Implement requested changes directly and efficiently. '
+          + 'Skip speculative brainstorming or excessive investigation unless explicitly asked to plan or brainstorm.');
+      }
     }
   }
   lines.push('- Connectors: MCP servers attached to this session have full tool-calling access. '
     + 'Prefer their tools over shelling out.');
-  lines.push('- Method: for any code change, write a failing test first, then implement the smallest fix, then run the tests.');
+  lines.push('- Action over over-investigation: locate target files quickly, inspect only directly relevant sections, and make necessary edits without surveying unrelated files.');
   if (cwd && !opts.minimal) {
     try {
       const pkgPath = path.join(cwd, 'package.json');

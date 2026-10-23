@@ -1393,7 +1393,25 @@ function renderTasks(target, cwd, only) {
     if (sameCards) {
       // Same cards in the same order: replace only the ones whose content
       // changed, so a ticking token count does not repaint the whole panel.
-      fresh.forEach((c, i) => { if (old[i].outerHTML !== c.outerHTML) old[i].replaceWith(c); });
+      fresh.forEach((c, i) => {
+        if (old[i].dataset && old[i].dataset.card === 'context') {
+          // Fine-grained updates for the context card to eliminate flicker
+          const oldHead = old[i].querySelector('.ctx-head');
+          const newHead = c.querySelector('.ctx-head');
+          if (oldHead && newHead && oldHead.innerHTML !== newHead.innerHTML) oldHead.innerHTML = newHead.innerHTML;
+          const oldBar = old[i].querySelector('.ctx-seg');
+          const newBar = c.querySelector('.ctx-seg');
+          if (oldBar && newBar && oldBar.innerHTML !== newBar.innerHTML) oldBar.innerHTML = newBar.innerHTML;
+          const oldRows = old[i].querySelector('.ctx-rows');
+          const newRows = c.querySelector('.ctx-rows');
+          if (oldRows && newRows && oldRows.innerHTML !== newRows.innerHTML) oldRows.innerHTML = newRows.innerHTML;
+          const oldBadge = old[i].querySelector('.tc-badge');
+          const newBadge = c.querySelector('.tc-badge');
+          if (oldBadge && newBadge && oldBadge.textContent !== newBadge.textContent) oldBadge.textContent = newBadge.textContent;
+        } else if (old[i].outerHTML !== c.outerHTML) {
+          old[i].replaceWith(c);
+        }
+      });
     } else {
       target.replaceChildren(...fresh);
     }

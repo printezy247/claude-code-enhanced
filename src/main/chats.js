@@ -573,12 +573,10 @@ class ChatManager extends EventEmitter {
     // Skills synced from Claude Desktop live one folder too deep for the engine.
     const synced = settings && settings.minimalPrompt ? null : syncedSkillsPlugin();
     if (synced) options.plugins = [...(options.plugins || []), { type: 'local', path: synced }];
-    // Every model/provider gets the todo discipline, not just the ones that
-    // remember it: plan before multi-step work, update on steer, check off as
-    // items finish. Works with the object-form systemPrompt above — the SDK
-    // only ignores appendSystemPrompt when systemPrompt is a plain string.
-    // #todos-every-model
-    options.appendSystemPrompt = 'For any multi-step request, before starting: create a todo list with TodoWrite (or TaskCreate/TaskUpdate if those tools are available). Example: TodoWrite with todos=[{content:"...",status:"pending"}]. Update the list when the user steers the request. Mark each item completed as soon as it finishes. When all items are finished, say the list is complete. Prefer the tool over prose checklists. If two tools share a name, prefer the one whose server matches the task and read its description first.';
+    // Every model/provider gets the action-oriented discipline:
+    // plan before multi-step work, update on steer, check off as items finish,
+    // and prioritize editing/building over endless file exploration.
+    options.appendSystemPrompt = 'For multi-step requests, create a todo list with TodoWrite (or TaskCreate/TaskUpdate). Focus on target files directly. Avoid endless file reading/searching: after inspecting the directly relevant code, proceed immediately to implementation and verification. Update the list when steered and mark items completed promptly. Prefer tools over prose checklists. If two tools share a name, prefer the server matching the task.';
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)

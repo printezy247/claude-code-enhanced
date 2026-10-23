@@ -83,5 +83,8 @@ describe('bootstrap detection', () => {
     expect(text).toMatch(/caveman \(lite\)/);
     expect(text).toMatch(/superpowers/);
     expect(text).toMatch(/brainstorming/);
+
+    const explicit = await bootstrap.promptAppend('', { enableBrainstorming: true });
+    expect(explicit).toMatch(/Invoke the `brainstorming` skill/);
   });
 });
