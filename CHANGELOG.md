@@ -1,6 +1,10 @@
-# Changelog
+# Change Log
 
-All notable changes to Claude Code Enhanced will be documented in this file.
+All notable changes to Claude Code Enhanced are documented here.
+
+## [0.9.44] — 2026-10-23
+
+No commits since last tag.
 
 ## [0.9.40] - 2026-10-22
 

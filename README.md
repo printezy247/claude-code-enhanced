@@ -274,6 +274,10 @@ tool calls on this machine.
 No network access and no API keys are required. The same suite runs on every pull request and
 every push to `main` via GitHub Actions (`.github/workflows/ci.yml`).
 
+- `npm run lint` — lints the built `.deb` with lintian (suppressions are documented in `scripts/lint.sh`)
+- `npm run changelog` — regenerates `CHANGELOG.md` from `git log` since the latest tag
+- Stryker mutation testing is configured in `stryker.config.json` (opt-in: install stryker, then `npx stryker run`)
+
 ## Troubleshooting
 
 - **`node-pty failed to load`** → `npm run rebuild`
