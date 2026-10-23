@@ -80,6 +80,29 @@ function modelContext(provider, model) {
   return result;
 }
 
+/**
+ * What the catalog says a model can do. Every field is null when the catalog
+ * has no entry (or no verdict), and callers then keep their permissive
+ * default: only an explicit `false` / a real limit ever changes a request.
+ */
+function modelCaps(provider, model) {
+  const pid = provider && (provider.presetId || provider.modelsDevId || provider.id);
+  const id = String(model || (provider && provider.model) || '').trim();
+  const none = { reasoning: null, vision: null, tools: null, maxOutput: 0 };
+  if (!pid || !id) return none;
+  const cleanId = modelsdev.normalizeModelId(id);
+  const hit = modelsdev.model(pid, id) || modelsdev.model(pid, cleanId) || modelsdev.model(pid, id.toLowerCase())
+    || modelsdev.model(pid, cleanId.toLowerCase());
+  if (!hit) return none;
+  const inputs = hit.modalities && Array.isArray(hit.modalities.input) ? hit.modalities.input : null;
+  return {
+    reasoning: typeof hit.reasoning === 'boolean' ? hit.reasoning : null,
+    vision: inputs ? inputs.includes('image') : (typeof hit.attachment === 'boolean' ? hit.attachment : null),
+    tools: typeof hit.tool_call === 'boolean' ? hit.tool_call : null,
+    maxOutput: Number(hit.limit && hit.limit.output) || 0,
+  };
+}
+
 /** Probe provider's /models endpoint for context window (#A4) */
 async function probeContextWindow(provider, model) {
   const id = String(model || (provider && provider.model) || '').trim();
@@ -116,4 +139,4 @@ async function probeContextWindow(provider, model) {
   }
 }
 
-module.exports = { modelContext, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };
+module.exports = { modelContext, modelCaps, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };

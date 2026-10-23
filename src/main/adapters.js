@@ -11,6 +11,7 @@
 const { parsedDataEvents } = require('./sse');
 const bedrock = require('./bedrock.js');
 const modelsdev = require('./modelsdev.js');
+const { modelCaps } = require('./modelcontext.js');
 
 /** OpenAI-compatible root for a provider base URL (bare Ollama roots get /v1). */
 function openaiBase(baseUrl) {
@@ -120,11 +121,109 @@ function withQueryKey(url, prov) {
 // OpenAI chat.completions (native passthrough)
 // ---------------------------------------------------------------------------
 
+
+// ---------------------------------------------------------------------------
+// request hygiene shared by every dialect
+// ---------------------------------------------------------------------------
+
+/** JSON-schema keys no non-Anthropic API accepts in a tool's parameters. */
+const DROP_ALWAYS = new Set(['$schema', '$id', '$comment', 'definitions', '$defs']);
+/** Extra keys Google's function-declaration schema rejects with a 400. */
+const DROP_GEMINI = new Set([
+  'additionalProperties', 'exclusiveMinimum', 'exclusiveMaximum', 'propertyNames', 'patternProperties',
+  'unevaluatedProperties', 'if', 'then', 'else', 'not', 'contentEncoding', 'contentMediaType', 'examples',
+  'default', 'minProperties', 'maxProperties', 'dependentRequired', 'dependentSchemas',
+]);
+/** `format` values Gemini accepts on a string; any other format is a 400. */
+const GEMINI_FORMATS = new Set(['enum', 'date-time']);
+
+/**
+ * Make an Anthropic tool input_schema acceptable to the target API. MCP and
+ * plugin tools carry the full JSON-schema vocabulary (`$schema`,
+ * `additionalProperties`, `const`, `["string","null"]`...), which strict
+ * servers reject: Gemini 400s on most of it, and some OpenAI-compatible
+ * servers on `$schema`. The input is never mutated.
+ */
+function sanitizeSchema(schema, dialect = 'openai') {
+  const gemini = dialect === 'gemini';
+  const walk = (node) => {
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== 'object') return node;
+    const out = {};
+    for (const [k, v] of Object.entries(node)) {
+      if (DROP_ALWAYS.has(k) || (gemini && DROP_GEMINI.has(k))) continue;
+      if (k === 'properties' && v && typeof v === 'object' && !Array.isArray(v)) {
+        // property NAMES are user data: sanitize their schemas, never the keys
+        out[k] = Object.fromEntries(Object.entries(v).map(([name, sub]) => [name, walk(sub)]));
+        continue;
+      }
+      out[k] = walk(v);
+    }
+    if (gemini) {
+      if (Object.prototype.hasOwnProperty.call(out, 'const')) { out.enum = [out.const]; delete out.const; }
+      if (Array.isArray(out.type)) {
+        const kinds = out.type.filter((t) => t !== 'null');
+        if (out.type.includes('null')) out.nullable = true;
+        out.type = kinds[0] || 'string';
+      }
+      for (const key of ['anyOf', 'oneOf']) {
+        if (Array.isArray(out[key])) {
+          // Gemini supports anyOf only; collapse a nullable pair to the real type
+          const real = out[key].filter((x) => !(x && x.type === 'null'));
+          if (real.length === 1 && typeof real[0] === 'object') { Object.assign(out, real[0]); if (real.length !== out[key].length) out.nullable = true; delete out[key]; }
+          else if (key === 'oneOf') { out.anyOf = out.oneOf; delete out.oneOf; }
+        }
+      }
+      if (typeof out.format === 'string' && !GEMINI_FORMATS.has(out.format)) delete out.format;
+      if (Array.isArray(out.enum)) out.enum = out.enum.map(String);
+      if (out.type === 'object' && out.properties && Array.isArray(out.required)) {
+        out.required = out.required.filter((r) => Object.prototype.hasOwnProperty.call(out.properties, r));
+        if (!out.required.length) delete out.required;
+      }
+    }
+    return out;
+  };
+  const clean = walk(schema && typeof schema === 'object' ? schema : {});
+  if (!clean.type && !clean.anyOf) clean.type = 'object';
+  if (clean.type === 'object' && !clean.properties) clean.properties = {};
+  return clean;
+}
+
+/**
+ * Per-model request limits from the catalog. Only an explicit "no" changes a
+ * request (a model that is not catalogued keeps today's behaviour).
+ */
+function capsFor(prov, model) {
+  try { return modelCaps(prov, model); } catch { return { reasoning: null, vision: null, tools: null, maxOutput: 0 }; }
+}
+
+/** Images inside a tool_result: [{media_type, data}], in order. */
+function toolResultImages(b) {
+  const out = [];
+  if (Array.isArray(b && b.content)) {
+    for (const x of b.content) {
+      if (x && x.type === 'image' && x.source && x.source.type === 'base64' && x.source.data) {
+        out.push({ media_type: x.source.media_type || 'image/png', data: x.source.data });
+      }
+    }
+  }
+  return out;
+}
+
+const NO_VISION_NOTE = '[image omitted: this model cannot read images]';
+
 function buildOpenAIBody(body, wantStream, prov) {
-  const out = { model: body.model, stream: !!wantStream, max_tokens: body.max_tokens || 4096 };
+  const caps = capsFor(prov, body.model);
+  let maxTokens = body.max_tokens || 4096;
+  // A request above the model's output limit is a 400 on most providers.
+  if (caps.maxOutput > 0 && maxTokens > caps.maxOutput) maxTokens = caps.maxOutput;
+  const out = { model: body.model, stream: !!wantStream, max_tokens: maxTokens };
   if (body.temperature != null) out.temperature = body.temperature;
   if (body.top_p != null) out.top_p = body.top_p;
-  if (prov && isGoogle(prov)) {
+  if (caps.reasoning === false) {
+    // A model the catalog marks as non-reasoning rejects (or ignores) effort
+    // and thinking budgets: send neither.
+  } else if (prov && isGoogle(prov)) {
     // Google 400s on `reasoning` and on efforts outside its enum.
     const eff = googleEffort(body);
     if (eff) out.reasoning_effort = eff;
@@ -178,12 +277,18 @@ function buildOpenAIBody(body, wantStream, prov) {
     // its assistant tool_calls directly, so text that came before a result in
     // the same Anthropic message has to wait until all results are in.
     const textParts = [];
+    const imgPart = (media, data) => (caps.vision === false
+      ? NO_VISION_NOTE
+      : { type: 'image_url', image_url: { url: 'data:' + (media || 'image/png') + ';base64,' + data } });
     for (const b of c) {
       if (b.type === 'text') textParts.push(b.text);
       else if (b.type === 'image' && b.source && b.source.type === 'base64') {
-        textParts.push({ type: 'image_url', image_url: { url: 'data:' + (b.source.media_type || 'image/png') + ';base64,' + b.source.data } });
+        textParts.push(imgPart(b.source.media_type, b.source.data));
       } else if (b.type === 'tool_result') {
         msgs.push({ role: 'tool', tool_call_id: b.tool_use_id, content: toolResultText(b) });
+        // The `tool` role is text-only; an image a tool returned (Read of a
+        // PNG, a screenshot tool) reaches the model as a user turn right after.
+        for (const im of toolResultImages(b)) textParts.push(imgPart(im.media_type, im.data));
       }
     }
     if (textParts.length) {
@@ -200,7 +305,7 @@ function buildOpenAIBody(body, wantStream, prov) {
   if (Array.isArray(body.tools) && body.tools.length) {
     out.tools = body.tools.map(t => ({
       type: 'function',
-      function: { name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } },
+      function: { name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') },
     }));
     const tc = body.tool_choice;
     if (tc === 'any' || (tc && tc.type === 'any')) out.tool_choice = 'required';
@@ -283,7 +388,8 @@ const nowId = (p) => 'chatcmpl-' + String(p) + '-' + Date.now().toString(36);
 // OpenAI Responses API (POST /responses)
 // ---------------------------------------------------------------------------
 
-function buildResponsesInput(body) {
+function buildResponsesInput(body, prov) {
+  const caps = capsFor(prov, body.model);
   let instructions = body.system;
   if (Array.isArray(instructions)) instructions = instructions.map(b => b.text || '').join('\n');
   const lateSystem = [];
@@ -309,20 +415,30 @@ function buildResponsesInput(body) {
     for (const b of c) {
       if (b.type === 'text') input.push({ role: 'user', content: [{ type: 'input_text', text: b.text }] });
       else if (b.type === 'image' && b.source && b.source.type === 'base64') {
-        input.push({ role: 'user', content: [{ type: 'input_image', image_url: 'data:' + (b.source.media_type || 'image/png') + ';base64,' + b.source.data }] });
+        input.push(caps.vision === false
+          ? { role: 'user', content: [{ type: 'input_text', text: NO_VISION_NOTE }] }
+          : { role: 'user', content: [{ type: 'input_image', image_url: 'data:' + (b.source.media_type || 'image/png') + ';base64,' + b.source.data }] });
       } else if (b.type === 'tool_result') {
         input.push({ type: 'function_call_output', call_id: b.tool_use_id, output: toolResultText(b) });
+        const imgs = toolResultImages(b);
+        if (imgs.length) {
+          input.push({ role: 'user', content: imgs.map((im) => (caps.vision === false
+            ? { type: 'input_text', text: NO_VISION_NOTE }
+            : { type: 'input_image', image_url: 'data:' + im.media_type + ';base64,' + im.data })) });
+        }
       }
     }
   }
-  const req = { model: body.model, input, max_output_tokens: body.max_tokens || 4096 };
+  let maxOut = body.max_tokens || 4096;
+  if (caps.maxOutput > 0 && maxOut > caps.maxOutput) maxOut = caps.maxOutput;
+  const req = { model: body.model, input, max_output_tokens: maxOut };
   if (lateSystem.length) instructions = (instructions ? instructions + '\n\n' : '') + lateSystem.join('\n\n');
   if (instructions) req.instructions = String(instructions);
   if (body.temperature != null) req.temperature = body.temperature;
   if (body.top_p != null) req.top_p = body.top_p;
-  if (body.effort || body.reasoning_effort) req.reasoning = { effort: body.effort || body.reasoning_effort };
+  if (caps.reasoning !== false && (body.effort || body.reasoning_effort)) req.reasoning = { effort: body.effort || body.reasoning_effort };
   if (Array.isArray(body.tools) && body.tools.length) {
-    req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } }));
+    req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') }));
   }
   return req;
 }
@@ -353,7 +469,7 @@ async function* responsesChunks(upstream, model) {
 }
 
 async function callResponses(body, prov, wantStream, signal) {
-  const req = buildResponsesInput(body);
+  const req = buildResponsesInput(body, prov);
   req.stream = !!wantStream;
   let url = String(prov.baseUrl || '').replace(/\/+$/, '') + '/responses';
   url = withQueryKey(url, prov);
@@ -400,7 +516,19 @@ function geminiBase(baseUrl) {
   return base + '/v1beta';
 }
 
+// Gemini 3 returns a `thoughtSignature` with each function call and rejects
+// the next request (400) unless the same signature is sent back on that call.
+// The engine only round-trips the tool-call id, so remember signature by id.
+const thoughtSignatures = new Map();
+const MAX_SIGNATURES = 500;
+function rememberSignature(id, sig) {
+  if (!id || !sig) return;
+  thoughtSignatures.set(id, sig);
+  while (thoughtSignatures.size > MAX_SIGNATURES) thoughtSignatures.delete(thoughtSignatures.keys().next().value);
+}
+
 function buildGeminiBody(body, prov) {
+  const caps = capsFor(prov, body.model);
   const contents = [];
   let systemText = body.system;
   if (Array.isArray(systemText)) systemText = systemText.map(b => b.text || '').join('\n');
@@ -420,12 +548,23 @@ function buildGeminiBody(body, prov) {
     const parts = [];
     for (const b of c) {
       if (b.type === 'text') parts.push({ text: b.text });
-      else if (b.type === 'tool_use') parts.push({ functionCall: { name: b.name, args: b.input || {} } });
-      else if (b.type === 'tool_result') {
-        let out = b.content;
-        if (Array.isArray(out)) out = out.map(x => x.text || '').join('\n');
+      else if (b.type === 'image' && b.source && b.source.type === 'base64') {
+        parts.push(caps.vision === false ? { text: NO_VISION_NOTE }
+          : { inlineData: { mimeType: b.source.media_type || 'image/png', data: b.source.data } });
+      } else if (b.type === 'tool_use') {
+        const part = { functionCall: { name: b.name, args: b.input || {} } };
+        // A resumed session has no remembered signature; Google documents this
+        // sentinel for history that did not come from the current process.
+        const sig = thoughtSignatures.get(b.id)
+          || (prov && isGoogle(prov) && /gemini-3/i.test(String(body.model)) ? 'skip_thought_signature_validator' : '');
+        if (sig) part.thoughtSignature = sig;
+        parts.push(part);
+      } else if (b.type === 'tool_result') {
         const fname = b.name || toolNameById.get(b.tool_use_id) || b.tool_use_id || 'tool';
-        parts.push({ functionResponse: { name: fname, response: { output: String(out || '') } } });
+        parts.push({ functionResponse: { name: fname, response: { output: toolResultText(b) } } });
+        for (const im of toolResultImages(b)) {
+          parts.push(caps.vision === false ? { text: NO_VISION_NOTE } : { inlineData: { mimeType: im.media_type, data: im.data } });
+        }
       }
     }
     if (parts.length) contents.push({ role, parts });
@@ -433,22 +572,23 @@ function buildGeminiBody(body, prov) {
   const req = { contents };
   if (systemText) req.systemInstruction = { parts: [{ text: String(systemText) }] };
   const gen = {};
-  if (body.max_tokens) gen.maxOutputTokens = body.max_tokens;
+  if (body.max_tokens) gen.maxOutputTokens = caps.maxOutput > 0 ? Math.min(body.max_tokens, caps.maxOutput) : body.max_tokens;
   if (body.temperature != null) gen.temperature = body.temperature;
   if (body.top_p != null) gen.topP = body.top_p;
   if (prov && isGoogle(prov)) {
     // Google: budget 1..24576, or a level, never both.
     const b = body.thinking && body.thinking.budget_tokens;
     const lvl = googleEffort({ ...body, thinking: undefined });
-    if (b > 0) gen.thinkingConfig = { thinkingBudget: Math.min(b, 24576) };
+    if (caps.reasoning === false) { /* the model has no thinking to configure */ }
+    else if (b > 0) gen.thinkingConfig = { thinkingBudget: Math.min(b, 24576) };
     else if (b == null && lvl && lvl !== 'none') gen.thinkingConfig = { thinkingLevel: lvl };
-  } else if (body.thinking && body.thinking.budget_tokens != null) {
+  } else if (caps.reasoning !== false && body.thinking && body.thinking.budget_tokens != null) {
     gen.thinkingConfig = { thinkingBudget: body.thinking.budget_tokens };
   }
   if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) gen.stopSequences = body.stop_sequences;
   if (Object.keys(gen).length) req.generationConfig = gen;
   if (Array.isArray(body.tools) && body.tools.length) {
-    req.tools = [{ functionDeclarations: body.tools.map(t => ({ name: t.name, description: t.description || '', parameters: t.input_schema || { type: 'object', properties: {} } })) }];
+    req.tools = [{ functionDeclarations: body.tools.map(t => ({ name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'gemini') })) }];
   }
   return req;
 }
@@ -466,7 +606,9 @@ async function* geminiChunks(upstream, model) {
       if (p.text) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: p.text } }] };
       if (p.functionCall) {
         const idx = n++;
-        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, id: 'call_' + idx + '_' + Date.now(), type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } }] } }] };
+        const callId = 'call_' + idx + '_' + Date.now();
+        rememberSignature(callId, p.thoughtSignature);
+        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, id: callId, type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } }] } }] };
       }
     }
     if (cand.finishReason) {
@@ -503,7 +645,11 @@ function geminiToOpenAI(j, model) {
   const toolCalls = [];
   for (const p of parts) {
     if (p.text) text += p.text;
-    if (p.functionCall) toolCalls.push({ id: 'call_' + toolCalls.length + '_' + Date.now(), type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } });
+    if (p.functionCall) {
+      const id = 'call_' + toolCalls.length + '_' + Date.now();
+      rememberSignature(id, p.thoughtSignature);
+      toolCalls.push({ id, type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } });
+    }
   }
   const msg = { role: 'assistant', content: text || null };
   if (toolCalls.length) msg.tool_calls = toolCalls;
@@ -568,6 +714,6 @@ async function listModels(prov) {
 module.exports = {
   callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream,
   providerCooldown,
-  buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink,
+  buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink, sanitizeSchema, thoughtSignatures,
   responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE, responsesChunks, geminiChunks,
 };
