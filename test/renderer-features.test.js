@@ -288,11 +288,48 @@ describe('composer (#32)', () => {
     expect(chips).toBeTruthy();
   });
 
-  it('cycles reasoning effort through the engine', async () => {
-    pane().querySelector('.chat-effort').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  it('hides the effort picker when the model has no effort levels', async () => {
     await flush();
-    const call = h.calls.filter(c => c.channel === 'chat:effort').pop();
-    expect(call.payload.effort).toBe('low');
+    const sel = pane().querySelector('.chat-effort');
+    expect(sel.classList.contains('hidden')).toBe(true);
+  });
+});
+
+describe('effort picker lists only what the model accepts', () => {
+  const withLevels = async (levels, current = '') => {
+    const hh = loadRenderer({ ipc: bootIpc({
+      'chat:effort-levels': { ok: true, levels, current },
+      'chat:effort': { ok: true },
+    }) });
+    await flush();
+    return hh;
+  };
+
+  it('shows auto plus exactly the model\'s levels', async () => {
+    const hh = await withLevels(['low', 'medium', 'high']);
+    const sel = hh.window.document.querySelector('.chat-effort');
+    expect(sel.classList.contains('hidden')).toBe(false);
+    expect([...sel.options].map(o => o.value)).toEqual(['', 'low', 'medium', 'high']);
+  });
+
+  it('sends the chosen level to the engine', async () => {
+    const hh = await withLevels(['low', 'high']);
+    const sel = hh.window.document.querySelector('.chat-effort');
+    sel.value = 'high';
+    sel.dispatchEvent(new hh.window.Event('change'));
+    await flush();
+    const call = hh.calls.filter(c => c.channel === 'chat:effort').pop();
+    expect(call.payload).toEqual({ id: 'c1', effort: 'high' });
+  });
+
+  it('reverts the picker when the engine rejects the level', async () => {
+    const hh = loadRenderer({ ipc: bootIpc({ 'chat:effort-levels': { ok: true, levels: ['low', 'high'] }, 'chat:effort': { ok: false, error: 'no' } }) });
+    await flush();
+    const sel = hh.window.document.querySelector('.chat-effort');
+    sel.value = 'high';
+    sel.dispatchEvent(new hh.window.Event('change'));
+    await flush();
+    expect(sel.value).toBe('');
   });
 });
 

@@ -43,22 +43,36 @@ describe('permission mode picker', () => {
 
   it('explains each mode in the tooltip', async () => {
     const { chat } = await open();
-    expect(chat.modeSel.title).toMatch(/classifier/);
+    expect(chat.modeSel.title).toMatch(/Safe actions run without asking/);
+    expect(chat.modeSel.title).toMatch(/second model/);
     expect(chat.modeSel.title).toMatch(/shell commands/i);
     expect(chat.modeSel.title).toMatch(/Read-only/);
   });
 
-  it('disables auto for a third-party provider and says why', async () => {
+  it('offers auto on a third-party provider (CCE applies its own policy there)', async () => {
     const { chat } = await open({ provider: THIRD_PARTY, mode: 'acceptEdits' });
     const auto = options(chat.modeSel).find(o => o.value === 'auto');
-    expect(auto.disabled).toBe(true);
-    expect(auto.text).toMatch(/Anthropic only/);
+    expect(auto.disabled).toBe(false);
+    expect(auto.text).toBe('auto');
   });
 
-  it('never shows auto for a third-party chat even if the engine reports it', async () => {
-    const { chat, send } = await open({ provider: THIRD_PARTY, mode: 'acceptEdits' });
-    send({ type: 'system', subtype: 'session_state_changed', state: { permission_mode: 'auto' } });
-    expect(chat.mode).toBe('acceptEdits');
+  it('shows auto for a third-party chat running CCE\'s auto policy, though the engine reports accept edits', async () => {
+    const created = { ok: true, id: 'c1', cwd: '/tmp', model: '', permissionMode: 'acceptEdits', autoPolicy: true, provider: THIRD_PARTY };
+    const { chat, send } = await open({ provider: THIRD_PARTY, mode: 'acceptEdits', extra: { 'chat:create': created } });
+    expect(chat.mode).toBe('auto');
+    expect(chat.modeSel.value).toBe('auto');
+    send({ type: 'system', subtype: 'session_state_changed', state: { permission_mode: 'acceptEdits' } });
+    expect(chat.mode).toBe('auto');
+  });
+
+  it('picking auto on a third-party chat keeps it on auto when the main process answers accept-edits + autoPolicy', async () => {
+    const { h, chat } = await open({ provider: THIRD_PARTY, mode: 'acceptEdits', extra: { 'chat:set-mode': { ok: true, permissionMode: 'acceptEdits', autoPolicy: true, changed: false } } });
+    chat.modeSel.value = 'auto';
+    chat.modeSel.dispatchEvent(new h.window.Event('change'));
+    await flush();
+    expect(chat.autoPolicy).toBe(true);
+    expect(chat.mode).toBe('auto');
+    expect(chat.modeSel.value).toBe('auto');
   });
 
   it('sends the chosen mode and shows what the main process actually applied', async () => {
@@ -79,7 +93,7 @@ describe('permission mode picker', () => {
     expect(chat.modeSel.value).toBe('acceptEdits');
   });
 
-  it('plan approval offers accept edits, and auto only on Anthropic itself', async () => {
+  it('plan approval offers accept edits and auto on every provider', async () => {
     const approve = async (provider) => {
       const { h, send } = await open({ provider, mode: 'plan' });
       send({ type: 'system', subtype: 'noop' });
@@ -95,7 +109,7 @@ describe('permission mode picker', () => {
     expect(own).toContain('✓ approve + auto');
     const other = await approve(THIRD_PARTY);
     expect(other).toContain('✓ approve + accept edits');
-    expect(other).not.toContain('✓ approve + auto');
+    expect(other).toContain('✓ approve + auto');
   });
 });
 
