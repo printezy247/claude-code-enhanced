@@ -1664,3 +1664,37 @@ body.split-open #splitter { display: block; }
 /* A narrow window cannot hold sidebar, chat, tool panel and Overview at once:
    the sidebar steps aside while the tool panel is open. */
 @media (max-width: 1240px) { body.split-open #sidebar { display: none; } }
+
+/* ===== Overview: black, floating orange-outlined cards (no grey surface) ===== */
+body.ov-hidden #overviewpane { display: none; }
+#overviewpane { background: transparent; border-left: 0; flex-basis: 304px; width: 304px; padding: 0 10px 0 4px; }
+@media (max-width: 1180px) { #overviewpane { flex-basis: 268px; width: 268px; } }
+.ov-head { border-bottom: 0; background: none; height: 44px; padding: 0 4px 0 6px; }
+.ov-body { padding: 2px 2px 18px; display: flex; flex-direction: column; gap: 10px; }
+#overview-body .task-card {
+  margin: 0; background: var(--bg); border: 1px solid var(--accent-line); border-radius: 14px; overflow: hidden;
+  box-shadow: 0 8px 22px rgba(0, 0, 0, .65), 0 0 0 1px rgba(255, 138, 40, .06);
+}
+#overview-body .task-card-head { padding: 9px 11px 7px; cursor: pointer; border-radius: 0; }
+#overview-body .task-card-head:hover { background: var(--accent-soft); }
+#overview-body .task-card-head:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+#overview-body .task-card-head h4 { font-size: 12px; letter-spacing: .02em; }
+#overview-body .tc-caret { display: inline-flex; color: var(--muted); transition: transform .12s; transform: rotate(180deg); }
+#overview-body .task-card.closed .tc-caret { transform: rotate(0deg); }
+#overview-body .tc-badge { background: transparent; border: 1px solid var(--accent-line); color: var(--accent); }
+#overview-body .tc-badge.warn { color: var(--warn); border-color: var(--warn); }
+#overview-body .task-card.closed .task-card-head { padding-bottom: 9px; }
+#overview-body .task-card-body { padding: 0 11px 10px 11px; }
+#overview-body .task-row.mono, #overview-body .task-row.hint, #overview-body .kv-k { color: var(--muted); }
+#overview-body .ctx-seg, #overview-body .task-bar { background: #1a1a1a; }
+#overview-body .btn.small, #overview-body .btn.tiny { background: transparent; border: 1px solid var(--accent-line); color: var(--accent); }
+#overview-body .btn.small:hover, #overview-body .btn.tiny:hover { background: var(--accent-soft); }
+.conn-note { margin: 0 0 6px; font-size: 11px; color: var(--muted); }
+.conn-note summary { cursor: pointer; padding: 2px 0; list-style: none; }
+.conn-note summary::-webkit-details-marker { display: none; }
+.conn-note summary::before { content: '▸ '; color: var(--accent); }
+.conn-note[open] summary::before { content: '▾ '; }
+.conn-note .hint { padding: 2px 0 4px 12px; overflow-wrap: anywhere; line-height: 1.4; }
+#overview-body .task-rows { max-height: 260px; }
+#tabbar > #btn-overview[aria-pressed="true"] { color: var(--accent); }
+@media (prefers-reduced-motion: reduce) { #overview-body .tc-caret { transition: none; } }

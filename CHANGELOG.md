@@ -2,6 +2,14 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.54] — 2026-10-23
+
+### Changed
+- **Overview is now floating cards on black**: no grey panel behind them, each card black with an orange outline and a soft shadow, like Claude Desktop's right rail.
+- **Every card folds**: click a header (chevron on the right) to hide its details; the badge still summarises it. The choice is remembered per card. Connectors start folded, being the longest card.
+- **Fold-all button** in the Overview header, and an **Overview button in the top strip** that hides or shows the whole column (remembered).
+- The long connector notes ("12 connectors live...", the duplicate tool-name list) are now one-line summaries that open on demand instead of filling the card.
+
 ## [0.9.53] — 2026-10-23
 
 ### Fixed

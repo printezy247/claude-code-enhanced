@@ -61,6 +61,7 @@
           <span id="qa-chat-slot"></span>
           <span class="spacer"></span>
           <button id="btn-tasks" class="icon-btn" title="Tool panel: changes, files, terminal, diff, preview (Alt+V)" aria-label="Toggle the tool panel"><span data-icon="split"></span></button>
+          <button id="btn-overview" class="icon-btn" title="Show or hide the Overview" aria-label="Show or hide the Overview" aria-pressed="true"><span data-icon="layers"></span></button>
           <button id="btn-new-window" class="icon-btn" title="Open a new window (Ctrl+Shift+N)" aria-label="Open a new window (Ctrl+Shift+N)"><span data-icon="expand"></span></button>
           <!-- Kept for the tab registry; the sidebar's Open list is what you see. -->
           <div id="tabs" hidden></div>
@@ -155,6 +156,7 @@
       <div class="ov-head">
         <span class="ico" data-icon="layers"></span><b>Overview</b>
         <span class="spacer"></span>
+        <button class="icon-btn" id="btn-overview-fold" title="Fold or unfold every card" aria-label="Fold or unfold every card"><span data-icon="compress"></span></button>
         <button class="icon-btn" id="btn-overview-refresh" title="Refresh" aria-label="Refresh the overview"><span data-icon="refresh"></span></button>
       </div>
       <div class="ov-body" id="overview-body"></div>
