@@ -1739,3 +1739,8 @@ body.sb-hidden .req-tip:not(.hidden) {
 
 /* The chat's side columns belong to Conversations only. */
 body[data-view]:not([data-view="conversations"]) :is(#overviewpane, #splitpane, #splitter) { display: none !important; }
+
+/* Folded command output (e.g. the hook dump after /compact) */
+details.cmd-note > summary { cursor: pointer; list-style: none; }
+details.cmd-note > summary::-webkit-details-marker { display: none; }
+.cmd-note-full { margin: 6px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; font-size: 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
