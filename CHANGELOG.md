@@ -2,6 +2,16 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.52] — 2026-10-23
+
+### Changed
+- **Conversations moved to a permanent left sidebar**, laid out like Claude Desktop: `New chat` (with resume-latest and reopen-closed-tab icons), the section links, an **Open** list of live chats and terminals (replacing the tab bar: status dot for working / waiting on you / idle, close button on hover), then every past conversation grouped by project and time, with search, pin, archive, rename, fork, transcript, export and delete as before. Open conversations are listed once, under Open. Ctrl+B reveals the sidebar and focuses the search; Escape clears it.
+- **The top bar is now one line**: sidebar toggle, the active chat's title (it follows the first message) with its actions, and two same-size icon buttons on the right (tool panel, new window). The second row (New chat / Resume / All conversations / Closed tab), the tab strip, the provider label, the folder / repo / branch / changes chips and the empty bottom status bar are gone; that information is in the sidebar and the Overview.
+- On a narrow window (under 1240 px) the sidebar steps aside while the tool panel is open.
+
+### Removed
+- The `All conversations` button and the Conversations dropdown (the list is always in the sidebar).
+
 ## [0.9.51] — 2026-10-23
 
 ### Changed

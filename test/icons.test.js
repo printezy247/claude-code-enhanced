@@ -122,10 +122,11 @@ describe('declared icons are actually painted (#54)', () => {
     }
   });
 
-  it('the Conversations trigger and logo are painted too', async () => {
+  it('the sidebar actions, the top-strip buttons and the logo are painted too', async () => {
     const h = await boot();
-    expect(h.window.document.querySelector('#btn-convo-drop .ico svg')).toBeTruthy();
-    expect(h.window.document.querySelector('#btn-convo-drop .caret svg')).toBeTruthy();
+    for (const sel of ['#qa-new', '#qa-resume', '#qa-reopen', '#btn-sidebar', '#btn-tasks', '#btn-new-window']) {
+      expect(h.window.document.querySelector(sel + ' svg'), sel).toBeTruthy();
+    }
     // The logo is the app's own mark (inline SVG), not an icon in a span.
     expect(h.window.document.querySelector('svg.logo-mark')).toBeTruthy();
   });

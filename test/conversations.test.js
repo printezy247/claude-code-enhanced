@@ -41,15 +41,13 @@ async function boot(sessions = SESSIONS) {
   const h = loadRenderer({ ipc: bootIpc(sessions) });
   await flush(10);
   h.window.switchView('conversations');
-  // The list is a dropdown now: open it the way the button does.
-  h.window.document.querySelector('#btn-convo-drop')
-    .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+  // The list lives in the sidebar; Ctrl+B reloads it from disk and focuses the search.
+  h.window.toggleConversations(true);
   await flush(10);
   return h;
 }
 
 const drop = (win) => win.document.querySelector('#convo-drop');
-const isOpen = (win) => !!drop(win) && !drop(win).classList.contains('hidden');
 
 const list = (win) => win.document.querySelector('#convo-list');
 const rows = (win) => [...win.document.querySelectorAll('.convo-row')];
@@ -195,39 +193,65 @@ describe('per-row actions menu', () => {
   });
 });
 
-describe('dropdown behaviour', () => {
-  it('starts closed and opens from the tabbar button', async () => {
+describe('sidebar list behaviour', () => {
+  it('is in the sidebar from the start, with no button to open it', async () => {
     const h = loadRenderer({ ipc: bootIpc() });
     await flush(10);
-    h.window.switchView('conversations');
-    await flush(4);
-    expect(drop(h.window)).toBeNull();
-    h.window.document.querySelector('#btn-convo-drop')
-      .dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
-    await flush(10);
-    expect(isOpen(h.window)).toBe(true);
+    expect(drop(h.window)).toBeTruthy();
+    expect(drop(h.window).parentElement.id).toBe('sb-convos');
+    expect(drop(h.window).closest('#sidebar')).toBeTruthy();
+    expect(drop(h.window).classList.contains('hidden')).toBe(false);
+    expect(h.window.document.querySelector('#btn-convo-drop')).toBeNull();
     h.window.close();
   });
 
-  it('Ctrl+B toggles it and Escape closes it', async () => {
+  it('Ctrl+B reloads the list and focuses the search', async () => {
     const h = await boot();
-    expect(isOpen(h.window)).toBe(true);
+    const before = h.calls.filter(c => c.channel === 'chats:index').length;
+    h.window.document.querySelector('#convo-drop .convo-search').blur();
     h.window.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
-    expect(isOpen(h.window)).toBe(false);
-    h.window.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'b', ctrlKey: true, bubbles: true }));
-    expect(isOpen(h.window)).toBe(true);
-    h.window.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
-    expect(isOpen(h.window)).toBe(false);
+    await flush(6);
+    expect(h.calls.filter(c => c.channel === 'chats:index').length).toBeGreaterThan(before);
+    expect(h.window.document.activeElement).toBe(h.window.document.querySelector('#convo-drop .convo-search'));
     h.window.close();
   });
 
-  it('closing it from a row opens the session', async () => {
+  it('Escape in the search clears it first', async () => {
+    const h = await boot();
+    const search = h.window.document.querySelector('#convo-drop .convo-search');
+    search.value = 'zzz';
+    search.dispatchEvent(new h.window.Event('input', { bubbles: true }));
+    search.focus();
+    h.window.document.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    expect(search.value).toBe('');
+    h.window.close();
+  });
+
+  it('opening a row starts the session and the list stays put', async () => {
     const h = await boot();
     rows(h.window)[0].dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
     await flush(6);
-    expect(isOpen(h.window)).toBe(false);
+    expect(drop(h.window).classList.contains('hidden')).toBe(false);
     const created = h.calls.filter(c => c.channel === 'chat:create').pop();
     expect(created.payload.resume).toBeTruthy();
+    h.window.close();
+  });
+
+  it('lists an open conversation under Open, not a second time under All', async () => {
+    const h = await boot();
+    await flush(6);
+    const sessionId = rows(h.window)[0] && 'x';
+    expect(sessionId).toBeTruthy();
+    // Open the first session; its row leaves the All list and a row appears under Open.
+    const label = rows(h.window)[0].querySelector('.convo-preview').textContent;
+    rows(h.window)[0].dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    await flush(10);
+    const meta = [...h.window.tabRegistry.values()].find(m => m.kind === 'chat');
+    meta.sessionId = h.calls.filter(c => c.channel === 'chat:create').pop().payload.resume;
+    h.window.onConvoSessionsChanged();
+    await flush(4);
+    expect([...h.window.document.querySelectorAll('#convo-list .convo-preview')].map(n => n.textContent)).not.toContain(label);
+    expect(h.window.document.querySelectorAll('#sb-open .sb-open-row').length).toBeGreaterThan(0);
     h.window.close();
   });
 });

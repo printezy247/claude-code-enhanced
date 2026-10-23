@@ -129,7 +129,7 @@ describe('no instant state changes (#55)', () => {
     const src = css();
     // Match the selector at the start of a declaration block, not anywhere in
     // the file (several selectors share a name prefix with other rules).
-    for (const sel of ['.btn', '.nav-btn', '.tab', '#convo-drop .convo-row', '#btn-convo-drop']) {
+    for (const sel of ['.btn', '.nav-btn', '.tab', '#convo-drop .convo-row', '.icon-btn', '.sb-open-row']) {
       const esc = sel.replace(/[.#]/g, '\\$&');
       const rule = new RegExp('(?:^|[},\\n])\\s*' + esc + '\\s*\\{([\\s\\S]*?)\\}', 'm').exec(src);
       expect(rule, sel + ': no declaration block found').toBeTruthy();

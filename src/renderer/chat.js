@@ -146,6 +146,7 @@ const Chat = (() => {
     pane.innerHTML = `
       <div class="chat-header">
         <span class="chat-dot" title="ready"></span>
+        <span class="chat-title"></span>
         <span class="chat-project"></span>
         <span class="chat-provider" title="provider"></span>
         <span class="chat-header-sep"></span>
@@ -203,7 +204,7 @@ const Chat = (() => {
       statusLine: pane.querySelector('.chat-statusline .sl-left'),
       statusRight: pane.querySelector('.chat-statusline .sl-right'),
       dot: pane.querySelector('.chat-dot'), providerEl: pane.querySelector('.chat-provider'),
-      projEl: pane.querySelector('.chat-project'),
+      projEl: pane.querySelector('.chat-project'), titleEl: pane.querySelector('.chat-title'),
       headerEl: pane.querySelector('.chat-header'),
       modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
@@ -260,6 +261,7 @@ const Chat = (() => {
     // tab
     const tab = el('div', 'tab active');
     tab.appendChild(el('span', '', '⌘ ' + basename(res.cwd)));
+    if (chat.titleEl) chat.titleEl.textContent = basename(res.cwd);
     const closeBtn = el('button', 'close', '✕');
     closeBtn.title = 'Close chat';
     closeBtn.setAttribute('aria-label', 'Close chat');
@@ -2350,6 +2352,7 @@ const Chat = (() => {
     chat.titled = true;
     const t = text.replace(/\s+/g, ' ').trim().slice(0, 26) || basename(chat.cwd);
     if (chat.tabEl && chat.tabEl.firstChild) chat.tabEl.firstChild.textContent = '⌘ ' + t;
+    if (chat.titleEl) chat.titleEl.textContent = t;
   }
 
   function renderImageChips(chat) {

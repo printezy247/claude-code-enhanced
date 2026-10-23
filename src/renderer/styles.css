@@ -1597,3 +1597,70 @@ body.split-open #splitter { display: block; }
 /* The chat keeps a usable width; the tool panel gives way first. */
 #main { min-width: 420px; }
 #splitpane { flex: 0 1 auto; min-width: 0; }
+
+/* ===== Left sidebar: actions, nav, open chats, conversation list (Claude Desktop layout) ===== */
+#sidebar { width: 272px; min-width: 272px; padding: 12px 8px 8px; min-height: 0; }
+.logo { padding: 2px 8px 10px; }
+.sb-actions { display: flex; align-items: center; gap: 4px; padding: 0 2px 8px; }
+.sb-actions .btn.primary { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: var(--ctl-h); padding: 0 10px; }
+.sb-actions .btn .ic { width: 14px; height: 14px; }
+.sb-actions .icon-btn.busy { opacity: .5; cursor: progress; }
+.sb-actions .icon-btn:disabled { opacity: .35; cursor: default; }
+#nav { gap: 1px; }
+.nav-btn { padding: 6px 10px; gap: 9px; font-size: 13px; }
+.nav-btn .ico .ic { width: 16px; height: 16px; }
+.sidebar-foot { margin-top: 6px; font-size: 11px; padding: 6px 8px 0; line-height: 1.4; }
+#claude-banner { margin-top: 8px; }
+
+/* Open chats and terminals: what the tab bar used to be */
+.sb-open { margin: 8px 0 0; padding: 6px 0 4px; border-top: 1px solid var(--border); max-height: 32%; overflow: auto; flex: none; }
+.sb-open-head { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); padding: 0 8px 3px; }
+.sb-open-row { display: flex; align-items: center; gap: 7px; padding: 5px 6px 5px 8px; border-radius: 7px; cursor: pointer; font-size: 12.5px; color: var(--muted); transition: background .12s, color .12s; }
+.sb-open-row:hover, .sb-open-row:focus-visible { background: var(--bg3); color: var(--text); outline: none; }
+.sb-open-row.active { background: var(--accent-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
+.sb-open-row.dead { opacity: .55; }
+.sb-open-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sb-kind .ic { width: 12px; height: 12px; }
+.sb-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--bg4); }
+.sb-dot.busy { background: var(--accent); animation: cce-pulse 1.4s ease-in-out infinite; }
+.sb-dot.attn { background: var(--warn); }
+.sb-open-row:not(.dead) .sb-dot.idle { background: var(--ok); opacity: .7; }
+.sb-open-close { flex: none; display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center; border: 0; background: none; color: var(--muted); border-radius: 5px; cursor: pointer; opacity: 0; }
+.sb-open-row:hover .sb-open-close, .sb-open-row:focus-within .sb-open-close, .sb-open-row.active .sb-open-close { opacity: 1; }
+.sb-open-close:hover { color: var(--danger); background: var(--bg4); }
+@media (prefers-reduced-motion: reduce) { .sb-dot.busy { animation: none; } }
+
+/* The conversation list is part of the sidebar now, not a dropdown. */
+#sb-convos { flex: 1; min-height: 0; display: flex; flex-direction: column; margin-top: 6px; border-top: 1px solid var(--border); }
+#convo-drop { position: static; width: auto; max-height: none; flex: 1; min-height: 0; background: none; border: 0; border-radius: 0; z-index: auto; }
+#convo-drop .convo-head { padding: 8px 2px 4px; flex-wrap: nowrap; }
+#convo-drop .convo-search { flex: 1 1 auto; min-width: 0; height: var(--ctl-h); padding: 0 9px; font-size: 12.5px; }
+#convo-drop .convo-filters { display: flex; gap: 4px; padding: 0 2px 4px; }
+#convo-drop .convo-filters select { flex: 1 1 0; min-width: 0; height: 26px; font-size: 11.5px; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+#convo-drop .convo-tabs { margin: 2px 2px 0; }
+#convo-drop .convo-tab { padding: 3px 4px; font-size: 11.5px; }
+#convo-drop .convo-list { padding: 2px 0 6px; min-height: 0; }
+#convo-drop .convo-sec .cs-path { display: none; }
+#convo-drop .convo-row { padding: 5px 4px 5px 8px; }
+#convo-drop .convo-preview { font-size: 12.5px; }
+#convo-drop .convo-meta { font-size: 11px; }
+#convo-drop .convo-foot { padding: 4px 4px 0; }
+
+/* ===== One-line top strip ===== */
+#tabbar { align-items: center; gap: 6px; height: 40px; min-height: 40px; padding: 0 10px; flex: none; }
+#tabbar .spacer { flex: 1 1 auto; }
+#tabbar > .icon-btn { width: 28px; height: 28px; }
+#tabbar > .icon-btn .ic { width: 15px; height: 15px; }
+#tabbar > .icon-btn.active, body.split-open #btn-tasks { color: var(--accent); background: var(--bg3); border-color: var(--border); }
+#tabs { display: none; }
+#statusbar { display: none; }
+#qa-chat-slot { flex: 0 1 auto; min-width: 0; }
+#qa-chat-slot .chat-header { padding: 0; background: none; border: 0; margin: 0; min-width: 0; flex-wrap: nowrap; gap: 8px; }
+.chat-header .chat-title { font-size: 13px; font-weight: 600; color: var(--text); max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Folder, repo, branch and changes live in the Overview; only things that need attention stay. */
+.chat-header .chat-provider, .chat-header .chat-header-sep { display: none; }
+.chat-header .chat-project { display: inline-flex; gap: 6px; align-items: center; min-width: 0; }
+.chat-header .chat-project .proj-chip:not(.sandbox):not(.mem-pending-chip) { display: none; }
+/* A narrow window cannot hold sidebar, chat, tool panel and Overview at once:
+   the sidebar steps aside while the tool panel is open. */
+@media (max-width: 1240px) { body.split-open #sidebar { display: none; } }

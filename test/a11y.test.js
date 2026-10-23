@@ -223,7 +223,7 @@ describe('conversation rows are keyboard-operable (#53)', () => {
     });
     await flush(10);
     h.window.switchView('conversations');
-    h.window.document.querySelector('#btn-convo-drop').dispatchEvent(new h.window.MouseEvent('click', { bubbles: true }));
+    h.window.toggleConversations(true);
     await flush(10);
     return h;
   }
