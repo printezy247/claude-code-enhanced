@@ -300,7 +300,6 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 @keyframes pulse { 50% { opacity: .35; } }
 .chat-provider { font-weight: 600; color: var(--text); }
 .chat-header-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; }
-.chat-hlabel { color: var(--muted); margin-left: 4px; }
 .chat-model, .chat-mode {
   width: auto; background: var(--bg3); border: 1px solid var(--border);
   border-radius: 7px; padding: 3px 6px; font-size: 12px; color: var(--text);
@@ -452,11 +451,6 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 }
 .perm-card.plan { border-color: var(--accent); background: var(--accent-soft); }
 .perm-head { display: flex; align-items: center; gap: 9px; font-size: 13.5px; margin-bottom: 8px; }
-.perm-input {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-  font-size: 11.5px; padding: 9px 11px; max-height: 180px; overflow: auto; margin-bottom: 10px;
-  white-space: pre-wrap; word-break: break-word;
-}
 .perm-plan { max-height: 260px; overflow: auto; font-size: 13px; margin-bottom: 10px; }
 .perm-actions { display: flex; gap: 8px; }
 .perm-countdown { margin-left: auto; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
@@ -592,15 +586,6 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .think-pill .ic { vertical-align: -2px; color: var(--accent); opacity: .8; }
 .thinking-block[open] .think-body { border-top: 1px dashed var(--border); margin-top: 6px; padding-top: 8px; max-height: 240px; overflow: auto; }
 
-/* workflows bar */
-.chat-workflows { display: flex; gap: 6px; align-items: center; overflow-x: auto; padding-bottom: 6px; scrollbar-width: none; }
-.wf-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .07em; flex: none; }
-.wf-chip {
-  flex: none; background: var(--bg2); border: 1px solid var(--border); color: var(--muted);
-  border-radius: 999px; padding: 3px 11px; font-size: 11.5px; cursor: pointer;
-}
-.wf-chip:hover { color: var(--text); border-color: var(--accent); background: var(--accent-soft); }
-
 /* nested subagent timelines */
 .nested-agents { border-left: 2px solid var(--accent-line); margin: 6px 0 8px; padding-left: 10px; }
 .nested-label { font-size: 11px; color: var(--accent-hi); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 4px; }
@@ -614,7 +599,6 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .chat-perm-slot { display: flex; flex-direction: column; align-items: center; }
 .chat-perm-slot .perm-card { width: 100%; max-width: 830px; }
 .chat-composer { display: flex; flex-direction: column; align-items: center; }
-.chat-composer > .chat-workflows,
 .chat-composer > .chat-input-row,
 .chat-composer > .chat-statusline { width: 100%; max-width: 830px; }
 .chat-composer > .chat-slash {
@@ -658,10 +642,6 @@ pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
 .ctx-guide .hint { color: var(--text); background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 
 /* unified history list */
-.hist-toolbar { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
-.hist-toolbar .skills-search { flex: 1; margin: 0; }
-.hist-section { margin-bottom: 18px; }
-.hist-section h5 { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 10px 0 6px; }
 .hist-row {
   display: flex; align-items: center; gap: 10px;
   border: 1px solid var(--border); border-radius: 10px; background: var(--bg2);
@@ -671,7 +651,6 @@ pre:hover > .pre-copy, pre:focus-within > .pre-copy { opacity: 1; }
 .hist-main { flex: 1; min-width: 0; }
 .hist-preview { font-size: 13px; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hist-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
-.hist-actions { display: flex; gap: 6px; flex: none; }
 
 /* plan viewer drawer */
 .chat-plan-viewer {
@@ -967,9 +946,6 @@ body.split-open #splitpane { display: flex; }
   background: var(--bg3); color: var(--text); border: 1px solid var(--border);
   border-radius: 7px; padding: 4px 8px; font-size: 12px; max-width: 240px;
 }
-.chat-model-foot { flex: 0 1 220px; max-width: 220px; min-width: 120px; }
-.chat-mode-foot { flex: 0 0 auto; width: 130px; }
-.chat-style-foot { flex: 0 0 auto; width: 120px; }
 /* Find-in-transcript bar (#feat-find) */
 .chat-find {
   position: absolute; top: 52px; right: 18px; z-index: 30; display: flex; gap: 6px; align-items: center;
@@ -984,8 +960,6 @@ body.split-open #splitpane { display: flex; }
   border-radius: 7px; padding: 4px 9px; font-size: 12px; cursor: pointer;
 }
 .chat-footbar .chat-effort:hover { color: var(--text); border-color: var(--accent); }
-.foot-spacer { flex: 1; }
-.foot-hint { color: var(--muted); font-size: 11px; white-space: nowrap; flex: 0 0 auto; }
 .chat-attach {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 7px; width: 28px; height: 28px; cursor: pointer; font-size: 14px;
@@ -1161,7 +1135,6 @@ svg[data-icon], [data-icon] { display: inline-flex; align-items: center; justify
 
 .tool-ico { display: inline-flex; align-items: center; justify-content: center; width: 16px; color: var(--muted); }
 .chat-menu-ico { display: inline-flex; color: var(--muted); }
-.wf-chip [data-icon] { margin-right: 4px; }
 .chat-empty-icon { display: inline-flex; color: var(--accent); }
 .chat-empty-icon svg { width: 30px; height: 30px; stroke-width: 2.2; }
 .mcp-chip { display: inline-flex; align-items: center; gap: 5px; }
@@ -1293,9 +1266,10 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 @keyframes cce-breathe { 50% { transform: scale(.82); opacity: .7; } }
 .chat-send .ic, .chat-attach .ic { width: 16px; height: 16px; }
 
-/* ---- footer: workflows · model · mode · effort · style · context ---- */
-.chat-footbar { gap: 6px; padding: 6px 0 2px; border-top: none; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-.chat-footbar::-webkit-scrollbar { display: none; }
+/* ---- footer: workflows · fast build · model · mode · effort · think · context ---- */
+/* Wraps onto a second row instead of scrolling sideways, so no control is clipped. */
+.chat-footbar { gap: 6px; padding: 6px 0 2px; border-top: none; flex-wrap: wrap; row-gap: 6px; }
+.chat-footbar .chat-compact-btn { margin-left: auto; }
 .chat-footbar .foot-pick {
   height: var(--ctl-h); box-sizing: border-box; display: inline-flex; align-items: center; gap: 5px;
   background: var(--bg2); border: 1px solid var(--border); color: var(--text);
@@ -1306,7 +1280,6 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .chat-footbar select.foot-pick { padding: 0 6px; }
 .chat-footbar .chat-model-foot { flex: 0 1 220px; min-width: 120px; max-width: 220px; }
 .chat-footbar .chat-mode-foot { width: 120px; flex: none; }
-.chat-footbar .chat-style-foot { width: 110px; flex: none; }
 .chat-footbar .chat-effort { color: var(--muted); }
 .chat-footbar .caret .ic { width: 11px; height: 11px; opacity: .7; }
 .chat-footbar .ic { width: 14px; height: 14px; }
@@ -1463,16 +1436,11 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .tc-badge:empty { display: none; }
 .tc-badge.warn { color: var(--warn); }
 .tc-badge.busy { color: var(--accent); }
-.tc-caret { display: inline-flex; color: var(--muted); transition: transform .15s; }
-.task-card.closed .tc-caret { transform: rotate(-90deg); }
 .task-card-body { padding: 0 12px 10px; }
 .task-card.closed .task-card-body { display: none; }
 .kv-row { display: flex; gap: 8px; font-size: 12px; line-height: 1.7; }
 .kv-k { width: 70px; flex: none; color: var(--muted); }
 .kv-v { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctx-top { display: flex; align-items: center; gap: 10px; }
-.ctx-cat .ctx-mini { flex: 0 0 60px; height: 4px; border-radius: 2px; background: var(--bg4); overflow: hidden; margin-left: auto; }
-.ctx-cat .ctx-mini i { display: block; height: 100%; background: var(--accent); }
 .ctx-cat .ctx-tokens { margin-left: 6px; min-width: 52px; text-align: right; }
 .rail-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .rail-filter { width: 100%; background: var(--bg); border: 1px solid var(--border); border-radius: 7px;
@@ -1516,7 +1484,6 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .task-rows { gap: 4px; }
 .conn-row { gap: 10px; padding: 4px 0; }
 .conn-row .ctx-tokens { font-size: 11.5px; }
-.ctx-top { gap: 14px; padding: 2px 0 4px; }
 .task-bar { height: 4px; margin: 6px 0 10px; }
 .rail-actions { margin-top: 12px; }
 /* Tasks: live step + round checklist markers, desktop style */

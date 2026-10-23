@@ -260,8 +260,6 @@ module.exports = {
   disabledAgents,
   setSkill,
   setAgent,
-  setSkillDisabled: setSkill,
-  setAgentDisabled: setAgent,
   isSkillEnabled,
   isAgentEnabled,
   filterSkills,

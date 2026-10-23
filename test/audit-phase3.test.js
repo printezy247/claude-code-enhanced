@@ -127,6 +127,18 @@ describe('loop guard', () => {
     const calls = [bash('ls'), { name: 'Read', input: { file_path: '/a' } }, bash('npm test'), { name: 'Edit', input: { file_path: '/a', old_string: 'x' } }, bash('echo done'), bash('git status')];
     expect(calls.map((c) => g.record(c).tripped)).not.toContain(true);
   });
+  it('does not trip on a test, edit, test, edit, test fix cycle', () => {
+    const g = createLoopGuard();
+    const edit = (n) => ({ name: 'Edit', input: { file_path: '/a', old_string: 'x' + n } });
+    const calls = [bash('npm test'), edit(1), bash('npm test'), edit(2), bash('npm test'), edit(3), bash('npm test')];
+    expect(calls.map((c) => g.record(c).tripped)).not.toContain(true);
+  });
+  it('never stops a long run of different reads (investigating is not looping)', () => {
+    const g = createLoopGuard();
+    const trips = [];
+    for (let i = 0; i < 30; i++) trips.push(g.record({ name: i % 2 ? 'Grep' : 'Read', input: { file_path: '/f' + i } }).tripped);
+    expect(trips).not.toContain(true);
+  });
   it('reset clears the history', () => {
     const g = createLoopGuard();
     g.record(bash('echo 1')); g.record(bash('echo 2')); g.record(bash('echo 3')); g.record(bash('echo 4'));

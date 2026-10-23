@@ -77,8 +77,6 @@ function isOutsideDirs(filePath, allowedDirs) {
 // here so the policy data has a single home that tools.js/chats.js can read.
 const ALWAYS_ASK_TOOLS = new Set();
 const ALWAYS_DENY_TOOLS = new Set();
-const ALWAYS_ASK = [];
-const ALWAYS_DENY = [];
 
 // The connector policy states. The desktop has four (allow / ask /
 // ask-session / blocked); CCE's naming is 'always_*'. 'always_ask_session'
@@ -145,7 +143,7 @@ module.exports = {
   check, EXTRAS, ALT,
   // policy helpers
   WRITE_TOOLS, WRITE_TOOLS_LIST, isVmPath, targetFilePath, isOutsideDirs,
-  ALWAYS_ASK_TOOLS, ALWAYS_DENY_TOOLS, ALWAYS_ASK, ALWAYS_DENY,
+  ALWAYS_ASK_TOOLS, ALWAYS_DENY_TOOLS,
   connectorPolicy, MESSAGES,
   POLICY_STATES, SDK_POLICY, isConnectorTool, isDestructiveTool,
 };

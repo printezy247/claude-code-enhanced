@@ -28,14 +28,6 @@ function openaiBase(baseUrl) {
 const RETRY_STATUS = new Set([429, 502, 504]);
 const providerCooldown = new Map();
 
-function isCoolingDown(url) {
-  try {
-    const host = new URL(url).host;
-    const exp = providerCooldown.get(host);
-    return exp ? exp > Date.now() : false;
-  } catch { return false; }
-}
-
 async function fetchUpstream(url, opts, signal, tries = 2) {
   // Callers pass the abort signal either positionally or inside opts —
   // honour both, or interrupts never reach the upstream (leaked turns).
@@ -575,7 +567,7 @@ async function listModels(prov) {
 
 module.exports = {
   callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream,
-  providerCooldown, isCoolingDown,
+  providerCooldown,
   buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink,
   responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE, responsesChunks, geminiChunks,
 };
