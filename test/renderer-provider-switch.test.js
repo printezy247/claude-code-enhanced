@@ -23,18 +23,36 @@ let h;
 beforeEach(() => { h = null; });
 
 describe('provider toggle in the model dropdown (#feat-provider-toggle)', () => {
-  it('lists every saved provider as a switch option', async () => {
+  it('lists every OTHER saved provider as a group of its own models', async () => {
     h = loadRenderer({ ipc: ipcFor() });
     await flush();
     const chat = h.window.Chat.chats.get('c1');
-    // The chat was created before providers:all resolved; re-picking the
-    // current provider rebuilds the dropdown from the now-loaded list.
+    // The chat was created before providers:all resolved; the legacy
+    // "switch to this provider" value still rebuilds the dropdown.
+    const o = h.window.document.createElement('option');
+    o.value = '__prov:p1'; chat.modelSel.appendChild(o);
     chat.modelSel.value = '__prov:p1';
     chat.modelSel.dispatchEvent(new h.window.Event('change'));
     await flush();
-    const vals = [...chat.modelSel.options].map(o => o.value);
-    expect(vals).toContain('__prov:p1');
-    expect(vals).toContain('__prov:p2');
+    const vals = [...chat.modelSel.options].map(x => x.value);
+    expect(vals).toContain('__pm:p2\u0001m2');
+    expect(vals.some(v => v.startsWith('__pm:p1'))).toBe(false);   // the current provider is not a switch target
+    const label = [...chat.modelSel.options].find(x => x.value === '__pm:p2\u0001m2').textContent;
+    expect(label).toContain('m2');
+    expect(label).toContain('Provider Two');
+  });
+
+  it('asks the main process for the chosen provider AND model', async () => {
+    h = loadRenderer({
+      ipc: ipcFor({ 'chat:set-provider': () => ({ ok: true, id: 'c9', provider: { ...P2 }, model: 'm2', permissionMode: 'acceptEdits' }) }),
+    });
+    await flush();
+    const chat = h.window.Chat.chats.get('c1');
+    chat.modelSel.value = '__pm:p2\u0001m2';
+    chat.modelSel.dispatchEvent(new h.window.Event('change'));
+    await flush(6);
+    const call = h.calls.find(c => c.channel === 'chat:set-provider');
+    expect(call.payload).toEqual({ id: 'c1', uid: 'p2', model: 'm2' });
   });
 
   it('re-keys the tab onto the new chat id after switching', async () => {
@@ -49,7 +67,7 @@ describe('provider toggle in the model dropdown (#feat-provider-toggle)', () => 
     });
     await flush();
     const chat = h.window.Chat.chats.get('c1');
-    chat.modelSel.value = '__prov:p2';
+    chat.modelSel.value = '__pm:p2\u0001m2';
     chat.modelSel.dispatchEvent(new h.window.Event('change'));
     await flush(6);
     expect(h.window.Chat.chats.has('c1')).toBe(false);
@@ -71,7 +89,7 @@ describe('provider toggle in the model dropdown (#feat-provider-toggle)', () => 
     });
     await flush();
     const chat = h.window.Chat.chats.get('c1');
-    chat.modelSel.value = '__prov:p2';
+    chat.modelSel.value = '__pm:p2\u0001m2';
     chat.modelSel.dispatchEvent(new h.window.Event('change'));
     await flush(6);
     expect(h.window.Chat.chats.get('c1')).toBe(chat);
@@ -93,7 +111,7 @@ describe('tab lifecycle after a provider switch (stale-closure fix)', () => {
     });
     await flush();
     const chat = h.window.Chat.chats.get('c1');
-    chat.modelSel.value = '__prov:p2';
+    chat.modelSel.value = '__pm:p2\u0001m2';
     chat.modelSel.dispatchEvent(new h.window.Event('change'));
     await flush(6);
     expect(chat.id).toBe('c9');

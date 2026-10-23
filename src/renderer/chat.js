@@ -181,12 +181,10 @@ const Chat = (() => {
         </div>
         <div class="chat-footbar">
           <button class="foot-pick chat-wf-btn" title="Workflows — multi-step task flows" aria-haspopup="menu"><span data-icon="flow"></span><span>workflows</span><span class="caret" data-icon="chevron"></span></button>
-          <button class="foot-pick chat-fastbuild-btn" title="Direct action: build immediately without endless investigation"><span data-icon="bolt"></span><span>fast build</span></button>
-          <select class="foot-pick chat-model-foot" title="Model"></select>
+          <select class="foot-pick chat-model-foot" title="Model (switching provider keeps this conversation)"></select>
           <select class="foot-pick chat-mode-foot" title="Permission mode"></select>
-          <button class="foot-pick chat-effort" title="Reasoning effort (click to cycle)">effort: auto</button>
-          <button class="foot-pick chat-think-budget" title="Thinking token budget (click to cycle: auto → 1k → 2k → 4k → 8k → off)">think: auto</button>
-          <button class="foot-pick chat-compact-btn" title="Compact this conversation in place — earlier turns are summarized, the chat keeps going"><span class="ctx-ring" style="--p:0"></span><span class="ctx-pct">ctx</span><span>compact</span></button>
+          <select class="foot-pick chat-effort hidden" title="Reasoning effort (only the levels this model supports)" aria-label="Reasoning effort"></select>
+          <button class="foot-pick chat-compact-btn" title="Compact this conversation in place — earlier turns are summarized, the chat keeps going"><span class="ctx-ring" style="--p:0"></span><span class="ctx-pct">ctx</span></button>
         </div>
         <div class="chat-statusline"><span class="sl-left">ready — the session starts with your first message</span><span class="sl-right"></span></div>
       </div>`;
@@ -199,7 +197,7 @@ const Chat = (() => {
 
     const chat = {
       follow: true,   // keep the view pinned to new output until the user scrolls up
-      id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider),
+      id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider, res.autoPolicy), autoPolicy: !!res.autoPolicy,
       pane, msgs: pane.querySelector('.chat-msgs'), composer: pane.querySelector('.chat-input'),
       sendBtn: pane.querySelector('.chat-send'), stopBtn: pane.querySelector('.chat-stop'),
       statusLine: pane.querySelector('.chat-statusline .sl-left'),
@@ -209,8 +207,6 @@ const Chat = (() => {
       headerEl: pane.querySelector('.chat-header'),
       modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
-      thinkBudgetBtn: pane.querySelector('.chat-think-budget'),
-      fastBuildBtn: pane.querySelector('.chat-fastbuild-btn'),
       // Element ref and queue *counter* must not share a name: showQueued used
       // to overwrite the element with a number and the next send threw.
       queuedEl: pane.querySelector('.chat-queued'),
@@ -312,8 +308,10 @@ const Chat = (() => {
     fillModelSelector(chat);
     fillModeSelect(chat.modeSel, chat.provider);
     chat.modeSel.value = chat.mode;
+    refreshEffort(chat);
     chat.modelSel.addEventListener('change', async () => {
       const v = chat.modelSel.value;
+      if (v.startsWith('__pm:')) { const [uid, m] = v.slice(5).split('\u0001'); await switchProvider(chat, uid, m || ''); return; }
       if (v.startsWith('__prov:')) { await switchProvider(chat, v.slice(7)); return; }
       if (v === '__custom') { openCustomModel(chat); return; }
       await switchModel(chat, v);
@@ -323,20 +321,15 @@ const Chat = (() => {
       const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode: want });
       if (r.ok) {
         // The main process is the authority: it may fall back (auto → accept edits on a third-party provider).
-        chat.mode = uiMode(r.permissionMode || want, chat.provider);
+        chat.autoPolicy = !!r.autoPolicy;
+        chat.mode = uiMode(r.permissionMode || want, chat.provider, chat.autoPolicy);
         chat.modeSel.value = chat.mode;
         if (chat.mode !== want) toast('auto needs Anthropic’s own API — using ' + modeLabel(chat.mode) + ' instead', 'err');
         else toast('Mode → ' + modeLabel(chat.mode), 'ok');
         setStatusLine(chat);
       } else { toast(r.error, 'err'); chat.modeSel.value = chat.mode; }
     });
-    chat.effortBtn.addEventListener('click', () => cycleEffort(chat));
-    if (chat.thinkBudgetBtn) chat.thinkBudgetBtn.addEventListener('click', () => cycleThinkingBudget(chat));
-    if (chat.fastBuildBtn) {
-      chat.fastBuildBtn.addEventListener('click', () => {
-        runWorkflow(chat, send, 'fastbuild');
-      });
-    }
+    chat.effortBtn.addEventListener('change', () => setEffort(chat, chat.effortBtn.value));
     chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id: chat.id }));
     // Header overflow menu. 13 buttons wrapped onto three rows; everything that
     // is not model/mode/stop now lives behind one "⋯". #33
@@ -770,29 +763,50 @@ const Chat = (() => {
 
   /* ---------------- composer extras (#32) ---------------- */
 
-  const EFFORTS = ['', 'low', 'medium', 'high', 'xhigh', 'max'];
-  async function cycleEffort(chat) {
-    const cur = chat.effort || '';
-    const next = EFFORTS[(EFFORTS.indexOf(cur) + 1) % EFFORTS.length];
-    chat.effort = next;
-    chat.effortBtn.textContent = 'effort: ' + (next || 'auto');
-    const r = await ccx.invoke('chat:effort', { id: chat.id, effort: next });
-    if (!r || !r.ok) toast((r && r.error) || 'effort not supported here', 'err');
-    else if (next) toast('effort → ' + next, 'ok');
+  /**
+   * Effort is a dropdown listing only what the model accepts (OpenCode's
+   * "variants"): a model with no effort setting shows no picker at all, and a
+   * model with low/medium/high shows just those. Re-run after every model or
+   * provider change.
+   */
+  async function refreshEffort(chat) {
+    const sel = chat.effortBtn;
+    if (!sel) return;
+    let levels = [];
+    try {
+      const r = await ccx.invoke('chat:effort-levels', { id: chat.id });
+      if (r && r.ok && Array.isArray(r.levels)) levels = r.levels;
+    } catch { /* no levels: hide the picker */ }
+    chat.effortLevels = levels;
+    sel.innerHTML = '';
+    if (!levels.length) {
+      sel.classList.add('hidden');
+      if (chat.effort) { chat.effort = ''; ccx.invoke('chat:effort', { id: chat.id, effort: '' }).catch(() => {}); }
+      return;
+    }
+    for (const v of ['', ...levels]) {
+      const o = el('option', '', 'effort: ' + (v || 'auto'));
+      o.value = v;
+      sel.appendChild(o);
+    }
+    if (chat.effort && !levels.includes(chat.effort)) {
+      // The new model does not have the level the old one was on.
+      chat.effort = '';
+      ccx.invoke('chat:effort', { id: chat.id, effort: '' }).catch(() => {});
+    }
+    sel.value = chat.effort || '';
+    sel.classList.remove('hidden');
   }
 
-  const THINK_BUDGETS = [0, 1024, 2048, 4096, 8192, -1];
-  async function cycleThinkingBudget(chat) {
-    const cur = chat.thinkBudget !== undefined ? chat.thinkBudget : 0;
-    const nextIdx = (THINK_BUDGETS.indexOf(cur) + 1) % THINK_BUDGETS.length;
-    const next = THINK_BUDGETS[nextIdx];
-    chat.thinkBudget = next;
-    const label = next === 0 ? 'auto' : next === -1 ? 'off' : (next / 1024) + 'k';
-    if (chat.thinkBudgetBtn) chat.thinkBudgetBtn.textContent = 'think: ' + label;
-    const thinkingVal = next === -1 ? 0 : next;
-    const r = await ccx.invoke('chat:effort', { id: chat.id, thinking: thinkingVal });
-    if (!r || !r.ok) toast((r && r.error) || 'thinking budget not supported here', 'err');
-    else toast('Thinking budget → ' + label, 'ok');
+  async function setEffort(chat, next) {
+    const prev = chat.effort || '';
+    chat.effort = next || '';
+    const r = await ccx.invoke('chat:effort', { id: chat.id, effort: chat.effort });
+    if (!r || !r.ok) {
+      toast((r && r.error) || 'effort not supported here', 'err');
+      chat.effort = prev;
+      if (chat.effortBtn) chat.effortBtn.value = prev;
+    } else if (chat.effort) toast('effort → ' + chat.effort, 'ok');
   }
 
   /**
@@ -1021,16 +1035,21 @@ const Chat = (() => {
     sel.innerHTML = '';
     const add = (value, label) => { const o = el('option', '', label); o.value = value; sel.appendChild(o); };
     const p = chat.provider;
-    // Provider switcher: every saved provider is a choice in the same dropdown;
-    // picking one recreates the session on that provider. #feat-provider-toggle
+    // One picker for provider AND model (like OpenCode): every OTHER saved
+    // provider is a group of its own models, and choosing one switches this
+    // chat onto that provider and model, keeping the conversation.
     const provs = (state && state.providers && state.providers.instances) || [];
-    if (provs.length > 1) {
+    const modelsOf = (pr) => [...new Set([pr.model, ...(pr.whitelist && pr.whitelist.length ? pr.whitelist : (pr.models || []))]
+      .map((m) => (m && typeof m === 'object' ? (m.id || m.name) : m)).filter(Boolean))].slice(0, 40);
+    for (const pr of provs) {
+      if (p && pr.uid === p.uid) continue;
       const pg = document.createElement('optgroup');
-      pg.label = 'switch provider';
-      for (const pr of provs) {
-        const cur = p && pr.uid === p.uid;
-        const o = el('option', '', (cur ? '✓ ' : '') + (pr.name || pr.uid));
-        o.value = '__prov:' + pr.uid;
+      pg.label = (pr.name || pr.uid) + ' — switch provider';
+      const list = modelsOf(pr);
+      if (!list.length) list.push('');
+      for (const m of list) {
+        const o = el('option', '', (m || 'provider default') + '  ·  ' + basename(pr.name || pr.uid));
+        o.value = '__pm:' + pr.uid + '\u0001' + m;
         pg.appendChild(o);
       }
       sel.appendChild(pg);
@@ -1043,7 +1062,7 @@ const Chat = (() => {
       const own = [...new Set([p.model, ...(p.whitelist && p.whitelist.length ? p.whitelist : (p.models || [])), chat.model]
         .filter(Boolean))];
       add('', p.model ? 'provider default · ' + p.model : 'provider default (none set)');
-      own.forEach(m => add(m, m));
+      own.forEach(m => add(m, m + '  ·  ' + basename(p.name)));
       add('__custom', 'Custom…');
       if (chat.model && own.includes(chat.model)) sel.value = chat.model;
       return;
@@ -1088,6 +1107,7 @@ const Chat = (() => {
         chat.model = r.model || model;
         if (r.model && r.model !== model) toast('model name corrected → ' + r.model);
         setStatusLine(chat);
+        refreshEffort(chat);
         toast('Model → ' + (chat.model || 'provider default'), 'ok');
       } else {
         const e = String(r.error || '');
@@ -1106,12 +1126,12 @@ const Chat = (() => {
   // engine session on the target provider and resumes the conversation, which
   // means a NEW chat id — this tab re-keys itself onto it so nothing else in
   // the app (tab registry, statusbar, event routing) notices. #feat-provider-toggle
-  async function switchProvider(chat, uid) {
+  async function switchProvider(chat, uid, model) {
     if (chat.provider && chat.provider.uid === uid) { fillModelSelector(chat); return; }
     const name = ((state.providers.instances || []).find(p => p.uid === uid) || {}).name || uid;
     toast('switching provider → ' + name + '…');
     let r = null;
-    try { r = await ccx.invoke('chat:set-provider', { id: chat.id, uid }); }
+    try { r = await ccx.invoke('chat:set-provider', { id: chat.id, uid, model: model || '' }); }
     catch (e) { r = { ok: false, error: String(e.message || e) }; }
     if (!r || !r.ok) {
       toast((r && r.error) || 'provider switch failed', 'err');
@@ -1126,7 +1146,8 @@ const Chat = (() => {
     if (window.rekeyTab) window.rekeyTab(oldId, r.id);
     chat.provider = r.provider;
     chat.model = r.model || '';
-    chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider);
+    chat.autoPolicy = !!r.autoPolicy;
+    chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider, chat.autoPolicy);
     // The old session's exit event can land during the swap and mark the tab
     // dead — the chat is alive again on the new engine.
     chat.alive = true;
@@ -1139,6 +1160,8 @@ const Chat = (() => {
     chat.modeSel.value = chat.mode;
     chat.modelSel.value = [...chat.modelSel.options].some(o => o.value === chat.model) ? chat.model : '';
     setStatusLine(chat);
+    chat.effort = '';
+    refreshEffort(chat);
     discoverModels(chat);
     toast('Provider → ' + chat.provider.name, 'ok');
   }
@@ -2212,6 +2235,7 @@ const Chat = (() => {
       ['plan', 'map', 'Plan feature', 'plan mode — no edits'],
     ]],
     ['Build', 'wf-c-build', [
+      ['fastbuild', 'bolt', 'Fast build', 'act now, no endless investigation'],
       ['build', 'bolt', 'Build feature', 'context → plan → build → review'],
       ['bugfix', 'bug', 'Fix a bug', 'reproduce, root cause, regression test'],
       ['refactor', 'wrench', 'Refactor', 'behaviour stays the same'],
@@ -3056,6 +3080,9 @@ const Chat = (() => {
         ? (keyProvider ? 'provider key' : 'no auth — /login in a terminal tab')
         : auth;
       chat.statusRight.textContent = (chat.init.model || '') + ' · ' + mAuth;
+      // The row is only for a problem: model, mode, cost and turns live in the footbar and Overview.
+      const row = chat.statusLine.closest('.chat-statusline');
+      if (row) row.classList.toggle('has-warn', /no auth/.test(mAuth));
       chat.providerEl.textContent = chat.provider ? basename(chat.provider.name) : 'default env';
     }
   }
@@ -3347,7 +3374,7 @@ const Chat = (() => {
   // session_state_changed: permission mode or model changed by the engine.
   function onSessionState(chat, msg) {
     const s = msg.state || msg;
-    const engineMode = s.permission_mode ? uiMode(s.permission_mode, chat.provider) : null;
+    const engineMode = s.permission_mode ? uiMode(s.permission_mode, chat.provider, chat.autoPolicy) : null;
     if (engineMode && engineMode !== chat.mode) {
       chat.mode = engineMode;
       chat.modeSel.value = engineMode;
@@ -4441,7 +4468,8 @@ const Chat = (() => {
     const setMode = async (mode) => {
       const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode });
       if (r.ok) {
-        chat.mode = uiMode(r.permissionMode || mode, chat.provider);
+        chat.autoPolicy = !!r.autoPolicy;
+        chat.mode = uiMode(r.permissionMode || mode, chat.provider, chat.autoPolicy);
         chat.modeSel.value = chat.mode;
         toast('Mode → ' + modeLabel(chat.mode), 'ok');
       }
@@ -4465,8 +4493,7 @@ const Chat = (() => {
     };
     if (toolName === 'ExitPlanMode') {
       actions.appendChild(mk('✓ approve + accept edits', 'primary', 'allow', 'acceptEdits'));
-      // auto is only offered where its classifier can work (Anthropic's own API).
-      if (modeAutoOk(chat.provider)) actions.appendChild(mk('✓ approve + auto', '', 'allow', 'auto'));
+      actions.appendChild(mk('✓ approve + auto', '', 'allow', 'auto'));
       // Keep planning, with a way to say why: the deny message reaches the
       // model, so the desktop app's "keep planning" is really feedback. #40
       const feedback = el('input', 'perm-feedback');

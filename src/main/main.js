@@ -42,6 +42,7 @@ const workers = require('./workers');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
 const { startProxy, clearLastGoodModel } = require('./proxy');
+const { effortLevels } = require('./modelcontext');
 // Per-launch secret the translator proxy requires on every request. The proxy
 // attaches real provider API keys, so without it any local process could spend
 // them. See issue #8.
@@ -1585,7 +1586,7 @@ function registerIpc() {
   // Switch a live chat to another saved provider. The engine reads its env at
   // spawn, so the session cannot be re-pointed mid-chat — recreate on the
   // target provider and resume the same conversation. #feat-provider-toggle
-  handle('chat:set-provider', owned('chats', async ({ id, uid }, e) => {
+  handle('chat:set-provider', owned('chats', async ({ id, uid, model: wantModel }, e) => {
     const chat = chats.chats.get(id);
     if (!chat) return { ok: false, error: 'chat not found' };
     if (chat.busy) return { ok: false, error: 'a turn is running — stop it before switching provider' };
@@ -1601,8 +1602,10 @@ function registerIpc() {
         ...store.settings,
         ...(Array.isArray(next.leanTools) && next.leanTools.length ? { leanTools: next.leanTools } : {}),
       },
-      model: next.model || '',
-      permissionMode: chat.permissionMode,
+      model: sanitizeModel(wantModel || '') || next.model || '',
+      // The mode the user picked, so "auto" survives the switch (the engine
+      // mode alone cannot say whether CCE's auto policy was on).
+      permissionMode: chat.autoPolicy ? 'auto' : chat.permissionMode,
       resume,
       claudePath: (store.settings.claudePath || '').trim() || undefined,
       anthropicBaseUrl: usesProxy(next) ? proxyBaseUrl(next) : undefined,
@@ -1619,7 +1622,15 @@ function registerIpc() {
       provider: providers.publicInstance(next),
       model: created.model || next.model || '',
       permissionMode: created.permissionMode || chat.permissionMode,
+      autoPolicy: !!created.autoPolicy,
     };
+  }));
+  // Effort levels the chat's current model accepts (none = hide the picker).
+  handle('chat:effort-levels', owned('chats', async ({ id }) => {
+    const c = chats.chats.get(id);
+    if (!c) throw new Error('chat not found');
+    const prov = c.providerInstance || null;
+    return { levels: effortLevels(prov, c.model || (prov && prov.model) || ''), current: c.effort || '' };
   }));
   handle('chat:set-mode', owned('chats', async ({ id, mode }) => chats.setMode(id, mode)));
   // Per-chat reasoning effort and thinking budget. The settings existed in

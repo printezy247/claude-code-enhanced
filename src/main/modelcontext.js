@@ -103,6 +103,26 @@ function modelCaps(provider, model) {
   };
 }
 
+/**
+ * Reasoning-effort levels a model accepts, like OpenCode's per-model
+ * "variants": empty means the model has no effort setting and the picker is
+ * hidden. A provider can pin its own list with `effortLevels`.
+ */
+const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'];
+function effortLevels(provider, model) {
+  const own = provider && Array.isArray(provider.effortLevels)
+    ? provider.effortLevels.map(String).filter((e) => EFFORT_ORDER.includes(e)) : null;
+  if (own && own.length) return own;
+  const caps = modelCaps(provider, model);
+  if (caps.reasoning === false) return [];
+  const base = String((provider && provider.baseUrl) || '');
+  if (!base || /(^|\.)anthropic\.com/i.test(base)) return ['low', 'medium', 'high', 'xhigh', 'max'];
+  if (/generativelanguage\.googleapis\.com/i.test(base) || (provider && provider.protocol === 'gemini')) return ['low', 'high'];
+  // Anything else: only a model the catalog marks as reasoning has levels.
+  // A local or uncatalogued model reports nothing, so the control stays away.
+  return caps.reasoning === true ? ['low', 'medium', 'high'] : [];
+}
+
 /** Probe provider's /models endpoint for context window (#A4) */
 async function probeContextWindow(provider, model) {
   const id = String(model || (provider && provider.model) || '').trim();
@@ -139,4 +159,4 @@ async function probeContextWindow(provider, model) {
   }
 }
 
-module.exports = { modelContext, modelCaps, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };
+module.exports = { modelContext, modelCaps, effortLevels, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };

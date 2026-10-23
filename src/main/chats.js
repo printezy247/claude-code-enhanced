@@ -61,6 +61,7 @@ const isOutsideDirs = toolPolicy.isOutsideDirs;
 
 /** Chat models are assumed to have this window unless told otherwise. */
 const { ENGINE_DEFAULT_WINDOW } = require('./modelcontext');
+const autopolicy = require('./autopolicy');
 
 /**
  * Engine settings that shrink every request on a translated provider, where
@@ -367,6 +368,7 @@ class ChatManager extends EventEmitter {
     const id = 'c' + this.nextId++;
     const dir = (cwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
     const effMode = normalizeMode(permissionMode, providerInstance, yolo);
+    const autoPolicy0 = wantsAutoPolicy(permissionMode, providerInstance, yolo);
 
     // Streaming-input generator: stays open so every composer send feeds the
     // same CLI process (turns share session state, like the desktop app).
@@ -675,6 +677,11 @@ class ChatManager extends EventEmitter {
       if (!alwaysAsk && (effMode === 'bypassPermissions' || !!yolo)) {
         return { behavior: 'allow' };
       }
+      // CCE's auto policy (non-Anthropic providers): approve what is plainly safe.
+      if (!alwaysAsk) {
+        const live = this.chats.get(id);
+        if (live && live.autoPolicy && autopolicy.autoAllows(toolName, input)) return { behavior: 'allow' };
+      }
       if (!alwaysAsk && ['WebFetch', 'WebSearch'].includes(toolName)) {
         if (!settings || !Array.isArray(settings.blockedTools) || !settings.blockedTools.includes(toolName)) {
           return { behavior: 'allow' };
@@ -765,7 +772,7 @@ class ChatManager extends EventEmitter {
     };
 
     const chat = {
-      id, cwd: dir, model: model || '', permissionMode: effMode,
+      id, cwd: dir, model: model || '', permissionMode: effMode, autoPolicy: autoPolicy0,
       busy: false, sessionId: null,
       provider: providerInstance ? providers.publicInstance(providerInstance) : null,
       providerInstance,
@@ -897,7 +904,7 @@ class ChatManager extends EventEmitter {
     })();
 
     return {
-      id, cwd: dir, model: chat.model, permissionMode: effMode,
+      id, cwd: dir, model: chat.model, permissionMode: effMode, autoPolicy: chat.autoPolicy,
       provider: chat.provider, sandbox: !!(settings && settings.sandbox && settings.sandbox.enabled),
       resumedFrom: (options.resume || null),
       isLean,
@@ -1169,7 +1176,8 @@ class ChatManager extends EventEmitter {
     const eff = normalizeMode(mode, chat.providerInstance);
     await chat.q.setPermissionMode(eff);
     chat.permissionMode = eff;
-    return { permissionMode: eff, changed: eff !== mode };
+    chat.autoPolicy = wantsAutoPolicy(mode, chat.providerInstance);
+    return { permissionMode: eff, autoPolicy: chat.autoPolicy, changed: eff !== mode && !chat.autoPolicy };
   }
 
   /** Engine-reported model list, for the picker. #39 */
@@ -1682,6 +1690,14 @@ const MODES = ['auto', 'acceptEdits', 'plan', 'bypassPermissions'];
 // complete live set on every change) while the rest are edges — the renderer
 // needs both to keep a running-task indicator honest. #48
 const TASK_SUBTYPES = ['task_started', 'task_updated', 'task_progress', 'task_notification', 'background_tasks_changed'];
+/**
+ * "auto" on a provider that is not Anthropic's API: the engine runs accept-edits
+ * and CCE's own policy (autopolicy.js) approves the safe commands.
+ */
+function wantsAutoPolicy(mode, providerInstance, yolo) {
+  return mode === 'auto' && !yolo && !!(providerInstance && providerInstance.baseUrl);
+}
+
 function normalizeMode(mode, providerInstance, yolo) {
   if (yolo) return 'bypassPermissions';
   let m = MODES.includes(mode) ? mode : 'acceptEdits';
@@ -1691,6 +1707,7 @@ function normalizeMode(mode, providerInstance, yolo) {
 
 module.exports = ChatManager;
 module.exports.normalizeMode = normalizeMode;
+module.exports.wantsAutoPolicy = wantsAutoPolicy;
 module.exports.MODES = MODES;
 module.exports.TASK_SUBTYPES = TASK_SUBTYPES;
 module.exports.transcriptItems = transcriptItems;

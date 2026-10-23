@@ -517,10 +517,12 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .chat-send:hover { filter: brightness(1.08); }
 .chat-send.busy { background: var(--bg4); color: var(--muted); cursor: not-allowed; }
 .chat-statusline {
-  display: flex; gap: 18px; font-family: var(--mono); font-size: 11px;
+  display: none; gap: 18px; font-family: var(--mono); font-size: 11px;
   color: var(--muted); padding: 6px 2px 2px; user-select: text;
 }
 .chat-statusline .sl-right { margin-left: auto; }
+/* Only shown for a problem (e.g. no auth); model, mode and cost live elsewhere. */
+.chat-statusline.has-warn { display: flex; color: var(--warn); }
 
 .chat-skills-panel {
   position: absolute; top: 46px; right: 16px; width: 420px; max-height: 70%;
@@ -1266,7 +1268,7 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 @keyframes cce-breathe { 50% { transform: scale(.82); opacity: .7; } }
 .chat-send .ic, .chat-attach .ic { width: 16px; height: 16px; }
 
-/* ---- footer: workflows · fast build · model · mode · effort · think · context ---- */
+/* ---- footer: workflows · model · mode · effort (only when the model has any) · context ring ---- */
 /* Wraps onto a second row instead of scrolling sideways, so no control is clipped. */
 .chat-footbar { gap: 6px; padding: 6px 0 2px; border-top: none; flex-wrap: wrap; row-gap: 6px; }
 .chat-footbar .chat-compact-btn { margin-left: auto; }
@@ -1281,6 +1283,8 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .chat-footbar .chat-model-foot { flex: 1 1 130px; min-width: 120px; max-width: 220px; }
 .chat-footbar .chat-mode-foot { width: 120px; flex: none; }
 .chat-footbar .chat-effort { color: var(--muted); }
+.chat-footbar .hidden { display: none; }
+.chat-footbar .chat-model-foot { flex: 1 1 160px; max-width: 300px; }
 .chat-footbar .caret .ic { width: 11px; height: 11px; opacity: .7; }
 .chat-footbar .ic { width: 14px; height: 14px; }
 .chat-wf-btn { color: var(--wf) !important; border-color: color-mix(in srgb, var(--wf) 45%, transparent) !important; background: var(--wf-soft) !important; }
