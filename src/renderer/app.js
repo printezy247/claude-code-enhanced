@@ -1258,6 +1258,17 @@ function renderTasks(target, cwd, only) {
       const row = el('li', st);
       row.appendChild(elIcon('span', 'task-mark', st === 'done' ? CCEIcons.svg('check', 12) : ''));
       row.appendChild(el('span', 'task-text', t.content));
+      // Click to mark a step done (or undo it); the model's next TodoWrite overwrites it.
+      row.tabIndex = 0;
+      row.setAttribute('role', 'checkbox');
+      row.setAttribute('aria-checked', st === 'done' ? 'true' : 'false');
+      row.title = st === 'done' ? 'Mark as not done' : 'Mark as done';
+      const flip = () => {
+        t.status = t.status === 'completed' ? 'pending' : 'completed';
+        renderTasks(target, cwd, 'tasks');
+      };
+      row.addEventListener('click', flip);
+      row.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); flip(); } });
       ol.appendChild(row);
     }
     tasks.inner.appendChild(ol);
@@ -1418,6 +1429,8 @@ function renderTasks(target, cwd, only) {
         const more = el('button', 'btn tiny ctx-more', ctxExpanded ? 'show less' : '+' + extra.length + ' more');
         more.addEventListener('click', () => {
           ctxExpanded = !ctxExpanded;
+          target.__taskSeq = (target.__taskSeq || 0) + 1;   // drop any render already in flight
+          target.__taskHtml = null;
           extra.forEach((r) => r.classList.toggle('hidden', !ctxExpanded));
           more.textContent = ctxExpanded ? 'show less' : '+' + extra.length + ' more';
         });
@@ -1516,6 +1529,8 @@ function renderTasks(target, cwd, only) {
   const swap = () => {
     // A newer render started meanwhile, or the panel was closed: drop this one.
     if (seq !== target.__taskSeq || !target.isConnected) return;
+    // A button is mid-press: swapping now would eat the click. Try again shortly.
+    if (target.querySelector('button:active')) { setTimeout(swap, 150); return; }
     // Nothing changed: leave the live DOM alone (no repaint, hover and focus kept).
     const html = body.innerHTML;
     if (html === target.__taskHtml) return;
