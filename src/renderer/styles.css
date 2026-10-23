@@ -1736,3 +1736,6 @@ body.sb-hidden .req-tip:not(.hidden) {
   body:not(.split-open) #overview-body .task-card { pointer-events: auto; }
   body:not(.split-open) #overview-body { overflow: hidden auto; }
 }
+
+/* The chat's side columns belong to Conversations only. */
+body[data-view]:not([data-view="conversations"]) :is(#overviewpane, #splitpane, #splitter) { display: none !important; }
