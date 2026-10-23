@@ -2,6 +2,12 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.59] — 2026-10-23
+
+### Fixed
+- After `/compact`, the wall of plugin-hook text ("Compacted PreCompact [node -e …]") is now one folded line, "Compacted · 2 hooks ran"; click it for the full output. Other long command output folds the same way.
+- Connectors you switched off are no longer listed as "MCP not ready"; only connectors that failed to start are.
+
 ## [0.9.58] — 2026-10-23
 
 ### Fixed

@@ -2736,7 +2736,20 @@ const Chat = (() => {
   /** Output of a command the user ran (e.g. /model), shown as a quiet note. */
   function appendCommandNote(chat, text, uuid) {
     chat.msgs.querySelector('.chat-empty')?.remove();
-    const n = el('div', 'sys-note cmd-note', '↳ ' + text);
+    const full = String(text || '');
+    let n;
+    if (full.length > 160 || full.includes('\n')) {
+      // Long output (hook dumps after /compact, command logs): one line, full text on demand.
+      const hooks = (full.match(/completed successfully/g) || []).length;
+      const label = /^Compacted\b/.test(full) && hooks
+        ? 'Compacted · ' + hooks + ' hook' + (hooks === 1 ? '' : 's') + ' ran'
+        : full.replace(/\s+/g, ' ').slice(0, 90) + '…';
+      n = el('details', 'sys-note cmd-note');
+      n.appendChild(el('summary', '', '↳ ' + label));
+      n.appendChild(el('pre', 'cmd-note-full', full));
+    } else {
+      n = el('div', 'sys-note cmd-note', '↳ ' + full);
+    }
     if (uuid) n.dataset.uuid = uuid;
     chat.msgs.appendChild(n);
     scrollDownSoft(chat);
@@ -3628,7 +3641,8 @@ const Chat = (() => {
     if (chat.healthDone) return;
     chat.healthDone = true;
     const servers = (chat.init && chat.init.mcp_servers) || [];
-    const bad = servers.filter(s => s.status !== 'connected');
+    // Connectors the user switched off are not failures.
+    const bad = servers.filter(s => s.status !== 'connected' && s.status !== 'disabled');
     if (bad.length) {
       chat.msgs.appendChild(el('div', 'sys-note',
         '⚠ MCP not ready: ' + bad.map(s => s.name + ' (' + s.status + ')').join(', ') + ' — run /mcp to reconnect'));
