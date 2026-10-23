@@ -2,6 +2,21 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.45] — 2026-10-23
+
+### Fixed & Improved
+- **Anti-Over-Investigation Discipline**:
+  - Removed aggressive automatic `superpowers` brainstorming prompts from bootstrap; prompts now instruct direct action over speculative exploration (`src/main/bootstrap.js`, `src/main/chats.js`).
+  - Added investigation sprawl detection in `loopguard.js`: trips after 8 consecutive read/search operations without code modifications to stop endless reading loops.
+  - Added dedicated **Fast Build** button in the chat footbar for instant direct-action implementation.
+- **Thinking Token Budget Control**:
+  - Added interactive Thinking Budget selector in the composer footbar (`think: auto`, `1k`, `2k`, `4k`, `8k`, `off`) with dynamic `chat:effort` runtime updates (`src/renderer/chat.js`).
+  - Configured default thinking budget to 2048 tokens to eliminate unbounded reasoning token burn (`src/main/store.js`).
+- **Token Conservation**:
+  - Disabled `autoNudge` by default to prevent burning full turns on closing remarks.
+- **UI Performance**:
+  - Fine-grained context card DOM updates to eliminate context window flickering in the right-hand session rail (`src/renderer/app.js`).
+
 ## [0.9.44] — 2026-10-23
 
 No commits since last tag.

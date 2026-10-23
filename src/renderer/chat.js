@@ -181,9 +181,11 @@ const Chat = (() => {
         </div>
         <div class="chat-footbar">
           <button class="foot-pick chat-wf-btn" title="Workflows — multi-step task flows" aria-haspopup="menu"><span data-icon="flow"></span><span>workflows</span><span class="caret" data-icon="chevron"></span></button>
+          <button class="foot-pick chat-fastbuild-btn" title="Direct action: build immediately without endless investigation"><span data-icon="bolt"></span><span>fast build</span></button>
           <select class="foot-pick chat-model-foot" title="Model"></select>
           <select class="foot-pick chat-mode-foot" title="Permission mode"></select>
           <button class="foot-pick chat-effort" title="Reasoning effort (click to cycle)">effort: auto</button>
+          <button class="foot-pick chat-think-budget" title="Thinking token budget (click to cycle: auto → 1k → 2k → 4k → 8k → off)">think: auto</button>
           <select class="foot-pick chat-style-foot hidden" title="Output style"></select>
           <span class="foot-spacer"></span>
           <button class="foot-pick chat-compact-btn" title="Compact this conversation in place — earlier turns are summarized, the chat keeps going"><span class="ctx-ring" style="--p:0"></span><span class="ctx-pct">ctx</span><span>compact</span></button>
@@ -209,6 +211,8 @@ const Chat = (() => {
       headerEl: pane.querySelector('.chat-header'),
       modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
+      thinkBudgetBtn: pane.querySelector('.chat-think-budget'),
+      fastBuildBtn: pane.querySelector('.chat-fastbuild-btn'),
       styleSel: pane.querySelector('.chat-style-foot'),
       // Element ref and queue *counter* must not share a name: showQueued used
       // to overwrite the element with a number and the next send threw.
@@ -337,6 +341,12 @@ const Chat = (() => {
       } else { toast(r.error, 'err'); chat.modeSel.value = chat.mode; }
     });
     chat.effortBtn.addEventListener('click', () => cycleEffort(chat));
+    if (chat.thinkBudgetBtn) chat.thinkBudgetBtn.addEventListener('click', () => cycleThinkingBudget(chat));
+    if (chat.fastBuildBtn) {
+      chat.fastBuildBtn.addEventListener('click', () => {
+        runWorkflow(chat, send, 'fastbuild');
+      });
+    }
     chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id }));
     // Header overflow menu. 13 buttons wrapped onto three rows; everything that
     // is not model/mode/stop now lives behind one "⋯". #33
@@ -783,6 +793,19 @@ const Chat = (() => {
     const r = await ccx.invoke('chat:effort', { id: chat.id, effort: next });
     if (!r.ok) toast(r.error || 'effort not supported here', 'err');
     else if (next) toast('effort → ' + next, 'ok');
+  }
+
+  const THINK_BUDGETS = [0, 1024, 2048, 4096, 8192, -1];
+  async function cycleThinkingBudget(chat) {
+    const cur = chat.thinkBudget !== undefined ? chat.thinkBudget : 0;
+    const nextIdx = (THINK_BUDGETS.indexOf(cur) + 1) % THINK_BUDGETS.length;
+    const next = THINK_BUDGETS[nextIdx];
+    chat.thinkBudget = next;
+    const label = next === 0 ? 'auto' : next === -1 ? 'off' : (next / 1024) + 'k';
+    if (chat.thinkBudgetBtn) chat.thinkBudgetBtn.textContent = 'think: ' + label;
+    const thinkingVal = next === -1 ? 0 : next;
+    const r = await ccx.invoke('chat:effort', { id: chat.id, thinking: thinkingVal });
+    toast('Thinking budget → ' + label, 'ok');
   }
 
   /** Attach a local file: images become content blocks, others become text. */
