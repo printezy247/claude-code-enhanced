@@ -1002,7 +1002,7 @@ const Chat = (() => {
 
       section('Workspace');
       const splitOn = !!document.querySelector('#main.split');
-      menu.appendChild(item('split', 'Side panel (overview, files, terminal)', () => window.toggleSplit && window.toggleSplit(), { kbd: 'Alt+V', on: splitOn }));
+      menu.appendChild(item('split', 'Tool panel (changes, files, terminal)', () => window.toggleSplit && window.toggleSplit(), { kbd: 'Alt+V', on: splitOn }));
       menu.appendChild(item('keyboard', 'Terminal tab in this folder', () => window.createSession({ cwd: chat.cwd, type: 'shell' })));
       menu.appendChild(item('play', 'Run build / test scripts', () => chat.runBtn.click()));
       if (chat.provider && chat.provider.baseUrl) {
@@ -1037,23 +1037,26 @@ const Chat = (() => {
     const p = chat.provider;
     // One picker for provider AND model (like OpenCode): every OTHER saved
     // provider is a group of its own models, and choosing one switches this
-    // chat onto that provider and model, keeping the conversation.
-    const provs = (state && state.providers && state.providers.instances) || [];
-    const modelsOf = (pr) => [...new Set([pr.model, ...(pr.whitelist && pr.whitelist.length ? pr.whitelist : (pr.models || []))]
-      .map((m) => (m && typeof m === 'object' ? (m.id || m.name) : m)).filter(Boolean))].slice(0, 40);
-    for (const pr of provs) {
-      if (p && pr.uid === p.uid) continue;
-      const pg = document.createElement('optgroup');
-      pg.label = (pr.name || pr.uid) + ' — switch provider';
-      const list = modelsOf(pr);
-      if (!list.length) list.push('');
-      for (const m of list) {
-        const o = el('option', '', (m || 'provider default') + '  ·  ' + basename(pr.name || pr.uid));
-        o.value = '__pm:' + pr.uid + '\u0001' + m;
-        pg.appendChild(o);
+    // chat onto that provider and model, keeping the conversation. They come
+    // AFTER this provider's own models, so the select shows the current one.
+    const addOthers = () => {
+      const provs = (state && state.providers && state.providers.instances) || [];
+      const modelsOf = (pr) => [...new Set([pr.model, ...(pr.whitelist && pr.whitelist.length ? pr.whitelist : (pr.models || []))]
+        .map((m) => (m && typeof m === 'object' ? (m.id || m.name) : m)).filter(Boolean))].slice(0, 40);
+      for (const pr of provs) {
+        if (p && pr.uid === p.uid) continue;
+        const pg = document.createElement('optgroup');
+        pg.label = (pr.name || pr.uid) + ' — switch provider';
+        const list = modelsOf(pr);
+        if (!list.length) list.push('');
+        for (const m of list) {
+          const o = el('option', '', (m || 'provider default') + '  ·  ' + basename(pr.name || pr.uid));
+          o.value = '__pm:' + pr.uid + '\u0001' + m;
+          pg.appendChild(o);
+        }
+        sel.appendChild(pg);
       }
-      sel.appendChild(pg);
-    }
+    };
     // A third-party provider does not serve Claude model names. Offering
     // Opus/Sonnet/Haiku there sent a name it lacks; the proxy then substituted
     // another model, so the pick looked ignored. List the provider's own models.
@@ -1064,7 +1067,8 @@ const Chat = (() => {
       add('', p.model ? 'provider default · ' + p.model : 'provider default (none set)');
       own.forEach(m => add(m, m + '  ·  ' + basename(p.name)));
       add('__custom', 'Custom…');
-      if (chat.model && own.includes(chat.model)) sel.value = chat.model;
+      addOthers();
+      sel.value = chat.model && own.includes(chat.model) ? chat.model : '';
       return;
     }
     add('', 'provider default');
@@ -1073,6 +1077,8 @@ const Chat = (() => {
     add('sonnet', 'Sonnet');
     add('haiku', 'Haiku');
     add('__custom', 'Custom…');
+    addOthers();
+    sel.value = [...sel.options].some((o) => o.value === chat.model) ? chat.model : '';
     // Ask the engine what it actually supports; append anything we missed. The
     // hard-coded aliases above stay as a fallback before the first turn. #39
     ccx.invoke('chat:supported-models', { id: chat.id }).then((r) => {
@@ -2644,6 +2650,10 @@ const Chat = (() => {
       const focus = text.slice(cmd.length).trim();
       chat.composer.value = 'Review the current changes' + (focus ? ' focusing on ' + focus : '') + ': run git diff, identify bugs, risks, missing tests, and style issues; report findings as a numbered list with file:line references.';
       setTimeout(() => send(), 0);
+      return true;
+    }
+    if (PANE_COMMANDS[cmd] === 'tasks') {   // /context: the Overview is always on screen; refresh it
+      if (window.renderOverview) window.renderOverview();
       return true;
     }
     if (PANE_COMMANDS[cmd]) {

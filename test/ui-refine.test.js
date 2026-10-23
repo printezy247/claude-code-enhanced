@@ -175,10 +175,9 @@ describe('conversation categories', () => {
 
 describe('right rail', () => {
   it('uses tabs, always-open cards and shows the session', async () => {
-    h.window.toggleSplit(true);
     await flush(4);
-    const tabs = doc().querySelectorAll('#splitpane .split-tab');
-    expect(tabs.length).toBe(6);
+    // The Overview is docked on the right with no toggle; the tool panel has five tabs.
+    expect(doc().querySelectorAll('#splitpane .split-tab').length).toBe(5);
     const sess = doc().querySelector(".task-card[data-card=\"environment\"]");
     expect(sess.textContent).toContain('model');
     const head = doc().querySelector('.task-card[data-card="context"] .task-card-head');

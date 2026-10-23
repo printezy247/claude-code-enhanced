@@ -182,8 +182,11 @@ window.__activate = (id) => {
   state.activeId = id;
   // Preview and terminal do not depend on the tab; re-rendering them reloaded
   // the iframe on every switch.
-  const kind = document.querySelector('#split-kind')?.value || 'tasks';
-  if (changed && document.querySelector('#main.split') && kind !== 'preview' && kind !== 'terminal') renderSplit();
+  const kind = document.querySelector('#split-kind')?.value || 'changes';
+  if (changed) {
+    renderOverview();
+    if (document.querySelector('#main.split') && kind !== 'preview' && kind !== 'terminal') renderSplit();
+  }
 };
 window.__activateNext = (closedId) => {
   tabRegistry.delete(closedId);
@@ -846,14 +849,34 @@ function toggleSplit(force) {
   // #splitpane is a SIBLING of #main, so the old `#main.split #splitpane`
   // selector never matched and the pane stayed display:none. #feat-desktop-layout
   document.body.classList.toggle('split-open', open);
-  pane.style.width = open ? '38%' : '0';
-  try { localStorage.setItem('cce.split', open ? (document.querySelector('#split-kind')?.value || 'tasks') : 'closed'); } catch { /* private mode */ }
+  pane.style.width = open ? (pane.dataset.w || '380px') : '0';
+  try { localStorage.setItem('cce.split', open ? (document.querySelector('#split-kind')?.value || 'changes') : 'closed'); } catch { /* private mode */ }
   if (open) renderSplit();
-  else if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null; }
 }
 
+/**
+ * The Overview is docked on the right at all times. Its cards redraw every few
+ * seconds while the window is visible, and on demand when something it shows
+ * changes (see refreshTasksRail).
+ */
+function renderOverview() {
+  const body = document.querySelector('#overview-body');
+  if (!body) return;
+  renderTasks(body, activeCwd());
+  if (!tasksTimer) {
+    tasksTimer = setInterval(() => {
+      const b = document.querySelector('#overview-body');
+      if (!b || !document.body.contains(b)) { clearInterval(tasksTimer); tasksTimer = null; return; }
+      // Hidden or minimized: no git spawn and no repaint for a panel nobody sees.
+      if (document.hidden) return;
+      renderTasks(b, activeCwd());
+    }, 6000);
+  }
+}
+window.renderOverview = renderOverview;
+
 function renderSplit() {
-  const kind = document.querySelector('#split-kind')?.value || 'tasks';
+  const kind = document.querySelector('#split-kind')?.value || 'changes';
   const body = document.querySelector('#split-body');
   if (!body) return;
   document.querySelectorAll('#splitpane .split-tab').forEach((t) => {
@@ -861,13 +884,6 @@ function renderSplit() {
     t.classList.toggle('active', on);
     t.setAttribute('aria-selected', on ? 'true' : 'false');
   });
-  if (tasksTimer) { clearInterval(tasksTimer); tasksTimer = null; }
-  // Leaving the Overview (terminal included): an Overview render still waiting
-  // on git/context must not land on top of the pane that replaces it.
-  if (kind !== 'tasks') {
-    body.__taskSeq = (body.__taskSeq || 0) + 1;
-    body.__taskHtml = null;
-  }
   if (kind === 'terminal') {
     // A live shell, not a bare xterm: the pane used to create a terminal with
     // no PTY behind it, so it stayed blank and nothing could be typed. #feat-desktop-layout
@@ -897,9 +913,7 @@ function renderSplit() {
     ensureSplitSession(cwd);
     return;
   }
-  // Overview already showing: keep its cards until renderTasks swaps in the
-  // new ones, instead of a blank panel on every tab switch.
-  if (!(kind === 'tasks' && body.__taskHtml != null)) body.innerHTML = '';
+  body.innerHTML = '';
   body.classList.remove('preview-body');
   const cwd2 = activeCwd();
   if (kind === 'files') {
@@ -977,18 +991,6 @@ function renderSplit() {
     });
     return;
   }
-  if (kind === 'tasks') {
-    renderTasks(body, cwd2);
-    tasksTimer = setInterval(() => {
-      if (!document.body.contains(body) || !document.querySelector('#main.split')) {
-        clearInterval(tasksTimer); tasksTimer = null; return;
-      }
-      // Hidden or minimized: no git spawn and no repaint for a panel nobody sees.
-      if (document.hidden) return;
-      renderTasks(body, activeCwd());
-    }, 6000);
-    return;
-  }
   if (kind === 'preview') {
     // Dev-server / artifact preview: sandboxed iframe with a URL bar. The
     // frame is an isolated origin — it cannot reach ccx. #feat-preview-pane
@@ -1050,10 +1052,16 @@ function hiddenTabs() {
 function applyHiddenTabs() {
   const hidden = hiddenTabs();
   document.querySelectorAll('#splitpane .split-tab').forEach((t) => {
-    if (t.dataset.kind !== 'tasks') t.classList.toggle('hidden', hidden.has(t.dataset.kind));
+    t.classList.toggle('hidden', hidden.has(t.dataset.kind));
   });
+  // The open tab was just hidden: move to the first one still on offer, or
+  // close the panel when every tab is hidden.
   const k = document.querySelector('#split-kind');
-  if (k && hidden.has(k.value)) { k.value = 'tasks'; k.dispatchEvent(new Event('change')); }
+  if (k && hidden.has(k.value)) {
+    const next = HIDEABLE_TABS.map(([id]) => id).find((id) => !hidden.has(id));
+    if (next) { k.value = next; k.dispatchEvent(new Event('change')); }
+    else toggleSplit(false);
+  }
 }
 function initSplitTabMenu() {
   const btn = document.querySelector('#btn-split-tabs');
@@ -1098,11 +1106,9 @@ window.renderSplit = renderSplit;
 const railTimers = {};
 window.refreshTasksRail = (chatId, only = 'tasks') => {
   if (chatId && chatId !== state.activeId) return;
-  if (!document.querySelector('#main.split')) return;
-  if ((document.querySelector('#split-kind')?.value || 'tasks') !== 'tasks') return;
   clearTimeout(railTimers[only]);
   railTimers[only] = setTimeout(() => {
-    const body = document.querySelector('#split-body');
+    const body = document.querySelector('#overview-body');
     if (body) renderTasks(body, activeCwd(), only);
   }, 150);
 };
@@ -1112,6 +1118,8 @@ window.refreshTasksRail = (chatId, only = 'tasks') => {
  * Environment (folder + git state), Context (active chat's window usage),
  * Tasks (the agent's todo list), Changes (uncommitted files). #feat-desktop-layout
  */
+const CTX_VISIBLE = 5;
+let ctxExpanded = false;
 function renderTasks(target, cwd, only) {
   const chat = Chat.chats.get(state.activeId);
   // Build off-screen and swap once every async card has filled in: clearing
@@ -1182,7 +1190,7 @@ function renderTasks(target, cwd, only) {
     buildBackground();
     const cur = target.querySelector('[data-card="background"]');
     const next = body.firstElementChild;
-    if (target.isConnected && (document.querySelector('#split-kind')?.value || 'tasks') === 'tasks') {
+    if (target.isConnected) {
       if (cur && !next) cur.remove();
       else if (!cur && next) target.appendChild(next);      // last card, after Changes
       else if (cur && cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
@@ -1196,7 +1204,7 @@ function renderTasks(target, cwd, only) {
     buildTasks();
     const cur = target.querySelector('[data-card="tasks"]');
     const next = body.firstElementChild;
-    if (target.isConnected && (document.querySelector('#split-kind')?.value || 'tasks') === 'tasks') {
+    if (target.isConnected) {
       if (cur && !next) cur.remove();                 // list emptied
       else if (!cur && next) target.prepend(next);    // first list: Tasks sits on top
       else if (cur && cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
@@ -1219,6 +1227,21 @@ function renderTasks(target, cwd, only) {
       const row = el('div', 'kv-row');
       row.appendChild(el('span', 'kv-k', k));
       row.appendChild(el('span', 'kv-v', String(v)));
+      env.inner.appendChild(row);
+    }
+  }
+  // Cost, turns and time of the last turn: the composer's status row is gone.
+  if (chat && (chat.lastResult || chat.spent > 0.0001)) {
+    const r = chat.lastResult || {};
+    const metered = !chat.provider || !chat.provider.baseUrl;
+    const bits = [];
+    if (metered && chat.spent > 0.0001) bits.push('$' + chat.spent.toFixed(4));
+    if (r.num_turns != null) bits.push(r.num_turns + ' turns');
+    if (r.duration_ms) bits.push(Math.round(r.duration_ms / 1000) + 's');
+    if (bits.length) {
+      const row = el('div', 'kv-row');
+      row.appendChild(el('span', 'kv-k', 'session'));
+      row.appendChild(el('span', 'kv-v', bits.join(' · ')));
       env.inner.appendChild(row);
     }
   }
@@ -1300,6 +1323,19 @@ function renderTasks(target, cwd, only) {
         row.title = tokens.toLocaleString() + ' tokens';
         ctxBreak.appendChild(row);
       }
+      // The first five categories tell the story; the rest sit behind a toggle.
+      const catRows = [...ctxBreak.children];
+      if (catRows.length > CTX_VISIBLE + 1) {
+        const extra = catRows.slice(CTX_VISIBLE);
+        extra.forEach((r) => r.classList.toggle('hidden', !ctxExpanded));
+        const more = el('button', 'btn tiny ctx-more', ctxExpanded ? 'show less' : '+' + extra.length + ' more');
+        more.addEventListener('click', () => {
+          ctxExpanded = !ctxExpanded;
+          extra.forEach((r) => r.classList.toggle('hidden', !ctxExpanded));
+          more.textContent = ctxExpanded ? 'show less' : '+' + extra.length + ' more';
+        });
+        ctxBreak.appendChild(more);
+      }
     }));
   }
 
@@ -1363,7 +1399,8 @@ function renderTasks(target, cwd, only) {
           await ccx.invoke('chat:mcp', {
             id: chat.id, op: 'toggle', name: sv.name, enabled: sv.status === 'disabled',
           });
-          renderSplit();
+          window.__connCache = {};
+          renderOverview();
         });
         row.appendChild(tog);
         connRows.appendChild(row);
@@ -2943,20 +2980,21 @@ function wireChrome() {
   $('#btn-tasks')?.addEventListener('click', () => {
     const main = document.querySelector('#main');
     if (main && main.classList.contains('split')) toggleSplit(false);
-    else { const k = $('#split-kind'); if (k) k.value = 'tasks'; toggleSplit(true); }
+    else toggleSplit(true);
   });
-  // Restore the persisted layout; first run opens the tasks panel (desktop-like).
+  // Restore the persisted layout. The Overview is always docked; the tool panel
+  // (changes / files / terminal / diff / preview) stays closed until it is opened.
+  $('#btn-overview-refresh')?.addEventListener('click', () => { window.__connCache = {}; renderOverview(); });
   try {
     if (localStorage.getItem('cce.sidebarHidden') === '1') toggleSidebar(true);
     const sp = localStorage.getItem('cce.split');
-    if (sp === 'closed') { /* stay closed */ }
-    else {
-      const k = $('#split-kind');
-      if (k && sp && [...k.options].some(o => o.value === sp)) k.value = sp;
+    const k = $('#split-kind');
+    if (k && sp && sp !== 'closed' && [...k.options].some(o => o.value === sp)) {
+      k.value = sp;
       toggleSplit(true);
     }
   } catch { /* private mode */ }
-
+  renderOverview();
 
   // Drag-resize the split pane.
   (() => {
@@ -2975,6 +3013,7 @@ function wireChrome() {
       const up = () => {
         document.removeEventListener('mousemove', move);
         document.removeEventListener('mouseup', up);
+        pane.dataset.w = pane.style.width;   // reopening restores this width
       };
       document.addEventListener('mousemove', move);
       document.addEventListener('mouseup', up);
