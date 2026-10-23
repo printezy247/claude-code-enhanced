@@ -241,6 +241,7 @@ const Chat = (() => {
       toolOriginals: new Map(),
     };
     chats.set(id, chat);
+    setupRequestRail(chat);
     installVirtualization(chat);
     chat.msgs.addEventListener('scroll', () => {
       chat.follow = nearBottom(chat);
@@ -2760,6 +2761,52 @@ const Chat = (() => {
     d.appendChild(body);
     chat.msgs.appendChild(d);
     scrollDownSoft(chat);
+  }
+
+  /** A thin rail of ticks on the left edge, one per request the user sent; hover to read it,
+   *  click to jump there. Shown only while the left sidebar is hidden (CSS). */
+  function setupRequestRail(chat) {
+    const body = chat.pane.querySelector('.chat-body');
+    if (!body || !chat.msgs) return;
+    const rail = el('div', 'req-rail');
+    rail.setAttribute('role', 'navigation');
+    rail.setAttribute('aria-label', 'Jump to a request');
+    const tip = el('div', 'req-tip hidden');
+    body.appendChild(rail);
+    body.appendChild(tip);
+    let queued = false;
+    const paint = () => {
+      queued = false;
+      const items = [...chat.msgs.querySelectorAll(':scope > .user-msg')];
+      rail.classList.toggle('empty', !items.length);
+      rail.textContent = '';
+      items.forEach((m, i) => {
+        const text = (m.dataset.text || m.textContent || '').trim();
+        const b = el('button', 'req-tick');
+        b.type = 'button';
+        b.setAttribute('aria-label', 'Request ' + (i + 1) + ': ' + text.slice(0, 80));
+        b.addEventListener('click', () => {
+          chat.follow = false;
+          m.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          m.classList.add('req-flash');
+          setTimeout(() => m.classList.remove('req-flash'), 1200);
+        });
+        const show = () => {
+          tip.textContent = text.length > 280 ? text.slice(0, 280) + '…' : text;
+          tip.classList.remove('hidden');
+          const br = b.getBoundingClientRect(), pr = body.getBoundingClientRect();
+          tip.style.top = Math.max(4, Math.min(br.top - pr.top - 8, pr.height - tip.offsetHeight - 4)) + 'px';
+        };
+        b.addEventListener('mouseenter', show);
+        b.addEventListener('focus', show);
+        b.addEventListener('mouseleave', () => tip.classList.add('hidden'));
+        b.addEventListener('blur', () => tip.classList.add('hidden'));
+        rail.appendChild(b);
+      });
+    };
+    new MutationObserver(() => { if (!queued) { queued = true; requestAnimationFrame(paint); } })
+      .observe(chat.msgs, { childList: true });
+    paint();
   }
 
   function appendUser(chat, text, uuid) {
