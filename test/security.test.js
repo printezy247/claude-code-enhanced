@@ -204,7 +204,16 @@ describe('main-process IPC guards', () => {
 
   it('preload exposes only channels that main actually handles, and blocks the rest', async () => {
     const stub = require('electron');
-    require('../src/preload/preload.js');
+    // __invokeChannels is only exposed in dev builds (least-privilege);
+    // the drift assertion below therefore runs under CCE_DEV=1.
+    const prev = process.env.CCE_DEV;
+    process.env.CCE_DEV = '1';
+    try {
+      require('../src/preload/preload.js');
+    } finally {
+      if (prev == null) delete process.env.CCE_DEV; else process.env.CCE_DEV = prev;
+    }
+
     const ccx = stub.__state.exposed.get('ccx');
     expect(ccx, 'preload did not expose ccx').toBeTruthy();
 
@@ -218,6 +227,7 @@ describe('main-process IPC guards', () => {
     ccx.send('session:write', {});   // the one fire-and-forget channel
 
     // drift check: every allowlisted channel has a registered handler
+    // (__invokeChannels is only exposed in dev builds, gated above)
     for (const ch of ccx.__invokeChannels) {
       expect(stub.__state.handlers.has(ch), 'preload lists ' + ch + ' but main never handles it').toBe(true);
     }
