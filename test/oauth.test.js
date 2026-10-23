@@ -56,12 +56,14 @@ describe('OAuth refresh', () => {
     expect(auth.state.record.access).toBe('still-good');
   });
 
-  it('retries the refresh once before giving up', async () => {
+  it('retries the refresh with backoff before giving up', async () => {
     const oauth = failingOauth();
     const auth = fakeAuth({ type: 'oauth', access: 'old', refresh: 'r1', expires: Date.now() - 1000 });
     const inst = { ...oauthInstance };
     await providers.ensureFreshAuth(inst, { auth, oauth });
-    expect(oauth.refreshTokens).toHaveBeenCalledTimes(2);
+    // Retries up to 3 times: the initial call plus backoff attempts at ~600ms
+    // and ~1200ms. A transient failure should not immediately burn a 2nd request.
+    expect(oauth.refreshTokens).toHaveBeenCalledTimes(3);
   });
 
   it('stores the new token and clears authExpired when the refresh works', async () => {

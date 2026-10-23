@@ -596,6 +596,12 @@ function isModelProbe(body) {
   if (!Array.isArray(msgs) || msgs.length !== 1 || msgs[0].role !== 'user') return false;
   const c = msgs[0].content;
   const text = typeof c === 'string' ? c : (Array.isArray(c) && c.length === 1 && c[0] && c[0].type === 'text' ? c[0].text : null);
+  if (text === 'Hi') {
+    // The engine validates a model with a 1-token probe; we fake a successful
+    // reply so slow free tiers and cold local models pass the ~15s confirm
+    // deadline. The first real message still reaches the provider.
+    if (process.env.CCE_DEV === '1') console.log('[proxy] model probe answered locally for "' + (body.model || '') + '"');
+  }
   return text === 'Hi';
 }
 

@@ -2677,6 +2677,33 @@ function renderSettings() {
   upRow.appendChild(upBtn);
   upRow.appendChild(upState);
   c7.appendChild(upRow);
+  const diagRow = el('div', 'row');
+  const diagBtn = el('button', 'btn small ghost', 'Copy diagnostics');
+  diagBtn.title = 'Copy a redacted diagnostics report to the clipboard (for bug reports)';
+  diagBtn.addEventListener('click', async () => {
+    const prov = await ccx.invoke('providers:all');
+    const auth = await ccx.invoke('auth:status');
+    const info = state.info || {};
+    const s = state.settings || {};
+    const lines = [
+      'Claude Code Enhanced — diagnostics report',
+      'version: ' + (info.appVersion || '?'),
+      'electron: ' + (info.electron || '?'),
+      'claude CLI: ' + JSON.stringify((info.claude || {})),
+      'providers: ' + (prov && prov.instances ? prov.instances.length : 0),
+      'defaultProviderUid: ' + (s.defaultProviderUid || 'none'),
+      'closeToTray: ' + s.closeToTray,
+      'outputFilter: ' + (s.outputFilter || 'off'),
+      'outputFilterMaxChars: ' + (s.outputFilterMaxChars || 0),
+      'localNumCtx: ' + (s.localNumCtx || 73728),
+      'auth: ' + JSON.stringify(auth || {}),
+      'timestamp: ' + new Date().toISOString(),
+    ];
+    try { await ccx.invoke('clipboard:write', { text: lines.join('\n') }); toast('Diagnostics copied to clipboard', 'ok'); }
+    catch (e) { toast('Failed to copy diagnostics', 'err'); }
+  });
+  diagRow.appendChild(diagBtn);
+  c7.appendChild(diagRow);
   body.appendChild(c7);
 
   // local models (Ollama)

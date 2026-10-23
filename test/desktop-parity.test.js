@@ -329,7 +329,15 @@ describe('the permission ladder', () => {
 describe('the preload allowlist and the main handlers', () => {
   it('every channel main handles is reachable from the renderer', async () => {
     const stub = require('electron');
-    require('../src/preload/preload.js');
+    // __invokeChannels is only exposed in dev builds (least-privilege);
+    // the drift assertion below therefore runs under CCE_DEV=1.
+    const prev = process.env.CCE_DEV;
+    process.env.CCE_DEV = '1';
+    try {
+      require('../src/preload/preload.js');
+    } finally {
+      if (prev == null) delete process.env.CCE_DEV; else process.env.CCE_DEV = prev;
+    }
     require('../src/main/main.js');
     await new Promise((r) => setTimeout(r, 200));
     const ccx = stub.__state.exposed.get('ccx');

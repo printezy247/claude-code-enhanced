@@ -500,7 +500,8 @@ async function ensureFreshAuthOnce(inst, authOrDeps, oauthModOverride) {
     inst.authExpired = false;
     if (typeof refreshSecretCache === 'function') refreshSecretCache();
   } catch (err) {
-    // Retry once with a brief backoff.
+    // Retry once with exponential backoff (600ms -> 1200ms) so a transient
+    // token-service blip does not immediately burn a second request.
     try {
       await new Promise((resolve) => setTimeout(resolve, 600));
       const tokens = await doRefresh();
@@ -516,6 +517,21 @@ async function ensureFreshAuthOnce(inst, authOrDeps, oauthModOverride) {
         return;
       }
     } catch { /* second attempt failed */ }
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 1200));
+      const tokens = await doRefresh();
+      if (tokens) {
+        auth.setOAuth(inst.uid, {
+          access: tokens.access,
+          refresh: tokens.refresh || rec.refresh,
+          expires: tokens.expires,
+          meta: { ...rec.meta, ...(tokens.meta || {}), expired: false },
+        });
+        inst.authExpired = false;
+        if (typeof refreshSecretCache === 'function') refreshSecretCache();
+        return;
+      }
+    } catch { /* third attempt failed */ }
 
     console.error('[auth] refresh failed for ' + (inst.name || inst.uid) + ':', String((err && err.message) || err));
     inst.authExpired = true;

@@ -3,6 +3,8 @@
 // can test them against fake servers.
 'use strict';
 const { setBounded } = require('./boundedmap');
+const os = require('os');
+const fs = require('fs');
 
 // Default context for local models: the engine's prompt is ~66K tokens, and every
 // extra token of context costs RAM (128K needs ~14 GB for a 4B model and thrashes
@@ -23,6 +25,25 @@ async function ollamaModelCtx(base, model) {
     return key ? Number(mi[key]) : null;
   } catch { return null; }
 }
+
+/** Free memory estimate in bytes. Linux reads /proc/meminfo; macOS falls back
+ *  to os.freemem() (which includes cache/buffers, so it is an upper bound).
+ *  Windows falls back the same way. The sizing heuristic still works — it
+ *  only affects the starting ctx guess, which is then binary-searched.
+ */
+function memAvailableBytes() {
+  // Prefer /proc/meminfo when present (Linux, accurate).
+  try {
+    if (process.platform === 'linux') {
+      const m = require('fs').readFileSync('/proc/meminfo', 'utf8').match(/MemAvailable:\s+(\d+)/);
+      if (m) return Number(m[1]) * 1024;
+    }
+  } catch { /* unreadable / not Linux */ }
+  // macOS / Windows / fallback: os.freemem() over-estimates (includes cache),
+  // but the warm loop binary-searches downward, so a high starting guess just
+  // means one extra failed attempt at a too-large ctx.
+  return os.freemem && os.freemem() || 0;
+}
 // Model fields must be a SINGLE slug — a comma-joined list is sent verbatim
 // to the provider and rejected as 'invalid model name'.
 const sanitizeModel = (m) => String(m || '').split(',')[0].trim();
@@ -41,12 +62,6 @@ async function ollamaKvBytesPerToken(base, model) {
     if (!L || !KV) return null;
     return 2 * Number(L) * Number(KV) * Number(mi[pref + '.attention.key_length'] || 128) * 2;
   } catch { return null; }
-}
-function memAvailableBytes() {
-  try {
-    const m = require('fs').readFileSync('/proc/meminfo', 'utf8').match(/MemAvailable:\s+(\d+)/);
-    return m ? Number(m[1]) * 1024 : 0;
-  } catch { return 0; }
 }
 
 // Load a local model into memory at the largest context that actually fits.

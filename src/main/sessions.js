@@ -57,13 +57,33 @@ class SessionManager extends EventEmitter {
 
   kill(id) {
     const s = this.sessions.get(id);
-    if (s) { try { s.term.kill(); } catch { /* already gone */ } }
+    if (!s) return;
+    try { s.term.kill(); } catch { /* already gone */ }
+    // node-pty's kill() is a polite request; on some platforms or for some
+    // wedged ptys it does not terminate the underlying process. Force it.
+    if (s.term.pid != null) {
+      try {
+        // Give the polite kill a moment; if the session is still alive, SIGKILL.
+        const check = setTimeout(() => {
+          if (this.sessions.has(id)) {
+            try { process.kill(s.term.pid, 'SIGKILL'); } catch { /* already gone */ }
+          }
+        }, 300);
+        // Best effort: if the process already exited, process.kill throws.
+        process.kill(s.term.pid, 0).catch(() => {}).finally(() => clearTimeout(check));
+      } catch { /* pid invalid or already gone */ }
+    }
+    this.sessions.delete(id);
   }
 
   killAll() {
     for (const s of [...this.sessions.values()]) {
       try { s.term.kill(); } catch { /* already gone */ }
+      if (s.term.pid != null) {
+        try { process.kill(s.term.pid, 'SIGKILL'); } catch { /* already gone */ }
+      }
     }
+    this.sessions.clear();
   }
 
   list() {

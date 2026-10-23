@@ -55,8 +55,9 @@ contextBridge.exposeInMainWorld('ccx', {
   pathForFile: (file) => { try { return webUtils.getPathForFile(file) || ''; } catch { return ''; } },
   send: (channel, payload) => ipcRenderer.send(checkSend(channel), payload),
   // Allowlist snapshot for the CI drift test (test/security.test.js asserts
-  // every listed channel has a handler in main.js). Runtime code never reads it.
-  __invokeChannels: [...INVOKE_CHANNELS].sort(),
+  // every listed channel has a handler in main.js). Exposed only in dev builds;
+  // a compromised renderer must not learn the full IPC surface.
+  ...(process.env.CCE_DEV === '1' ? { __invokeChannels: [...INVOKE_CHANNELS].sort() } : {}),
 
   onPtyData: (cb) => {
     const listener = (_e, payload) => cb(payload);
