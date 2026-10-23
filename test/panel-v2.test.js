@@ -2,6 +2,8 @@
 // hidden; the "build now" button is gone; a loop notice and file-share buttons exist.
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
+import fs from 'node:fs';
+import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { loadRenderer, flush } = require('./helpers/renderer.js');
@@ -73,11 +75,58 @@ describe('side panel', () => {
     expect(doc().body.classList.contains('split-open')).toBe(false);
     expect(doc().querySelectorAll('#overview-body .task-card').length).toBeGreaterThan(0);   // Overview stays
   });
-  it('overview cards cannot be collapsed', async () => {
+  it('every Overview card has a header that folds its details, and remembers it', async () => {
     await flush(4);
-    const cards = doc().querySelectorAll('#overview-body .task-card');
-    expect(cards.length).toBeGreaterThan(0);
-    for (const c of cards) expect(c.querySelector('button.task-card-head')).toBe(null);
+    const cards = () => [...doc().querySelectorAll('#overview-body .task-card')];
+    expect(cards().length).toBeGreaterThan(0);
+    for (const c of cards()) {
+      const head = c.querySelector('button.task-card-head');
+      expect(head, c.dataset.card).toBeTruthy();
+      expect(head.querySelector('.tc-caret svg')).toBeTruthy();
+      expect(head.getAttribute('aria-expanded')).toBe(c.classList.contains('closed') ? 'false' : 'true');
+    }
+    const ctx = () => doc().querySelector('#overview-body [data-card="context"]');
+    expect(ctx().classList.contains('closed')).toBe(false);
+    click(ctx().querySelector('.task-card-head'));
+    expect(ctx().classList.contains('closed')).toBe(true);
+    expect(ctx().querySelector('.task-card-head').getAttribute('aria-expanded')).toBe('false');
+    // a refresh keeps it folded
+    h.window.refreshTasksRail('c1');
+    await new Promise((r) => setTimeout(r, 300));
+    await flush(4);
+    expect(ctx().classList.contains('closed')).toBe(true);
+    click(ctx().querySelector('.task-card-head'));
+    expect(ctx().classList.contains('closed')).toBe(false);
+  });
+  it('Connectors start folded, the longest card', async () => {
+    await flush(4);
+    expect(doc().querySelector('#overview-body [data-card="connectors"]').classList.contains('closed')).toBe(true);
+  });
+  it('the fold-all button folds every card, then unfolds them', async () => {
+    await flush(4);
+    const open = () => [...doc().querySelectorAll('#overview-body .task-card')].filter((c) => !c.classList.contains('closed')).length;
+    expect(open()).toBeGreaterThan(0);
+    click(doc().querySelector('#btn-overview-fold'));
+    expect(open()).toBe(0);
+    click(doc().querySelector('#btn-overview-fold'));
+    expect(open()).toBe(doc().querySelectorAll('#overview-body .task-card').length);
+  });
+  it('the whole column can be hidden from the top strip, and comes back', async () => {
+    await flush(4);
+    const btn = doc().querySelector('#tabbar #btn-overview');
+    expect(btn).toBeTruthy();
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    click(btn);
+    expect(doc().body.classList.contains('ov-hidden')).toBe(true);
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+    expect(h.window.localStorage.getItem('cce.ovHidden')).toBe('true');
+    click(btn);
+    expect(doc().body.classList.contains('ov-hidden')).toBe(false);
+  });
+  it('is floating black cards with an orange outline, not a grey surface', () => {
+    const css = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
+    expect(css).toMatch(/#overviewpane \{ background: transparent; border-left: 0;/);
+    expect(css).toMatch(/#overview-body \.task-card \{[^}]*background: var\(--bg\);[^}]*border: 1px solid var\(--accent-line\)[^}]*box-shadow/);
   });
 });
 

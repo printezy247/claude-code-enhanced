@@ -1165,6 +1165,33 @@ window.refreshTasksRail = (chatId, only = 'tasks') => {
  */
 const CTX_VISIBLE = 5;
 let ctxExpanded = false;
+/** Which Overview cards are folded away. Connectors start folded: it is the longest card. */
+function ovClosedMap() {
+  const v = lsGet('cce.ovClosed', null);
+  return v && typeof v === 'object' && !Array.isArray(v) ? v : { connectors: true };
+}
+/** Fold or unfold every Overview card at once. */
+function setAllOverviewCards(closed) {
+  const m = ovClosedMap();
+  document.querySelectorAll('#overview-body .task-card').forEach((c) => {
+    c.classList.toggle('closed', closed);
+    const h = c.querySelector('.task-card-head');
+    if (h) h.setAttribute('aria-expanded', closed ? 'false' : 'true');
+    m[c.dataset.card] = closed;
+  });
+  for (const k of ['environment', 'context', 'connectors', 'changes', 'tasks', 'background']) m[k] = closed;
+  lsSet('cce.ovClosed', m);
+  const body = document.querySelector('#overview-body');
+  if (body) body.__taskHtml = null;
+}
+/** Show or hide the whole Overview column (remembered). */
+function toggleOverview(force) {
+  const hide = force !== undefined ? !force : !document.body.classList.contains('ov-hidden');
+  document.body.classList.toggle('ov-hidden', hide);
+  document.querySelector('#btn-overview')?.setAttribute('aria-pressed', hide ? 'false' : 'true');
+  lsSet('cce.ovHidden', hide);
+}
+window.toggleOverview = toggleOverview;
 function renderTasks(target, cwd, only) {
   const chat = Chat.chats.get(state.activeId);
   // Build off-screen and swap once every async card has filled in: clearing
@@ -1173,17 +1200,32 @@ function renderTasks(target, cwd, only) {
   const pending = [];
   // A single-card update must not cancel a full render that is still in flight.
   const seq = only ? -1 : (target.__taskSeq = (target.__taskSeq || 0) + 1);
-  // Overview cards are always open (like the desktop app): the header is a
-  // plain title row, the badge on the right summarises the card.
+  // Overview cards float on the right; each header folds its card away (and the
+  // choice is remembered). The badge on the right summarises a folded card.
+  const closedMap = ovClosedMap();
   const card = (key, title, icon) => {
     const c = el('section', 'task-card');
     c.dataset.card = key;
-    const head = el('div', 'task-card-head');
+    const closed = closedMap[key] === true;
+    if (closed) c.classList.add('closed');
+    const head = el('button', 'task-card-head');
+    head.type = 'button';
+    head.setAttribute('aria-expanded', closed ? 'false' : 'true');
+    head.title = 'Show or hide the details of this card';
     head.appendChild(elIcon('span', 'tc-ico', CCEIcons.svg(icon, 12)));
     const h = el('h4', '', title);
     head.appendChild(h);
     const badge = el('span', 'tc-badge', '');
     head.appendChild(badge);
+    head.appendChild(elIcon('span', 'tc-caret', CCEIcons.svg('chevron', 12)));
+    head.addEventListener('click', () => {
+      const now = c.classList.toggle('closed');
+      head.setAttribute('aria-expanded', now ? 'false' : 'true');
+      const m = ovClosedMap();
+      m[key] = now;
+      lsSet('cce.ovClosed', m);
+      target.__taskHtml = null;   // the next refresh compares afresh
+    });
     const inner = el('div', 'task-card-body');
     c.appendChild(head);
     c.appendChild(inner);
@@ -1411,9 +1453,19 @@ function renderTasks(target, cwd, only) {
         return;
       }
       const connected = servers.filter((s) => s.status === 'connected');
+      // Notes are one-line summaries that open on demand: the full text used to
+      // fill the whole card.
+      const note = (summary, text) => {
+        const d = document.createElement('details');
+        d.className = 'conn-note';
+        const sm = document.createElement('summary');
+        sm.textContent = summary;
+        d.appendChild(sm);
+        d.appendChild(el('div', 'hint', text));
+        connRows.appendChild(d);
+      };
       if (connected.length >= 5) {
-        const hint = el('div', 'task-row hint', connected.length + ' connectors live — each adds MCP preamble to every turn. Disconnect unused ones in Providers.');
-        connRows.appendChild(hint);
+        note(connected.length + ' connectors live', 'Each connector adds MCP preamble to every turn. Disconnect unused ones in Providers.');
       }
       // Warn about tool-name collisions across connectors (#wrong-tool-calls).
       const names = [];
@@ -1421,7 +1473,8 @@ function renderTasks(target, cwd, only) {
       const dupes = names.filter((n, i) => names.indexOf(n) !== i);
       if (dupes.length) {
         const uniq = [...new Set(dupes)];
-        connRows.appendChild(el('div', 'task-row hint', 'Duplicate tool names across connectors: ' + uniq.join(', ') + '. Prefer the server matching the task.'));
+        note('⚠ ' + uniq.length + ' duplicate tool name' + (uniq.length === 1 ? '' : 's'),
+          'Duplicate tool names across connectors: ' + uniq.join(', ') + '. Prefer the server matching the task.');
       }
       for (const sv of servers) {
         const row = el('div', 'task-row hint conn-row');
@@ -3036,6 +3089,13 @@ function wireChrome() {
   // Restore the persisted layout. The Overview is always docked; the tool panel
   // (changes / files / terminal / diff / preview) stays closed until it is opened.
   $('#btn-overview-refresh')?.addEventListener('click', () => { window.__connCache = {}; renderOverview(); });
+  $('#btn-overview-fold')?.addEventListener('click', () => {
+    const cards = [...document.querySelectorAll('#overview-body .task-card')];
+    setAllOverviewCards(cards.some((c) => !c.classList.contains('closed')));   // any open: fold all, else unfold all
+  });
+  $('#btn-overview')?.addEventListener('click', () => toggleOverview());
+  if (lsGet('cce.ovHidden', false) === true) toggleOverview(false);
+  else $('#btn-overview')?.setAttribute('aria-pressed', 'true');
   try {
     if (localStorage.getItem('cce.sidebarHidden') === '1') toggleSidebar(true);
     const sp = localStorage.getItem('cce.split');
