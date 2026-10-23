@@ -2,6 +2,16 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.48] — 2026-10-23
+
+### Fixed
+- Sending a message with screenshots no longer fails with "IPC payload too large". Pasted and attached images are shrunk to at most 1568 px on the long edge (re-encoded as JPEG when smaller), and the send channels accept up to 24 MB. Every other channel keeps the 1 MB cap.
+- Switching provider mid-chat keeps the chat usable. Send, stop, steer, fork and mode changes used the old engine session id, so the next message failed with "open a new chat".
+- The effort and thinking-budget buttons report an error instead of a false "success" when the change is rejected.
+
+### Docs
+- `docs/roadmap-0.9.48-review.md`: review of UI/UX, performance, stability, security and multi-model tool calling, with the phased plan.
+
 ## [0.9.47] — 2026-10-23
 
 ### Fixed
