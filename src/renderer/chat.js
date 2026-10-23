@@ -320,7 +320,7 @@ const Chat = (() => {
     });
     chat.modeSel.addEventListener('change', async () => {
       const want = chat.modeSel.value;
-      const r = await ccx.invoke('chat:set-mode', { id, mode: want });
+      const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode: want });
       if (r.ok) {
         // The main process is the authority: it may fall back (auto → accept edits on a third-party provider).
         chat.mode = uiMode(r.permissionMode || want, chat.provider);
@@ -337,12 +337,12 @@ const Chat = (() => {
         runWorkflow(chat, send, 'fastbuild');
       });
     }
-    chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id }));
+    chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id: chat.id }));
     // Header overflow menu. 13 buttons wrapped onto three rows; everything that
     // is not model/mode/stop now lives behind one "⋯". #33
     const forkConversation = async () => {
       try {
-        const p = await ccx.invoke('chat:fork', { id });
+        const p = await ccx.invoke('chat:fork', { id: chat.id });
         if (!p.ok) throw new Error(p.error || 'fork failed');
         toast('Forking conversation…');
         await Chat.createSession({
@@ -405,7 +405,7 @@ const Chat = (() => {
         hideSlash(chat);
         clearImages(chat);
         updateBusyUi(chat);
-        ccx.invoke('chat:steer', { id, text, blocks: blocks.length ? blocks : null }).then((r) => {
+        ccx.invoke('chat:steer', { id: chat.id, text, blocks: blocks.length ? blocks : null }).then((r) => {
           if (!r || !r.ok) {
             appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)'));
             setBusy(chat, false);
@@ -442,7 +442,7 @@ const Chat = (() => {
       hideSlash(chat);
       clearImages(chat);
       updateBusyUi(chat);
-      ccx.invoke('chat:send', { id, text, blocks: blocks.length ? blocks : null }).then((r) => {
+      ccx.invoke('chat:send', { id: chat.id, text, blocks: blocks.length ? blocks : null }).then((r) => {
         if (!r || !r.ok) {
           appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)'));
           setBusy(chat, false);
@@ -502,12 +502,8 @@ const Chat = (() => {
       e.preventDefault();
       const file = imgItem.getAsFile();
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        chat.pendingImages.push({ media_type: file.type || 'image/png', data: String(reader.result).split(',')[1] });
-        renderImageChips(chat);
-      };
-      reader.readAsDataURL(file);
+      readImageFile(file).then((img) => { chat.pendingImages.push(img); renderImageChips(chat); })
+        .catch(() => toast('could not read the pasted image', 'err'));
     });
 
     // @-mentions of project files
@@ -531,7 +527,7 @@ const Chat = (() => {
       if (chat.busy) {
         const text = chat.composer.value.trim();
         if (!text && !chat.pendingImages.length) {
-          ccx.invoke('chat:interrupt', { id });
+          ccx.invoke('chat:interrupt', { id: chat.id });
           return;
         }
         send(chat.busyMode || 'queue');
@@ -556,7 +552,7 @@ const Chat = (() => {
     const dropFiles = (files) => {
       for (const file of [...files]) {
         const p = ccx.pathForFile ? ccx.pathForFile(file) : '';
-        if (String(file.type || '').startsWith('image/') && file.size < 4 * 1024 * 1024) attachFiles(chat, [file]);
+        if (String(file.type || '').startsWith('image/') && file.size < 20 * 1024 * 1024) attachFiles(chat, [file]);
         else if (p) addFileRef(chat, p);
         else attachFiles(chat, [file]);
       }
@@ -603,7 +599,7 @@ const Chat = (() => {
       setTimeout(() => {
         if (!chat.alive) return;
         appendUser(chat, opts.initText);
-        ccx.invoke('chat:send', { id, text: opts.initText })
+        ccx.invoke('chat:send', { id: chat.id, text: opts.initText })
           .then((r) => { if (!r || !r.ok) appendError(chat, 'Not sent — ' + ((r && r.error) || 'session not running')); })
           .catch((e) => appendError(chat, 'Not sent — ' + ((e && e.message) || e)));
       }, 1500);
@@ -781,7 +777,7 @@ const Chat = (() => {
     chat.effort = next;
     chat.effortBtn.textContent = 'effort: ' + (next || 'auto');
     const r = await ccx.invoke('chat:effort', { id: chat.id, effort: next });
-    if (!r.ok) toast(r.error || 'effort not supported here', 'err');
+    if (!r || !r.ok) toast((r && r.error) || 'effort not supported here', 'err');
     else if (next) toast('effort → ' + next, 'ok');
   }
 
@@ -795,21 +791,52 @@ const Chat = (() => {
     if (chat.thinkBudgetBtn) chat.thinkBudgetBtn.textContent = 'think: ' + label;
     const thinkingVal = next === -1 ? 0 : next;
     const r = await ccx.invoke('chat:effort', { id: chat.id, thinking: thinkingVal });
-    toast('Thinking budget → ' + label, 'ok');
+    if (!r || !r.ok) toast((r && r.error) || 'thinking budget not supported here', 'err');
+    else toast('Thinking budget → ' + label, 'ok');
+  }
+
+  /**
+   * Read an image as base64, shrinking it first. A full-screen PNG is ~500 kB;
+   * a few of them blocked the message at the IPC size cap. The long edge is
+   * capped at 1568 px (the size vision models resize to anyway) and the pixels
+   * are re-encoded as JPEG when that is smaller. Anything that cannot be
+   * decoded (or has no canvas, as in tests) goes through unchanged.
+   */
+  const IMG_MAX_EDGE = 1568;
+  async function readImageFile(file) {
+    const raw = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result));
+      r.onerror = reject;
+      r.readAsDataURL(file);
+    });
+    const orig = { media_type: file.type || 'image/png', data: raw.split(',')[1] };
+    if (!/^image\/(png|jpeg|webp|bmp)$/.test(orig.media_type)) return orig;
+    if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return orig;
+    try {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, IMG_MAX_EDGE / Math.max(bmp.width, bmp.height));
+      if (scale === 1 && file.size < 300 * 1024) { bmp.close(); return orig; }
+      const cv = document.createElement('canvas');
+      cv.width = Math.max(1, Math.round(bmp.width * scale));
+      cv.height = Math.max(1, Math.round(bmp.height * scale));
+      const g = cv.getContext('2d');
+      g.fillStyle = '#fff';
+      g.fillRect(0, 0, cv.width, cv.height);
+      g.drawImage(bmp, 0, 0, cv.width, cv.height);
+      bmp.close();
+      const out = cv.toDataURL('image/jpeg', 0.85);
+      const data = out.split(',')[1];
+      return data && data.length < orig.data.length ? { media_type: 'image/jpeg', data } : orig;
+    } catch { return orig; }
   }
 
   /** Attach a local file: images become content blocks, others become text. */
   async function attachFiles(chat, fileList) {
     for (const file of [...fileList]) {
       const type = file.type || '';
-      if (type.startsWith('image/') && file.size < 4 * 1024 * 1024) {
-        const data = await new Promise((resolve, reject) => {
-          const r = new FileReader();
-          r.onload = () => resolve(String(r.result).split(',')[1]);
-          r.onerror = reject;
-          r.readAsDataURL(file);
-        });
-        chat.pendingImages.push({ media_type: type || 'image/png', data });
+      if (type.startsWith('image/') && file.size < 20 * 1024 * 1024) {
+        chat.pendingImages.push(await readImageFile(file));
       } else if (file.size > 400 * 1024) {
         toast(file.name + ' is too large to attach inline (' + Math.round(file.size / 1024) + ' kB)', 'err');
         continue;
@@ -4980,5 +5007,5 @@ const Chat = (() => {
     if (chat && chat.composer) chat.composer.focus();
   };
 
-  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences, pollContext, renderDiff };
+  return { createSession, handleEvent, chats, closeChat, activateChat, showFind, openPalette, toggleExpanded, fixNestedFences, pollContext, renderDiff, attachFiles };
 })();

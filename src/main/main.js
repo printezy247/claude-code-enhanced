@@ -755,6 +755,11 @@ function isValidSender(e) {
 }
 
 const IPC_MAX_PAYLOAD_BYTES = 1000000;
+// Channels that carry pasted or attached images as base64. The renderer shrinks
+// each image first, but a few screenshots can still pass 1 MB, which blocked
+// the message with "IPC payload too large".
+const IPC_LARGE_PAYLOAD_BYTES = 24000000;
+const IPC_LARGE_CHANNELS = new Set(['chat:send', 'chat:steer']);
 function handle(channel, fn) {
   ipcMain.handle(channel, async (e, payload) => {
     if (!isValidSender(e)) {
@@ -763,7 +768,8 @@ function handle(channel, fn) {
     if (payload != null) {
       try {
         const sz = Buffer.byteLength(JSON.stringify(payload));
-        if (sz > IPC_MAX_PAYLOAD_BYTES) return { ok: false, error: 'IPC payload too large (' + sz + ' bytes)' };
+        const cap = IPC_LARGE_CHANNELS.has(channel) ? IPC_LARGE_PAYLOAD_BYTES : IPC_MAX_PAYLOAD_BYTES;
+        if (sz > cap) return { ok: false, error: 'IPC payload too large (' + sz + ' bytes)' };
       } catch { /* not stringifyable */ }
     }
     try { return { ok: true, ...(await fn(payload || {}, e)) }; }
