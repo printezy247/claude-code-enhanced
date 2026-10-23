@@ -170,17 +170,8 @@ async function commitDiff(cwd, { sha, maxBytes = MAX_DIFF_BYTES } = {}) {
   return { ok: res.ok, patch: body.text, truncated: body.truncated, error: res.error };
 }
 
-/** True when the directory is inside a git work tree. */
-function isRepo(cwd) {
-  try {
-    return fs.existsSync(path.join(String(cwd || ''), '.git'));
-  } catch {
-    return false;
-  }
-}
-
 module.exports = {
-  git, clamp, status, invalidate, diff, diffStats, commits, commitDiff, isRepo,
+  git, clamp, status, invalidate, diff, diffStats, commits, commitDiff,
   STATUS_TTL_MS, MAX_DIFF_BYTES, STATUS_CACHE_MAX,
   statusCacheSize: () => statusCache.size,
 };

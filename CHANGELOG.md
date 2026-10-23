@@ -2,12 +2,20 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.46] — 2026-10-23
+
+### Fixed
+- Chats no longer stop mid-turn with "Interrupted while tools were running": the loop guard no longer kills a turn after many reads/searches, and a test, edit, test fix cycle no longer counts as a repeat.
+- Composer footbar wraps instead of clipping the compact button; the output-style picker is removed.
+
+### Removed
+- Unused code: about dialog helper, `isRepo`, `smallModel`, `isCoolingDown`, empty policy arrays, skill-toggle aliases and about 17 dead CSS rules.
+
 ## [0.9.45] — 2026-10-23
 
 ### Fixed & Improved
 - **Anti-Over-Investigation Discipline**:
   - Removed aggressive automatic `superpowers` brainstorming prompts from bootstrap; prompts now instruct direct action over speculative exploration (`src/main/bootstrap.js`, `src/main/chats.js`).
-  - Added investigation sprawl detection in `loopguard.js`: trips after 8 consecutive read/search operations without code modifications to stop endless reading loops.
   - Added dedicated **Fast Build** button in the chat footbar for instant direct-action implementation.
 - **Thinking Token Budget Control**:
   - Added interactive Thinking Budget selector in the composer footbar (`think: auto`, `1k`, `2k`, `4k`, `8k`, `off`) with dynamic `chat:effort` runtime updates (`src/renderer/chat.js`).

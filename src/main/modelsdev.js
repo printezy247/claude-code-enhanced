@@ -145,22 +145,4 @@ function normalizeModelId(id) {
   return s;
 }
 
-/**
- * Cheapest / smallest fast model for background tasks (titles, summaries).
- */
-function smallModel(providerId) {
-  const list = modelsFor(providerId);
-  if (!list.length) return null;
-  const isSmallName = (m) => {
-    const s = String(m.id || m.name || '').toLowerCase();
-    return /\b(mini|flash|haiku|small|lite|nano|instant|turbo)\b/i.test(s)
-      || /[-_:](mini|flash|haiku|small|lite|nano|8b|7b|4b|3b|1b|0\.5b)/i.test(s);
-  };
-  const cost = (m) => (m.pricing && (m.pricing.input || m.pricing.prompt)) || 999;
-  const namedSmall = list.filter(isSmallName).sort((a, b) => cost(a) - cost(b));
-  if (namedSmall.length) return namedSmall[0];
-  const sortedByCost = list.slice().sort((a, b) => cost(a) - cost(b));
-  return sortedByCost[0] || null;
-}
-
-module.exports = { init, load, stat, refresh, compact, get, model, modelsFor, bestModel, smallModel, normalizeModelId, searchModels, MODELSDEV_URL };
+module.exports = { init, load, stat, refresh, compact, get, model, modelsFor, bestModel, normalizeModelId, searchModels, MODELSDEV_URL };

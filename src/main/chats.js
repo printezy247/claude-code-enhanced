@@ -1152,13 +1152,6 @@ class ChatManager extends EventEmitter {
     });
   }
   async applyFlags(id, patch) { return await this._chat(id).q.applyFlagSettings(patch || {}); }
-  // Output styles are files on disk; the CLI lists them after a reload. #feat-output-styles
-  async styles(id) {
-    try {
-      const r = await this._chat(id).q.reloadOutputStyles();
-      return Array.isArray(r && r.available_output_styles) ? r.available_output_styles : [];
-    } catch { return []; }
-  }
   async stopTask(id, taskId) { await this._chat(id).q.stopTask(String(taskId)); return { stopped: true }; }
 
   async setModel(id, model) {

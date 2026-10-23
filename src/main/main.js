@@ -1667,7 +1667,6 @@ function registerIpc() {
     throw new Error('unknown mcp op: ' + op);
   }));
   handle('chat:agents', owned('chats', async ({ id }) => ({ agents: await chats.agents(id) })));
-  handle('chat:styles', owned('chats', async ({ id }) => ({ styles: await chats.styles(id) })));
   handle('chat:flags', owned('chats', async ({ id, patch }) => ({ applied: await chats.applyFlags(id, patch) })));
   handle('chat:stopTask', owned('chats', async ({ id, taskId }) => await chats.stopTask(id, taskId)));
   handle('chat:supported-models', owned('chats', async ({ id }) => {

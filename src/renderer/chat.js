@@ -186,8 +186,6 @@ const Chat = (() => {
           <select class="foot-pick chat-mode-foot" title="Permission mode"></select>
           <button class="foot-pick chat-effort" title="Reasoning effort (click to cycle)">effort: auto</button>
           <button class="foot-pick chat-think-budget" title="Thinking token budget (click to cycle: auto → 1k → 2k → 4k → 8k → off)">think: auto</button>
-          <select class="foot-pick chat-style-foot hidden" title="Output style"></select>
-          <span class="foot-spacer"></span>
           <button class="foot-pick chat-compact-btn" title="Compact this conversation in place — earlier turns are summarized, the chat keeps going"><span class="ctx-ring" style="--p:0"></span><span class="ctx-pct">ctx</span><span>compact</span></button>
         </div>
         <div class="chat-statusline"><span class="sl-left">ready — the session starts with your first message</span><span class="sl-right"></span></div>
@@ -213,7 +211,6 @@ const Chat = (() => {
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
       thinkBudgetBtn: pane.querySelector('.chat-think-budget'),
       fastBuildBtn: pane.querySelector('.chat-fastbuild-btn'),
-      styleSel: pane.querySelector('.chat-style-foot'),
       // Element ref and queue *counter* must not share a name: showQueued used
       // to overwrite the element with a number and the next send threw.
       queuedEl: pane.querySelector('.chat-queued'),
@@ -315,13 +312,6 @@ const Chat = (() => {
     fillModelSelector(chat);
     fillModeSelect(chat.modeSel, chat.provider);
     chat.modeSel.value = chat.mode;
-    // Output style picker (desktop parity). The list comes from the engine, so
-    // it fills at init; hidden when the machine defines no styles. #feat-output-styles
-    chat.styleSel.addEventListener('change', async () => {
-      const v = chat.styleSel.value;
-      const r = await ccx.invoke('chat:flags', { id, patch: { outputStyle: v || null } });
-      toast(r && r.ok ? ('style: ' + (v || 'auto')) : 'style change failed', r && r.ok ? 'ok' : 'err');
-    });
     chat.modelSel.addEventListener('change', async () => {
       const v = chat.modelSel.value;
       if (v.startsWith('__prov:')) { await switchProvider(chat, v.slice(7)); return; }
@@ -1109,7 +1099,6 @@ const Chat = (() => {
     if (window.rekeyTab) window.rekeyTab(oldId, r.id);
     chat.provider = r.provider;
     chat.model = r.model || '';
-    chat.stylesFilled = false;   // new engine, new style list
     chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider);
     // The old session's exit event can land during the swap and mark the tab
     // dead — the chat is alive again on the new engine.
@@ -3427,34 +3416,8 @@ const Chat = (() => {
     if (msg.subtype === 'compact_boundary') return;   // already handled
   }
 
-  /* ---------------- output styles (#feat-output-styles) ---------------- */
-
-  async function fillStyles(chat) {
-    if (chat.stylesFilled || !chat.alive) return;
-    chat.stylesFilled = true;
-    let r = null;
-    try { r = await ccx.invoke('chat:styles', { id: chat.id }); } catch { r = null; }
-    const list = (r && r.ok && r.styles) || [];
-    if (!list.length) {
-      // Right after init the engine may not answer yet: one retry, not a
-      // picker that stays hidden for the whole session.
-      if (!chat.stylesRetried) {
-        chat.stylesRetried = true;
-        chat.stylesFilled = false;
-        setTimeout(() => fillStyles(chat), 3000);
-      }
-      return;
-    }
-    chat.styleSel.innerHTML = '';
-    const auto = el('option', '', 'style: auto'); auto.value = '';
-    chat.styleSel.appendChild(auto);
-    for (const s of list) { const o = el('option', '', 'style: ' + s); o.value = s; chat.styleSel.appendChild(o); }
-    chat.styleSel.classList.remove('hidden');
-  }
-
   function onInit(chat) {
     chat.msgs.querySelector('.chat-empty')?.remove();
-    fillStyles(chat);
     pollContext(chat).catch(() => {});   // the footer ring shows usage from the start
     // A plugin that failed to load is simply absent from the tool list, which
     // used to look like "that connector does not exist". Say which ones broke.
