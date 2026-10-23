@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.58] — 2026-10-23
+
+### Fixed
+- The Overview, tool panel and their splitter no longer show on the Usage, Providers, Connectors and Settings pages (the Overview used to float over the Providers cards).
+
 ## [0.9.57] — 2026-10-23
 
 ### Changed
