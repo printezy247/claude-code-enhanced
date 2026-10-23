@@ -56,6 +56,15 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y lintian
       - run: npm run dist
       - run: npm run lint
+      # Keep the installable package: a build that only lints it is of no use to
+      # someone who wants to try the change. Download it from the run's page.
+      - name: Upload the deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: claude-code-enhanced-deb
+          path: dist/*.deb
+          if-no-files-found: error
+          retention-days: 14
 
   mutation:
     # Opt-in: runs stryker only when it is installed (it is not a dependency
