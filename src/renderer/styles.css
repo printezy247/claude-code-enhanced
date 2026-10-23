@@ -1698,3 +1698,11 @@ body.ov-hidden #overviewpane { display: none; }
 #overview-body .task-rows { max-height: 260px; }
 #tabbar > #btn-overview[aria-pressed="true"] { color: var(--accent); }
 @media (prefers-reduced-motion: reduce) { #overview-body .tc-caret { transition: none; } }
+
+/* ===== One top strip across the whole work area; the columns sit below it ===== */
+#workarea { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
+#cols { flex: 1 1 auto; min-height: 0; min-width: 0; display: flex; flex-direction: row; }
+#workarea > #tabbar { width: 100%; box-sizing: border-box; border-bottom: 1px solid var(--border); background: var(--bg); }
+#overview-body .ctx-more { position: relative; z-index: 1; cursor: pointer; width: 100%; }
+#overview-body .task-list li { cursor: pointer; }
+#overview-body .task-list li .task-mark { cursor: pointer; }

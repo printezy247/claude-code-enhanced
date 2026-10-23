@@ -2,6 +2,15 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.55] — 2026-10-23
+
+### Changed
+- **The top strip now runs the full width** of the window, past the Overview; the Overview cards start below it.
+- **Tasks can be ticked off**: click a step in the Overview's Tasks card (or press Space/Enter) to mark it done or undo it. The card still appears only when a model writes a todo list.
+
+### Fixed
+- The Context card's "+N more" button could be lost to a refresh mid-click; refreshes now wait while a button is pressed and the toggle cancels any render in flight.
+
 ## [0.9.54] — 2026-10-23
 
 ### Changed

@@ -53,19 +53,21 @@
       <div class="sidebar-foot" id="foot-info"></div>
     </aside>
 
+    <div id="workarea">
+    <!-- One line: sidebar toggle, the active chat's title and actions, then the panel buttons. -->
+    <div id="tabbar">
+      <button id="btn-sidebar" class="icon-btn" title="Show / hide the left sidebar (Ctrl+\)" aria-label="Toggle sidebar"><span data-icon="list"></span></button>
+      <span id="qa-chat-slot"></span>
+      <span class="spacer"></span>
+      <button id="btn-tasks" class="icon-btn" title="Tool panel: changes, files, terminal, diff, preview (Alt+V)" aria-label="Toggle the tool panel"><span data-icon="split"></span></button>
+      <button id="btn-overview" class="icon-btn" title="Show or hide the Overview" aria-label="Show or hide the Overview" aria-pressed="true"><span data-icon="layers"></span></button>
+      <button id="btn-new-window" class="icon-btn" title="Open a new window (Ctrl+Shift+N)" aria-label="Open a new window (Ctrl+Shift+N)"><span data-icon="expand"></span></button>
+      <!-- Kept for the tab registry; the sidebar's Open list is what you see. -->
+      <div id="tabs" hidden></div>
+    </div>
+    <div id="cols">
     <main id="main">
       <section id="view-conversations" class="view active">
-        <!-- One line: sidebar toggle, the active chat's title and actions, then the panel buttons. -->
-        <div id="tabbar">
-          <button id="btn-sidebar" class="icon-btn" title="Show / hide the left sidebar (Ctrl+\)" aria-label="Toggle sidebar"><span data-icon="list"></span></button>
-          <span id="qa-chat-slot"></span>
-          <span class="spacer"></span>
-          <button id="btn-tasks" class="icon-btn" title="Tool panel: changes, files, terminal, diff, preview (Alt+V)" aria-label="Toggle the tool panel"><span data-icon="split"></span></button>
-          <button id="btn-overview" class="icon-btn" title="Show or hide the Overview" aria-label="Show or hide the Overview" aria-pressed="true"><span data-icon="layers"></span></button>
-          <button id="btn-new-window" class="icon-btn" title="Open a new window (Ctrl+Shift+N)" aria-label="Open a new window (Ctrl+Shift+N)"><span data-icon="expand"></span></button>
-          <!-- Kept for the tab registry; the sidebar's Open list is what you see. -->
-          <div id="tabs" hidden></div>
-        </div>
         <div id="terminals"></div>
         <div id="statusbar">
           <span id="st-provider">—</span>
@@ -161,6 +163,8 @@
       </div>
       <div class="ov-body" id="overview-body"></div>
     </aside>
+    </div>
+    </div>
   </div>
 
   <!-- Status messages must be announced, not just drawn. -->
