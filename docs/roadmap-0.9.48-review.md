@@ -19,6 +19,27 @@ Each item is tagged with how sure the finding is:
 
 ---
 
+## Status (updated for 0.9.53)
+
+| Phase | Version | State |
+|---|---|---|
+| 0 Hotfixes (0.1 image cap, 0.2 provider switch, 0.3 effort toasts) | 0.9.48 | shipped |
+| 3 Tool calling (3.1 schemas, 3.2 Gemini signatures, 3.3 / 3.4 effort and output cap, 3.5 tool images, 3.8 vision gate) | 0.9.49 | shipped |
+| 1 Composer (1.1 provider + model picker, 1.2 per-model effort, 1.3 auto on every provider, 1.4 footbar) | 0.9.50 | shipped (picker is a grouped list, not yet a searchable popover) |
+| 2 Layout (2.3 pinned compact Overview) | 0.9.51 | shipped |
+| 2 Layout (2.1 sidebar, 2.2 one-line top strip) | 0.9.52 | shipped |
+| 4.6 unsent messages, 5.2 queue without images, 5.4 / 5.5 notices and sandbox | 0.9.53 | shipped |
+
+Not done, and why:
+
+- **3.6 / 3.7 / 3.9 / 3.10 / 3.11** (Mistral call ids, long tool names, per-model temperature, parallel-call streams, prompt caching) need a reproduction against the real provider before a fix is worth its code.
+- **3.8, tools half** (warn when a model cannot call tools): only the vision half shipped.
+- **4.1 ES-module split** of `chat.js` / `app.js`: a large mechanical change with no user-visible effect; it deserves its own release.
+- **4.2 event-driven Overview**: still refreshes every 6 s while the window is visible (it skips redraws when nothing changed).
+- **4.3 transcript folding** for very long chats and **1.1 searchable model popover**: not started.
+
+---
+
 ## Phase 0: Hotfixes (ship as 0.9.48)
 
 These are small, confirmed bugs that users run into today.

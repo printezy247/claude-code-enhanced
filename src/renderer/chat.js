@@ -281,8 +281,9 @@ const Chat = (() => {
       if (d) { chat.composer.value = d; autosize(chat.composer); }
     } catch { /* ignore */ }
     try {
-      const p = JSON.parse(localStorage.getItem('cce:pending:' + (chat.cwd || '')) || '[]');
-      if (Array.isArray(p) && p.length) { chat.pendingMsgs = p; renderQueued(chat); }
+      const p = JSON.parse(localStorage.getItem('cce:pending:' + (chat.cwd || '')) || '[]')
+        .map((m) => (typeof m === 'string' ? m : (m && m.text) || '')).filter(Boolean);
+      if (p.length) { chat.pendingMsgs = p; renderQueued(chat); }
     } catch { /* ignore */ }
     // The nav badge counts every open tab, chat tabs included.
     if (typeof window.updateTabCount === 'function') window.updateTabCount();
@@ -375,7 +376,7 @@ const Chat = (() => {
           appendUser(chat, text || '(image)');
           chat.pendingMsgs.push(blocks.length ? { text, blocks } : text);
           renderQueued(chat);
-          try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
+          persistPending(chat);
           chat.msgs.appendChild(el('div', 'sys-note', '⏭ queued — will run after current turn finishes'));
           scrollDownSoft(chat);
           chat.composer.value = '';
@@ -402,11 +403,13 @@ const Chat = (() => {
         updateBusyUi(chat);
         ccx.invoke('chat:steer', { id: chat.id, text, blocks: blocks.length ? blocks : null }).then((r) => {
           if (!r || !r.ok) {
-            appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)'));
+            appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)') + ' (your message is back in the box)');
+            restoreUnsent(chat, text, blocks);
             setBusy(chat, false);
           }
         }).catch((e) => {
-          appendError(chat, 'Not sent — ' + ((e && e.message) || e));
+          appendError(chat, 'Not sent — ' + ((e && e.message) || e) + ' (your message is back in the box)');
+          restoreUnsent(chat, text, blocks);
           setBusy(chat, false);
         });
         return;
@@ -439,11 +442,13 @@ const Chat = (() => {
       updateBusyUi(chat);
       ccx.invoke('chat:send', { id: chat.id, text, blocks: blocks.length ? blocks : null }).then((r) => {
         if (!r || !r.ok) {
-          appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)'));
+          appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)') + ' (your message is back in the box)');
+          restoreUnsent(chat, text, blocks);
           setBusy(chat, false);
         }
       }).catch((e) => {
-        appendError(chat, 'Not sent — ' + ((e && e.message) || e));
+        appendError(chat, 'Not sent — ' + ((e && e.message) || e) + ' (your message is back in the box)');
+        restoreUnsent(chat, text, blocks);
         setBusy(chat, false);
       });
     };
@@ -907,7 +912,7 @@ const Chat = (() => {
       del.onclick = (e) => {
         e.stopPropagation();
         chat.pendingMsgs.splice(i, 1);
-        try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
+        persistPending(chat);
         renderQueued(chat);
       };
       chip.appendChild(label);
@@ -1171,7 +1176,7 @@ const Chat = (() => {
     chat.effort = '';
     refreshEffort(chat);
     discoverModels(chat);
-    toast('Provider → ' + chat.provider.name, 'ok');
+    toast('Provider → ' + chat.provider.name + ' — this conversation now goes to that provider', 'ok');
   }
 
   // Ask the provider what models it actually serves (OpenCode-style discovery)
@@ -2355,6 +2360,32 @@ const Chat = (() => {
     if (chat.titleEl) chat.titleEl.textContent = t;
   }
 
+  /**
+   * Remember queued messages across a crash: the text only. Pasted images are
+   * megabytes of base64, which overflow the storage quota and would leave
+   * screenshots sitting unencrypted on disk.
+   */
+  function persistPending(chat) {
+    try {
+      const texts = (chat.pendingMsgs || []).map((m) => (typeof m === 'string' ? m : (m && m.text) || '')).filter(Boolean);
+      localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(texts));
+    } catch { /* quota or private mode: the queue just is not remembered */ }
+  }
+
+  /**
+   * A send the engine refused: put the text and images back in the composer
+   * (unless the user has already started something new) so nothing is lost.
+   */
+  function restoreUnsent(chat, text, blocks) {
+    if (text && !chat.composer.value) { chat.composer.value = text; autosize(chat.composer); }
+    if (blocks && blocks.length && !chat.pendingImages.length) {
+      for (const b of blocks) {
+        if (b && b.type === 'image' && b.source && b.source.data) chat.pendingImages.push({ media_type: b.source.media_type, data: b.source.data });
+      }
+      renderImageChips(chat);
+    }
+  }
+
   function renderImageChips(chat) {
     chat.imgs.innerHTML = '';
     chat.imgs.classList.toggle('hidden', !chat.pendingImages.length);
@@ -3055,7 +3086,7 @@ const Chat = (() => {
       // Auto-dispatch next queued message if any
       if (chat.pendingMsgs && chat.pendingMsgs.length > 0) {
         const next = chat.pendingMsgs.shift();
-        try { localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(chat.pendingMsgs)); } catch { /* ignore */ }
+        persistPending(chat);
         renderQueued(chat);
         const nextText = typeof next === 'string' ? next : (next && next.text) || '';
         const nextBlocks = typeof next === 'object' && next ? next.blocks : null;

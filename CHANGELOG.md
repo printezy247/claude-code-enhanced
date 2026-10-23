@@ -2,6 +2,16 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.53] — 2026-10-23
+
+### Fixed
+- A message the engine refuses (too large, session ended, provider error) is no longer lost: the text and images go back into the composer, and the error says so. A newer draft is never overwritten.
+- Queued messages are remembered across a crash as text only. Pasted screenshots used to be written into browser storage as base64: they overflowed its quota without a word and sat on disk unencrypted.
+
+### Security
+- The preview frame can no longer open popups (`allow-popups` removed from its sandbox); a local dev page still cannot reach the app.
+- Switching provider now says that the conversation, history included, goes to the new provider.
+
 ## [0.9.52] — 2026-10-23
 
 ### Changed
