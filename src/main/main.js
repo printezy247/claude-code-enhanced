@@ -736,7 +736,10 @@ function createWindow(initialState) {
 // proves which window a call came from, and ownership is what makes a
 // cross-window call refuseable. #feat-multi-window
 function isValidSender(e) {
-  if (!e || !e.senderFrame || !e.senderFrame.url) return true;
+  // A bare/absent event is an in-process call (tests). Any real event (it has
+  // a `sender` or a frame) with no frame URL fails closed.
+  if (!e || (!e.sender && !e.senderFrame)) return true;
+  if (!e.senderFrame || !e.senderFrame.url) return false;
   const url = String(e.senderFrame.url);
   if (url.startsWith('devtools://')) return true;
   if (url.startsWith('file://')) {

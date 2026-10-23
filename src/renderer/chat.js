@@ -391,9 +391,9 @@ const Chat = (() => {
           return;
         }
 
-        // Steer mode: interrupt immediately and redirect
+        // Steer mode: send now, Claude reads it at the next step (no interrupt)
         appendUser(chat, text || '(image)');
-        chat.msgs.appendChild(el('div', 'sys-note', '↯ steered — interrupted and redirected Claude'));
+        chat.msgs.appendChild(el('div', 'sys-note', '↯ steered — Claude will read this after its current step'));
         scrollDownSoft(chat);
         if (text && (!chat.promptHistory.length || chat.promptHistory[0] !== text)) {
           chat.promptHistory.unshift(text);
@@ -478,9 +478,9 @@ const Chat = (() => {
         chat.composer.value = chat.histIdx < 0 ? '' : chat.promptHistory[chat.histIdx];
         return;
       }
-      // End: back to the newest response. The composer keeps focus so the
-      // next message can be typed without a click.
-      if (e.key === 'End' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
+      // Ctrl+End: back to the newest response (plain End stays a text caret
+      // key). The composer keeps focus so the next message can be typed.
+      if (e.key === 'End' && e.ctrlKey && !e.shiftKey && !e.metaKey) {
         e.preventDefault();
         chat.follow = true;
         scrollDown(chat);
@@ -2948,7 +2948,7 @@ const Chat = (() => {
         ? '<span class="busy-mode-badge steer">↯ Steer</span>'
         : '<span class="busy-mode-badge queue">⏭ Queue</span>';
       chat.busyModeBtn.title = mode === 'steer'
-        ? 'Steer mode: Interrupts immediately (Enter). Click to switch to Queue.'
+        ? 'Steer mode: Claude reads it after its current step (Enter). Click to switch to Queue.'
         : 'Queue mode: Runs after turn completes (Enter). Click to switch to Steer.';
     }
     const mode = chat.busyMode || 'queue';

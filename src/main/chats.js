@@ -987,14 +987,10 @@ class ChatManager extends EventEmitter {
     return chat ? shareablePath(chat.written, chat.cwd || '', p) : null;
   }
 
+  /** Like Claude Code: the message joins the input stream and the engine
+   *  picks it up at the next step boundary. The running turn is not stopped
+   *  (the Stop button does that). */
   async steer(id, text, blocks) {
-    const chat = this.chats.get(id);
-    if (!chat || (!text && !(blocks && blocks.length))) return { ok: false };
-    if (chat.busy) {
-      // Interrupt active thinking / tool loop immediately so Claude redirects
-      await this.interrupt(id);
-      await new Promise(r => setTimeout(r, 60));
-    }
     return this.send(id, text, blocks);
   }
 

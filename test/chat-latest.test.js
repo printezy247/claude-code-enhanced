@@ -69,14 +69,25 @@ describe('jump to latest icon', () => {
 });
 
 describe('jump to latest keyboard shortcut', () => {
-  it('End in the composer returns to the newest response', () => {
+  const press = (init) => {
+    const composer = h.window.document.querySelector('.chat-input');
+    const ev = new h.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true, ...init });
+    composer.dispatchEvent(ev);
+    return ev;
+  };
+
+  it('Ctrl+End in the composer returns to the newest response', () => {
     setScroll(0, 1000, 100);
     expect(btn().classList.contains('hidden')).toBe(false);
-
-    const composer = h.window.document.querySelector('.chat-input');
-    composer.dispatchEvent(new h.window.KeyboardEvent('keydown', { key: 'End', bubbles: true, cancelable: true }));
-
+    press({ ctrlKey: true });
     expect(msgs().scrollTop).toBe(1000);
     expect(btn().classList.contains('hidden')).toBe(true);
+  });
+
+  it('plain End stays a caret key: no scroll, default not prevented', () => {
+    setScroll(0, 1000, 100);
+    const ev = press({});
+    expect(ev.defaultPrevented).toBe(false);
+    expect(msgs().scrollTop).toBe(0);
   });
 });

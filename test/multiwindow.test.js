@@ -17,7 +17,10 @@ const flush = async (n = 12) => {
 };
 
 /** The IPC event a window sends: the main process reads the sender's id. */
-const sender = (w) => ({ sender: { id: w.webContents.id } });
+const sender = (w) => ({
+  sender: { id: w.webContents.id },
+  senderFrame: { url: require('url').pathToFileURL(require('path').join(__dirname, '..', 'src', 'renderer', 'index.html')).href },
+});
 
 const { windowRegistry, sessions } = main;
 

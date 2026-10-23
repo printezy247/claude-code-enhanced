@@ -516,7 +516,7 @@ describe('context window display', () => {
 });
 
 describe('steer mode and web / PC tools access', () => {
-  it('steer interrupts a busy chat and dispatches prompt immediately', async () => {
+  it('steer does not interrupt a busy chat; the message joins the input stream', async () => {
     const { id } = await openChat();
     const chat = mgr.chats.get(id);
     chat.busy = true;
@@ -525,7 +525,7 @@ describe('steer mode and web / PC tools access', () => {
 
     const res = await mgr.steer(id, 'Stop investigating and build now');
     expect(res.ok).toBe(true);
-    expect(interruptSpy).toHaveBeenCalledWith(id);
+    expect(interruptSpy).not.toHaveBeenCalled();
     expect(sendSpy).toHaveBeenCalledWith(id, 'Stop investigating and build now', undefined);
   });
 
