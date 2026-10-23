@@ -1049,7 +1049,7 @@ function renderSplit() {
     ext.title = 'Open in the system browser';
     const frame = document.createElement('iframe');
     frame.className = 'preview-frame';
-    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-popups allow-same-origin');
+    frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin');
     try { const saved = localStorage.getItem('cce.previewUrl'); if (saved) url.value = saved; } catch { /* private mode */ }
     const nav = () => {
       let u = (url.value || '').trim();
