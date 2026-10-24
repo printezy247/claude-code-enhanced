@@ -1848,6 +1848,17 @@ function registerIpc() {
       transport: cfg.type === 'sse' ? 'sse' : 'http',
     });
   };
+  // The model reaches connectors through this broker; it holds the URLs,
+  // headers and tokens, so none of them enter a prompt. Opt-in per chat.
+  chats.setHostMcp(require('./hostmcp').createBroker({
+    resolveServer: async (name) => {
+      const def = await connectors.definition(claudePath(), String(name));
+      return def ? def.config : null;
+    },
+    getToken: (name) => mcpTokens.get(String(name)),
+    clearToken: (name) => mcpTokens.delete(String(name)),
+    isToolActive: (sessionId, connector, tool) => connectors.isConnectorToolActive(sessionId, connector, tool),
+  }));
   handle('mcp:list-tools', async ({ name }) => {
     const cfg = await mcpServerOf(name);
     const client = mcpClientOf(name, cfg);
