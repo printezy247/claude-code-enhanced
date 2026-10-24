@@ -427,6 +427,8 @@ class ChatManager extends EventEmitter {
             // Nothing was cut: the model already reads everything, and the
             // card would show the same text twice.
             if (!r.compacted) return {};
+            const liveChat = this.chats.get(id);
+            if (liveChat) liveChat.outputCharsTrimmed += Math.max(0, original.length - r.text.length);
             this.emit('event', id, { kind: 'tool-original', toolUseId: input.tool_use_id, text: r.original });
             return {
               hookSpecificOutput: {
@@ -776,7 +778,7 @@ class ChatManager extends EventEmitter {
       busy: false, sessionId: null,
       provider: providerInstance ? providers.publicInstance(providerInstance) : null,
       providerInstance,
-      push: stream.push, close: stream.close, lastResult: null,
+      push: stream.push, close: stream.close, lastResult: null, outputCharsTrimmed: 0,
       checkpoints: [],   // user-message uuids -> rewind anchors (file checkpointing)
       guard: createLoopGuard(),   // stops an agent that repeats itself
       written: new Set(),         // files the agent wrote: the only ones the UI may share
@@ -1066,7 +1068,11 @@ class ChatManager extends EventEmitter {
       ];
     }
     // Diagnostic: keep both numbers so the UI can show declared vs engine.
-    return { ...u, categories, maxTokens, percentage, declared, engineMaxTokens: u.maxTokens || 0 };
+    return {
+      ...u, categories, maxTokens, percentage, declared,
+      engineMaxTokens: u.maxTokens || 0,
+      outputCharsTrimmed: chat.outputCharsTrimmed || 0,
+    };
   }
 
   // File checkpointing: restore every tracked file to the state at a user
