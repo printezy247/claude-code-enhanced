@@ -181,7 +181,8 @@ const Chat = (() => {
         </div>
         <div class="chat-footbar">
           <button class="foot-pick chat-wf-btn" title="Workflows — multi-step task flows" aria-haspopup="menu"><span data-icon="flow"></span><span>workflows</span><span class="caret" data-icon="chevron"></span></button>
-          <select class="foot-pick chat-model-foot" title="Model (switching provider keeps this conversation)"></select>
+          <button class="foot-pick chat-model-btn" type="button" aria-haspopup="listbox" title="Model and provider (switching provider keeps this conversation)"><span class="mb-label">model</span><span class="caret" data-icon="chevron"></span></button>
+          <select class="foot-pick chat-model-foot hidden" tabindex="-1" aria-hidden="true"></select>
           <select class="foot-pick chat-mode-foot" title="Permission mode"></select>
           <select class="foot-pick chat-effort hidden" title="Reasoning effort (only the levels this model supports)" aria-label="Reasoning effort"></select>
           <button class="foot-pick chat-compact-btn" title="Compact this conversation in place — earlier turns are summarized, the chat keeps going"><span class="ctx-ring" style="--p:0"></span><span class="ctx-pct">ctx</span></button>
@@ -205,7 +206,7 @@ const Chat = (() => {
       dot: pane.querySelector('.chat-dot'), providerEl: pane.querySelector('.chat-provider'),
       projEl: pane.querySelector('.chat-project'), titleEl: pane.querySelector('.chat-title'),
       headerEl: pane.querySelector('.chat-header'),
-      modelSel: pane.querySelector('.chat-model-foot'), modeSel: pane.querySelector('.chat-mode-foot'),
+      modelSel: pane.querySelector('.chat-model-foot'), modelBtn: pane.querySelector('.chat-model-btn'), modeSel: pane.querySelector('.chat-mode-foot'),
       effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
       // Element ref and queue *counter* must not share a name: showQueued used
       // to overwrite the element with a number and the next send threw.
@@ -310,8 +311,10 @@ const Chat = (() => {
     fillModeSelect(chat.modeSel, chat.provider);
     chat.modeSel.value = chat.mode;
     refreshEffort(chat);
+    wireModelPicker(chat);
     chat.modelSel.addEventListener('change', async () => {
       const v = chat.modelSel.value;
+      if (!(await guardSwitch(chat, v))) { fillModelSelector(chat); return; }
       if (v.startsWith('__pm:')) { const [uid, m] = v.slice(5).split('\u0001'); await switchProvider(chat, uid, m || ''); return; }
       if (v.startsWith('__prov:')) { await switchProvider(chat, v.slice(7)); return; }
       if (v === '__custom') { openCustomModel(chat); return; }
@@ -438,6 +441,7 @@ const Chat = (() => {
       hideSlash(chat);
       clearImages(chat);
       updateBusyUi(chat);
+      if (blocks.some((b) => b && b.type === 'image')) chat.sentImages = true;
       ccx.invoke('chat:send', { id: chat.id, text, blocks: blocks.length ? blocks : null }).then((r) => {
         if (!r || !r.ok) {
           appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)') + ' (your message is back in the box)');
@@ -1035,7 +1039,164 @@ const Chat = (() => {
 
   /* ---------------- model selector ---------------- */
 
+  /* ---------------- searchable model + provider picker ---------------- */
+
+  const modelInfoCache = new Map();
+  /** Catalog facts for a picker value ('' = provider default, '__pm:uid\u0001model' = another provider). */
+  async function modelInfoFor(chat, value) {
+    const pm = String(value || '').startsWith('__pm:');
+    const [uid, m] = pm ? value.slice(5).split('\u0001') : [null, value];
+    const key = (pm ? uid : (chat.provider && chat.provider.uid) || '') + '\u0001' + (m || '');
+    if (modelInfoCache.has(key)) return modelInfoCache.get(key);
+    let info = null;
+    try {
+      const r = await ccx.invoke('chat:model-info', { id: chat.id, uid: pm ? uid : undefined, model: m || '' });
+      if (r && r.ok) info = r;
+    } catch { /* offline catalog: stay quiet */ }
+    modelInfoCache.set(key, info);
+    return info;
+  }
+  const fmtCtx = (n) => (n >= 1e6 ? (n / 1e6).toFixed(n % 1e6 ? 1 : 0) + 'M' : Math.round(n / 1e3) + 'k');
+  function infoLine(info) {
+    if (!info) return 'no catalog entry for this model';
+    const bits = [];
+    if (info.context) bits.push(fmtCtx(info.context) + ' context');
+    bits.push(info.vision === false ? '⚠ no images' : info.vision ? 'images' : '');
+    bits.push(info.tools === false ? '⚠ no tool calls' : info.tools ? 'tools' : '');
+    bits.push(info.reasoning ? 'reasoning' : '');
+    return bits.filter(Boolean).join(' · ') || 'no catalog entry for this model';
+  }
+
+  /** The visible model control; the hidden <select> stays the single source of truth. */
+  function wireModelPicker(chat) {
+    const sel = chat.modelSel, btn = chat.modelBtn;
+    if (!btn) return;
+    const sync = () => {
+      const o = sel.options[sel.selectedIndex];
+      btn.querySelector('.mb-label').textContent = o ? o.textContent : 'model';
+      btn.title = (o ? o.textContent + ' — ' : '') + 'change model or provider';
+    };
+    // Code all over this file sets sel.value directly; keep the button in step.
+    const desc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value');
+    Object.defineProperty(sel, 'value', { configurable: true, get() { return desc.get.call(this); }, set(v) { desc.set.call(this, v); sync(); } });
+    chat.syncModelBtn = sync;
+    sync();
+    btn.addEventListener('click', () => openModelPicker(chat));
+  }
+
+  function openModelPicker(chat) {
+    document.querySelector('.model-pop')?.remove();
+    const sel = chat.modelSel;
+    const rows = [];
+    for (const n of sel.children) {
+      if (n.tagName === 'OPTGROUP') for (const o of n.children) rows.push({ value: o.value, label: o.textContent, group: n.label });
+      else rows.push({ value: n.value, label: n.textContent, group: '' });
+    }
+    let recent = [];
+    try { recent = JSON.parse(localStorage.getItem('cce.recentModels') || '[]'); } catch { /* none */ }
+    const pop = el('div', 'model-pop');
+    pop.setAttribute('role', 'dialog');
+    pop.setAttribute('aria-label', 'Choose a model');
+    const q = el('input', 'model-q');
+    q.type = 'text'; q.placeholder = 'Search models and providers…'; q.setAttribute('aria-label', 'Search models');
+    const list = el('div', 'model-list');
+    list.setAttribute('role', 'listbox');
+    const cap = el('div', 'model-cap hint', '');
+    pop.append(q, list, cap);
+    document.body.appendChild(pop);
+    const r = chat.modelBtn.getBoundingClientRect();
+    pop.style.left = Math.max(8, Math.min(r.left, window.innerWidth - 400)) + 'px';
+    pop.style.bottom = (window.innerHeight - r.top + 6) + 'px';
+
+    let shown = [], active = 0;
+    const close = () => { pop.remove(); document.removeEventListener('mousedown', away, true); };
+    const away = (e) => { if (!pop.contains(e.target) && e.target !== chat.modelBtn && !chat.modelBtn.contains(e.target)) close(); };
+    document.addEventListener('mousedown', away, true);
+    const pick = (row) => {
+      close();
+      if (row.value && row.value !== '__custom') {
+        try { localStorage.setItem('cce.recentModels', JSON.stringify([row.value, ...recent.filter((v) => v !== row.value)].slice(0, 5))); } catch { /* quota */ }
+      }
+      sel.value = row.value;
+      sel.dispatchEvent(new Event('change'));
+    };
+    const paintCap = async () => {
+      const row = shown[active];
+      if (!row) { cap.textContent = ''; return; }
+      cap.textContent = '…';
+      const info = row.value === '__custom' ? null : await modelInfoFor(chat, row.value);
+      if (shown[active] === row) cap.textContent = row.value === '__custom' ? 'type any model id the provider serves' : infoLine(info);
+      cap.classList.toggle('warn', /⚠/.test(cap.textContent));
+    };
+    const paint = () => {
+      const term = q.value.trim().toLowerCase();
+      list.textContent = '';
+      const match = (x) => !term || (x.label + ' ' + x.group).toLowerCase().includes(term);
+      const recents = term ? [] : recent.map((v) => rows.find((x) => x.value === v)).filter(Boolean);
+      shown = [];
+      const section = (title, items) => {
+        if (!items.length) return;
+        if (title) list.appendChild(el('div', 'model-group', title));
+        for (const x of items) {
+          const b = el('button', 'model-row' + (x.value === sel.value ? ' current' : ''), x.label);
+          b.type = 'button'; b.setAttribute('role', 'option');
+          const i = shown.push(x) - 1;
+          b.dataset.i = String(i);
+          list.appendChild(b);
+        }
+      };
+      section(recents.length ? 'Recent' : '', recents);
+      const groups = new Map();
+      for (const x of rows.filter(match)) { if (!groups.has(x.group)) groups.set(x.group, []); groups.get(x.group).push(x); }
+      for (const [g, items] of groups) section(g || (term ? 'Matches' : 'This provider'), items);
+      if (!shown.length) list.appendChild(el('div', 'hint model-empty', 'No model matches. Use "Custom…" to type an id.'));
+      active = Math.max(0, shown.findIndex((x) => x.value === sel.value && !term));
+      mark();
+    };
+    const mark = () => {
+      list.querySelectorAll('.model-row').forEach((b) => b.classList.toggle('active', Number(b.dataset.i) === active));
+      list.querySelector('.model-row.active')?.scrollIntoView({ block: 'nearest' });
+      paintCap();
+    };
+    list.addEventListener('mousemove', (e) => { const b = e.target.closest('.model-row'); if (b && Number(b.dataset.i) !== active) { active = Number(b.dataset.i); mark(); } });
+    list.addEventListener('click', (e) => { const b = e.target.closest('.model-row'); if (b) pick(shown[Number(b.dataset.i)]); });
+    q.addEventListener('input', paint);
+    q.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowDown') { active = Math.min(shown.length - 1, active + 1); mark(); e.preventDefault(); }
+      else if (e.key === 'ArrowUp') { active = Math.max(0, active - 1); mark(); e.preventDefault(); }
+      else if (e.key === 'Enter') { if (shown[active]) pick(shown[active]); e.preventDefault(); }
+      else if (e.key === 'Escape') { close(); chat.modelBtn.focus(); e.preventDefault(); e.stopPropagation(); }
+    });
+    paint();
+    q.focus();
+  }
+
+  /**
+   * Before a model or provider switch: will the transcript fit, and can the
+   * target read the images already in it? Returns false to cancel the switch.
+   */
+  async function guardSwitch(chat, value) {
+    if (!value || value === '__custom') return true;
+    const info = await modelInfoFor(chat, value);
+    if (!info) return true;
+    const used = (chat.ctxUsage && chat.ctxUsage.totalTokens) || 0;
+    if (info.context && used > info.context * 0.9) {
+      const compact = window.confirm('This conversation uses about ' + fmtCtx(used) + ' tokens, but the new model holds ' + fmtCtx(info.context)
+        + '.\n\nOK = compact the conversation first, then switch.\nCancel = decide next.');
+      if (compact) { await doCompact(chat); return true; }
+      return window.confirm('Switch anyway? The next message may be rejected for being too long.');
+    }
+    if (info.vision === false && chat.sentImages) {
+      return window.confirm('The new model cannot read images, and this conversation contains some. They will be replaced by a note. Switch anyway?');
+    }
+    if (info.tools === false) toast('⚠ ' + (info.model || 'This model') + ' cannot call tools: it will answer in text only, with no file or shell access', 'err');
+    return true;
+  }
+
   function fillModelSelector(chat) {
+    try { fillModelSelectorInner(chat); } finally { if (chat.syncModelBtn) chat.syncModelBtn(); }
+  }
+  function fillModelSelectorInner(chat) {
     const sel = chat.modelSel;
     sel.innerHTML = '';
     const add = (value, label) => { const o = el('option', '', label); o.value = value; sel.appendChild(o); };
