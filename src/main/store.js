@@ -47,6 +47,7 @@ const DEFAULT_SETTINGS = {
   // The connector servers this chat is pinned to. Empty = the CLI's own MCP
   // config stays the single source (nothing is registered twice).
   scopedMcpServers: [],
+  hostConnectors: false,        // model calls connectors through the host broker (hostmcp.js)
   // Hand the CLI's ~/.claude/agents to the engine as agent definitions.
   sdkAgents: false,
   mainAgent: '',            // the agent that runs the main thread

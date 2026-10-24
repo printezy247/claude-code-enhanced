@@ -17,6 +17,7 @@ const managedconfig = require('./managedconfig');
 const { createLoopGuard } = require('./loopguard');
 const { absFor, shareablePath } = require('./fileshare');
 const sdkoptions = require('./sdkoptions');
+const hostmcp = require('./hostmcp');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
@@ -294,6 +295,31 @@ class ChatManager extends EventEmitter {
     return chat.sessionGrants;
   }
 
+  /** Give the manager the host MCP broker (see hostmcp.js). */
+  setHostMcp(broker) { this.hostMcp = broker; }
+
+  /** The in-process MCP server that fronts the broker for one chat. */
+  async _hostMcpServer(chatId) {
+    const { tool, createSdkMcpServer } = await loadSdk();
+    const { z } = require('zod');
+    const text = (t, isError) => ({ content: [{ type: 'text', text: t }], isError: !!isError });
+    return createSdkMcpServer({
+      name: hostmcp.HOST_SERVER,
+      version: '1.0.0',
+      tools: [
+        tool('list_connector_tools', 'List the tools of a connector you may call with call_connector_tool.',
+          { server: z.string() },
+          async ({ server }) => {
+            try { return text(JSON.stringify(await this.hostMcp.listTools(chatId, server))); }
+            catch (err) { return text(String((err && err.message) || err), true); }
+          }),
+        tool('call_connector_tool', 'Call a tool of a connector. The host holds the connection details.',
+          { server: z.string(), tool: z.string(), args: z.record(z.string(), z.unknown()).optional() },
+          async ({ server, tool: name, args }) => this.hostMcp.callTool(chatId, server, name, args)),
+      ],
+    });
+  }
+
   _hasSessionGrant(chatId, toolName) {
     const grants = this._sessionGrants(chatId);
     return !!grants && grants.has(String(toolName));
@@ -553,6 +579,11 @@ class ChatManager extends EventEmitter {
       mcpServers: scopedMcp,
       onUserDialog: (request, ctx) => this._userDialog(id, request, ctx),
     }));
+    // Host-owned connectors (opt-in): the model gets two in-process tools and
+    // never sees a URL, header or token. The broker lives in the main process.
+    if (this.hostMcp && settings && settings.hostConnectors) {
+      options.mcpServers = { ...(options.mcpServers || {}), [hostmcp.HOST_SERVER]: await this._hostMcpServer(id) };
+    }
     // Every CCE chat starts with the caveman (lite) voice, rtk command
     // compression and the superpowers skill set (brainstorming first) baked
     // into the engine's system prompt, so connector tools stay available. #feat-cce-bootstrap
@@ -649,12 +680,16 @@ class ChatManager extends EventEmitter {
       // session permission mode (the desktop keeps chromePermissionMode next
       // to permissionMode for the same reason). A connector the user marked
       // "ask once per session" is asked once, not once per call. #t0-ask-session
-      const connPol = toolPolicy.connectorPolicy(toolName, settings);
-      const isConn = toolPolicy.isConnectorTool(toolName);
+      // A call through the host broker is judged as the real connector tool, so
+      // the per-tool policy and the destructive prompt apply unchanged.
+      const policyName = hostmcp.policyNameFor(toolName, input);
+      if (toolName === hostmcp.HOST_LIST_TOOL) return { behavior: 'allow' };
+      const connPol = toolPolicy.connectorPolicy(policyName, settings);
+      const isConn = toolPolicy.isConnectorTool(policyName);
       const bypass = effMode === 'bypassPermissions' || !!yolo;
       // A destructive connector tool always needs a confirmation, unless the
       // session skips every prompt on purpose.
-      const destructive = isConn && !bypass && toolPolicy.isDestructiveTool(toolName);
+      const destructive = isConn && !bypass && toolPolicy.isDestructiveTool(policyName);
       if (connPol === 'always_deny') {
         return { behavior: 'deny', message: toolPolicy.MESSAGES.connectorDeny };
       }
@@ -665,7 +700,7 @@ class ChatManager extends EventEmitter {
       if (connPol === 'always_ask_session') {
         // The grant lives in the host, so it dies with the chat and never
         // leaks into the next one.
-        if (this._hasSessionGrant(id, toolName)) return { behavior: 'allow' };
+        if (this._hasSessionGrant(id, policyName)) return { behavior: 'allow' };
         alwaysAsk = true;
       }
       if (destructive) alwaysAsk = true;
@@ -696,7 +731,7 @@ class ChatManager extends EventEmitter {
       const requestId = 'r' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
       return await new Promise((resolve) => {
         const entry = {
-          chatId: id, requestId, toolName, input, resolve,
+          chatId: id, requestId, toolName, input, resolve, grantName: policyName,
           // The connector policy that produced this prompt. 'always_ask_session'
           // needs it: the grant is recorded when the user answers. #t0-ask-session
           policy: connPol || null,
@@ -1456,7 +1491,7 @@ class ChatManager extends EventEmitter {
     // 'always_ask_session': the user approved this tool for the rest of the
     // chat. The grant dies with the chat. #t0-ask-session
     if (entry.policy === 'always_ask_session' && decision !== 'deny') {
-      this._grantSession(id, entry.toolName);
+      this._grantSession(id, entry.grantName || entry.toolName);
     }
     if (decision === 'deny') {
       // A deny message is how plan-mode feedback reaches the model. #40
