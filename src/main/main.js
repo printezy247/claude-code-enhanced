@@ -1828,6 +1828,7 @@ function registerIpc() {
   // Only a server the user configured may be called: the name is resolved
   // through the CLI's own MCP config, so a renderer cannot point the host at
   // an arbitrary URL.
+  const mcpTokens = new Map();   // server name -> device-flow token, memory only
   const mcpServerOf = async (name) => {
     const def = await connectors.definition(claudePath(), String(name));
     if (!def) throw new Error('no MCP server named ' + name);
@@ -1837,11 +1838,19 @@ function registerIpc() {
     }
     return cfg;
   };
+  const mcpClientOf = (name, cfg) => {
+    const key = String(name);
+    const token = mcpTokens.get(key);
+    if (token && token.expiresAt != null && token.expiresAt <= Date.now()) mcpTokens.delete(key);
+    return new mcpclient.McpClient({
+      url: cfg.url,
+      headers: mcpclient.headersWithAuth(cfg.headers || {}, mcpTokens.get(key)),
+      transport: cfg.type === 'sse' ? 'sse' : 'http',
+    });
+  };
   handle('mcp:list-tools', async ({ name }) => {
     const cfg = await mcpServerOf(name);
-    const client = new mcpclient.McpClient({
-      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
-    });
+    const client = mcpClientOf(name, cfg);
     try {
       await client.initialize();
       return { ok: true, tools: await client.listTools() };
@@ -1851,9 +1860,7 @@ function registerIpc() {
   });
   handle('mcp:call-tool', async ({ name, tool, args }) => {
     const cfg = await mcpServerOf(name);
-    const client = new mcpclient.McpClient({
-      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
-    });
+    const client = mcpClientOf(name, cfg);
     try {
       await client.initialize();
       return { ok: true, result: await client.callTool(String(tool || ''), args || {}) };
@@ -1863,9 +1870,7 @@ function registerIpc() {
   });
   handle('mcp:list-resources', async ({ name }) => {
     const cfg = await mcpServerOf(name);
-    const client = new mcpclient.McpClient({
-      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
-    });
+    const client = mcpClientOf(name, cfg);
     try {
       await client.initialize();
       return { ok: true, resources: await client.listResources() };
@@ -1875,9 +1880,7 @@ function registerIpc() {
   });
   handle('mcp:read-resource', async ({ name, uri }) => {
     const cfg = await mcpServerOf(name);
-    const client = new mcpclient.McpClient({
-      url: cfg.url, headers: cfg.headers || {}, transport: cfg.type === 'sse' ? 'sse' : 'http',
-    });
+    const client = mcpClientOf(name, cfg);
     try {
       await client.initialize();
       return { ok: true, result: await client.readResource(String(uri || '')) };
@@ -1885,7 +1888,6 @@ function registerIpc() {
       await client.close();
     }
   });
-  const mcpTokens = new Map();   // server name -> device-flow token, memory only
   handle('mcp:authenticate', async ({ name }, e) => {
     // The server is resolved through the CLI's own MCP config, so the
     // renderer cannot point the host's OAuth flow at an arbitrary host.
@@ -1901,7 +1903,12 @@ function registerIpc() {
       oauth: { scopes: Array.isArray(cfg.scopes) ? cfg.scopes : undefined },
       onCode: (c) => announce.resolve({ ok: true, userCode: c.userCode, verificationUri: c.verificationUri, expiresIn: c.expiresIn }),
     }).then((tok) => {
-      mcpTokens.set(name, { accessToken: tok.accessToken, tokenType: tok.tokenType, at: Date.now() });
+      const expiresIn = Number(tok.expiresIn);
+      mcpTokens.set(String(name), {
+        accessToken: tok.accessToken,
+        tokenType: tok.tokenType,
+        expiresAt: Number.isFinite(expiresIn) && expiresIn > 0 ? Date.now() + expiresIn * 1000 : null,
+      });
       if (target && !target.isDestroyed()) target.webContents.send('mcp:auth-done', { name, ok: true });
     }).catch((err) => {
       announce.reject(err);   // no-op once the code was returned

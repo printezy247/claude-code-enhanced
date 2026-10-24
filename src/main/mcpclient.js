@@ -27,6 +27,19 @@ const { sseLines } = require('./sse');
 const PROTOCOL_VERSION = '2025-06-18';
 /** Every POST and every GET asks for both answer shapes. */
 const ACCEPT = 'application/json, text/event-stream';
+
+/** Merge an in-memory device-flow token into configured server headers. */
+function headersWithAuth(headers = {}, token, now = Date.now()) {
+  const out = { ...headers };
+  if (!token || !token.accessToken
+      || (token.expiresAt != null && Number(token.expiresAt) <= now)) return out;
+  for (const key of Object.keys(out)) {
+    if (key.toLowerCase() === 'authorization') delete out[key];
+  }
+  out.Authorization = `${token.tokenType || 'Bearer'} ${token.accessToken}`;
+  return out;
+}
+
 /** RFC 8628 device-code grant type. */
 const DEVICE_GRANT = 'urn:ietf:params:oauth:grant-type:device_code';
 /** RFC 8414 / OpenID discovery documents, in the order they are tried. */
@@ -742,4 +755,4 @@ async function postForm(f, url, params, label) {
   return body;
 }
 
-module.exports = { McpClient, McpAuthError, callTool, deviceCodeAuth, sseEvents, PROTOCOL_VERSION };
+module.exports = { McpClient, McpAuthError, callTool, deviceCodeAuth, sseEvents, headersWithAuth, PROTOCOL_VERSION };
