@@ -1336,6 +1336,7 @@ function renderTasks(target, cwd, only) {
     if (metered && chat.spent > 0.0001) bits.push('$' + chat.spent.toFixed(4));
     if (r.num_turns != null) bits.push(r.num_turns + ' turns');
     if (r.duration_ms) bits.push(Math.round(r.duration_ms / 1000) + 's');
+    if (r.usage && r.usage.cache_read_input_tokens) bits.push('⚡ ' + fmtTokShort(r.usage.cache_read_input_tokens).replace(/\.0(?=[kMB]$)/, '') + ' cached');
     if (bits.length) {
       const row = el('div', 'kv-row');
       row.appendChild(el('span', 'kv-k', 'session'));

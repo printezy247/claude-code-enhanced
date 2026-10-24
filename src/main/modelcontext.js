@@ -88,7 +88,7 @@ function modelContext(provider, model) {
 function modelCaps(provider, model) {
   const pid = provider && (provider.presetId || provider.modelsDevId || provider.id);
   const id = String(model || (provider && provider.model) || '').trim();
-  const none = { reasoning: null, vision: null, tools: null, maxOutput: 0 };
+  const none = { reasoning: null, vision: null, tools: null, temperature: null, maxOutput: 0 };
   if (!pid || !id) return none;
   const cleanId = modelsdev.normalizeModelId(id);
   const hit = modelsdev.model(pid, id) || modelsdev.model(pid, cleanId) || modelsdev.model(pid, id.toLowerCase())
@@ -99,6 +99,7 @@ function modelCaps(provider, model) {
     reasoning: typeof hit.reasoning === 'boolean' ? hit.reasoning : null,
     vision: inputs ? inputs.includes('image') : (typeof hit.attachment === 'boolean' ? hit.attachment : null),
     tools: typeof hit.tool_call === 'boolean' ? hit.tool_call : null,
+    temperature: typeof hit.temperature === 'boolean' ? hit.temperature : null,
     maxOutput: Number(hit.limit && hit.limit.output) || 0,
   };
 }

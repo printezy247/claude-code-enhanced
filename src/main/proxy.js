@@ -7,6 +7,7 @@ const { setBounded } = require('./boundedmap');
 const http = require('http');
 const crypto = require('crypto');
 const adapters = require('./adapters');
+const { wrapToolNames } = require('./toolnames');
 const { openaiBase } = adapters;
 const { sseLines } = require('./sse');
 
@@ -117,6 +118,11 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     return;
   }
 
+  // Function names over 64 characters are a 400 on OpenAI-format APIs: send short
+  // stand-ins and restore the real names in the reply.
+  const tn = wrapToolNames(body);
+  body = tn.body;
+
   const wantStream = !!body.stream;
   // Abort the upstream call when the engine drops the connection (interrupt,
   // tab close, timeout). Without this a cancelled turn keeps generating and the
@@ -178,7 +184,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     const j = await upstream.json();
     if (j && j.error && !j.choices) { sendBodyError(res, j.error); return; }
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify(aggregateToAnthropic(j, body)));
+    res.end(JSON.stringify(aggregateToAnthropic(j, body, tn.back)));
     return;
   }
 
@@ -191,7 +197,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     try { j = await upstream.json(); } catch { /* handled below */ }
     if (!j || (j.error && !j.choices)) { sendBodyError(res, (j && j.error) || { message: 'the provider sent an unreadable reply' }); return; }
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
-    writeMessageAsSse(res, aggregateToAnthropic(j, body));
+    writeMessageAsSse(res, aggregateToAnthropic(j, body, tn.back));
     return;
   }
 
@@ -212,6 +218,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   // this; otherwise the engine sees zero input tokens, which breaks the context
   // meter and the auto-compact decision. #9
   let promptTokens = inTokens(body);
+  let cachedTokens = 0;     // prompt tokens the provider served from its cache
   let blockOpen = false;   // a content_block is currently open
   let blockIdx = -1;
   let blockType = null;    // 'text' | 'thinking' | 'tool_use'
@@ -315,7 +322,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         continue;
       }
       closeBlock();
-      openBlock({ type: 'tool_use', id: t.id, name: t.name });
+      openBlock({ type: 'tool_use', id: t.id, name: tn.back(t.name) });
       sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: t.args || '{}' } });
       stopReason = 'tool_use';
       sawTool = true;
@@ -344,6 +351,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
             const p = j.usage.prompt_tokens || j.usage.input_tokens;
             if (p) promptTokens = p;
             if (j.usage.completion_tokens) outTokens = j.usage.completion_tokens;
+            cachedTokens = cachedFrom(j.usage) || cachedTokens;
           }
           return;
         }
@@ -399,6 +407,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
           const p = j.usage.prompt_tokens || j.usage.input_tokens;
           if (p) promptTokens = p;
           if (j.usage.completion_tokens) outTokens = j.usage.completion_tokens;
+          cachedTokens = cachedFrom(j.usage) || cachedTokens;
         }
     };
     for await (const line of sseLines(upstream.body)) handleLine(line);
@@ -456,7 +465,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   // reasoning is the answer.
   if (!sawText && !sawTool && reasonAll.trim()) emitText(reasonAll.trim());
   closeBlock();
-  sse('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: { input_tokens: promptTokens, output_tokens: outTokens } });
+  sse('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: anthropicUsage(promptTokens, outTokens, cachedTokens) });
   sse('message_stop', { type: 'message_stop' });
   if (!res.writableEnded && !res.destroyed) { try { res.end(); } catch { /* socket gone */ } }
 }
@@ -712,7 +721,7 @@ function isTokenValid(req, token) {
   return false;
 }
 
-function aggregateToAnthropic(j, body) {
+function aggregateToAnthropic(j, body, back = (n) => n) {
   const choice = (j.choices || [])[0] || {};
   const m = choice.message || {};
   // Thinking models (qwen3.5, gemma-through-Ollama) put reasoning in a
@@ -770,7 +779,7 @@ function aggregateToAnthropic(j, body) {
       content.push({ type: 'text', text: '[The call to ' + tc.function.name + ' was cut off before its arguments were complete, so it was not run.]' });
       continue;
     }
-    content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: tc.function.name, input });
+    content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: back(tc.function.name), input });
   }
   // Thought, then said nothing: the reasoning is all there is, so it is the answer.
   if (!m.content && !(m.tool_calls || []).length && reasoning.trim()) content.push({ type: 'text', text: reasoning.trim() });
@@ -790,10 +799,7 @@ function aggregateToAnthropic(j, body) {
     content,
     stop_reason: stop,
     stop_sequence: null,
-    usage: {
-      input_tokens: (j.usage && j.usage.prompt_tokens) || 0,
-      output_tokens: (j.usage && j.usage.completion_tokens) || 0,
-    },
+    usage: anthropicUsage((j.usage && j.usage.prompt_tokens) || 0, (j.usage && j.usage.completion_tokens) || 0, cachedFrom(j.usage)),
   };
 }
 
@@ -990,7 +996,29 @@ function parseToolJson(raw) {
  * `index`; but a provider that reuses an index for a NEW call (different id)
  * would otherwise get two calls' arguments glued together.
  */
+/** Prompt tokens served from the provider's cache: OpenAI-style, DeepSeek-style or Anthropic-style. */
+function cachedFrom(u) {
+  if (!u) return 0;
+  return Number(u.prompt_tokens_details && u.prompt_tokens_details.cached_tokens)
+    || Number(u.prompt_cache_hit_tokens) || Number(u.cache_read_input_tokens) || 0;
+}
+
+/** Anthropic usage: cache reads are reported apart from, and not counted in, input_tokens. */
+function anthropicUsage(prompt, out, cached) {
+  const c = Math.min(Math.max(0, cached | 0), Math.max(0, prompt | 0));
+  const u = { input_tokens: Math.max(0, (prompt | 0) - c), output_tokens: out | 0 };
+  if (c) u.cache_read_input_tokens = c;
+  return u;
+}
+
 function pickToolSlot(toolBuf, tc) {
+  // A chunk that names its call's id belongs to the slot already holding that
+  // id, whatever index it carries (interleaved parallel calls).
+  if (tc.id) {
+    for (const [k, v] of toolBuf) if (v.real && v.id === tc.id) return k;
+  }
+  // No index and no id: a continuation of the call opened last.
+  if (tc.index == null && !tc.id) return toolBuf.size ? Math.max(...toolBuf.keys()) : 0;
   const k = tc.index != null ? tc.index : toolBuf.size;
   const cur = toolBuf.get(k);
   if (cur && cur.real && tc.id && cur.id !== tc.id) {
@@ -1000,7 +1028,7 @@ function pickToolSlot(toolBuf, tc) {
 }
 
 module.exports = {
-  pickToolSlot,
+  pickToolSlot, cachedFrom, anthropicUsage,
   startProxy,
   CCE_PROXY_PORT,
   isTokenValid,
