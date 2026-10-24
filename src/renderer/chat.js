@@ -3341,7 +3341,8 @@ const Chat = (() => {
       if (metered && typeof r.total_cost_usd === 'number' && r.total_cost_usd > 0) parts.push('$' + r.total_cost_usd.toFixed(4));
       parts.push((r.num_turns != null ? r.num_turns : 0) + ' turns', Math.round((r.duration_ms || 0) / 1000) + 's');
       const u = r.usage || {};
-      if (u.input_tokens != null) parts.push('↑' + (metered ? '' : '~') + fmtTok(u.input_tokens) + ' ↓' + (metered ? '' : '~') + fmtTok(u.output_tokens));
+      if (u.input_tokens != null) parts.push('↑' + (metered ? '' : '~') + fmtTok(u.input_tokens) + ' ↓' + (metered ? '' : '~') + fmtTok(u.output_tokens)
+        + (u.cache_read_input_tokens ? ' ⚡' + fmtTok(u.cache_read_input_tokens) + ' cached' : ''));
     }
     chat.statusLine.textContent = parts.join('  ·  ');
     if (chat.init) {

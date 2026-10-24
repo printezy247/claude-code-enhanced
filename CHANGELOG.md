@@ -2,6 +2,17 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.61] — 2026-10-24
+
+### Fixed
+- **Tool names over 64 characters** (common with MCP connectors) no longer fail on OpenAI-format providers: CCE sends a short stable stand-in and restores the real name in the reply.
+- **Mistral** tool-call ids are mapped to the nine-character form it requires, the same way for the call and its result.
+- **Sampling settings** (temperature, top_p) are not sent to models the catalog says reject them (reasoning models).
+- **Parallel tool calls** whose streamed pieces arrive interleaved, or without an index, are kept apart and reassembled correctly.
+
+### Added
+- **Cached tokens** the provider served from its prompt cache are now reported to the engine as cache reads (so context and cost figures are right) and shown in the Overview's session row. Claude models on OpenRouter get an explicit cache breakpoint on the system prompt.
+
 ## [0.9.60] — 2026-10-24
 
 ### Added

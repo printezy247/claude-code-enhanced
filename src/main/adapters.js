@@ -11,6 +11,7 @@
 const { parsedDataEvents } = require('./sse');
 const bedrock = require('./bedrock.js');
 const modelsdev = require('./modelsdev.js');
+const { wireToolId } = require('./toolnames');
 const { modelCaps } = require('./modelcontext.js');
 
 /** OpenAI-compatible root for a provider base URL (bare Ollama roots get /v1). */
@@ -194,7 +195,7 @@ function sanitizeSchema(schema, dialect = 'openai') {
  * request (a model that is not catalogued keeps today's behaviour).
  */
 function capsFor(prov, model) {
-  try { return modelCaps(prov, model); } catch { return { reasoning: null, vision: null, tools: null, maxOutput: 0 }; }
+  try { return modelCaps(prov, model); } catch { return { reasoning: null, vision: null, tools: null, temperature: null, maxOutput: 0 }; }
 }
 
 /** Tools go out only when the catalog does not say the model cannot call them (text-only ask mode). */
@@ -223,8 +224,9 @@ function buildOpenAIBody(body, wantStream, prov) {
   // A request above the model's output limit is a 400 on most providers.
   if (caps.maxOutput > 0 && maxTokens > caps.maxOutput) maxTokens = caps.maxOutput;
   const out = { model: body.model, stream: !!wantStream, max_tokens: maxTokens };
-  if (body.temperature != null) out.temperature = body.temperature;
-  if (body.top_p != null) out.top_p = body.top_p;
+  // Reasoning models (o-series, GPT-5) reject sampling parameters outright.
+  if (body.temperature != null && caps.temperature !== false) out.temperature = body.temperature;
+  if (body.top_p != null && caps.temperature !== false) out.top_p = body.top_p;
   if (caps.reasoning === false) {
     // A model the catalog marks as non-reasoning rejects (or ignores) effort
     // and thinking budgets: send neither.
@@ -263,7 +265,7 @@ function buildOpenAIBody(body, wantStream, prov) {
       const toolCalls = [];
       for (const b of c) {
         if (b.type === 'text') text += b.text;
-        else if (b.type === 'tool_use') toolCalls.push({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } });
+        else if (b.type === 'tool_use') toolCalls.push({ id: wireToolId(prov, b.id), type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } });
         else if (b.type === 'thinking') { /* not translated */ }
       }
       // Reasoning that leaked into an earlier reply must not be replayed as if
@@ -290,7 +292,7 @@ function buildOpenAIBody(body, wantStream, prov) {
       else if (b.type === 'image' && b.source && b.source.type === 'base64') {
         textParts.push(imgPart(b.source.media_type, b.source.data));
       } else if (b.type === 'tool_result') {
-        msgs.push({ role: 'tool', tool_call_id: b.tool_use_id, content: toolResultText(b) });
+        msgs.push({ role: 'tool', tool_call_id: wireToolId(prov, b.tool_use_id), content: toolResultText(b) });
         // The `tool` role is text-only; an image a tool returned (Read of a
         // PNG, a screenshot tool) reaches the model as a user turn right after.
         for (const im of toolResultImages(b)) textParts.push(imgPart(im.media_type, im.data));
@@ -304,6 +306,13 @@ function buildOpenAIBody(body, wantStream, prov) {
   if (lateSystem.length) {
     if (msgs[0] && msgs[0].role === 'system') msgs[0].content += '\n\n' + lateSystem.join('\n\n');
     else msgs.unshift({ role: 'system', content: lateSystem.join('\n\n') });
+  }
+  // OpenRouter passes Anthropic's explicit cache breakpoints through for Claude
+  // models: mark the system prompt (the stable prefix) so later turns read it
+  // from cache. Providers that cache automatically (OpenAI, DeepSeek) need nothing.
+  if (/openrouter\.ai/i.test(String(prov && prov.baseUrl)) && /^anthropic\//i.test(String(body.model))
+    && msgs[0] && msgs[0].role === 'system' && typeof msgs[0].content === 'string') {
+    msgs[0] = { ...msgs[0], content: [{ type: 'text', text: msgs[0].content, cache_control: { type: 'ephemeral' } }] };
   }
   out.messages = msgs;
 
@@ -439,8 +448,8 @@ function buildResponsesInput(body, prov) {
   const req = { model: body.model, input, max_output_tokens: maxOut };
   if (lateSystem.length) instructions = (instructions ? instructions + '\n\n' : '') + lateSystem.join('\n\n');
   if (instructions) req.instructions = String(instructions);
-  if (body.temperature != null) req.temperature = body.temperature;
-  if (body.top_p != null) req.top_p = body.top_p;
+  if (body.temperature != null && caps.temperature !== false) req.temperature = body.temperature;
+  if (body.top_p != null && caps.temperature !== false) req.top_p = body.top_p;
   if (caps.reasoning !== false && (body.effort || body.reasoning_effort)) req.reasoning = { effort: body.effort || body.reasoning_effort };
   if (offersTools(body, caps)) {
     req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') }));
@@ -578,7 +587,7 @@ function buildGeminiBody(body, prov) {
   if (systemText) req.systemInstruction = { parts: [{ text: String(systemText) }] };
   const gen = {};
   if (body.max_tokens) gen.maxOutputTokens = caps.maxOutput > 0 ? Math.min(body.max_tokens, caps.maxOutput) : body.max_tokens;
-  if (body.temperature != null) gen.temperature = body.temperature;
+  if (body.temperature != null && caps.temperature !== false) gen.temperature = body.temperature;
   if (body.top_p != null) gen.topP = body.top_p;
   if (prov && isGoogle(prov)) {
     // Google: budget 1..24576, or a level, never both.
