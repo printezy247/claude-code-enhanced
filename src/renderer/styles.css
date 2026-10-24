@@ -1744,3 +1744,21 @@ body[data-view]:not([data-view="conversations"]) :is(#overviewpane, #splitpane, 
 details.cmd-note > summary { cursor: pointer; list-style: none; }
 details.cmd-note > summary::-webkit-details-marker { display: none; }
 .cmd-note-full { margin: 6px 0 0; padding: 8px 10px; max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; text-align: left; font-size: 11px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
+
+/* ===== Searchable model + provider picker ===== */
+.chat-footbar .chat-model-btn { flex: 1 1 160px; max-width: 300px; min-width: 120px; justify-content: space-between; text-align: left; }
+.chat-footbar .chat-model-btn .mb-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-pop {
+  position: fixed; z-index: 60; width: 390px; max-width: calc(100vw - 16px); display: flex; flex-direction: column;
+  background: var(--bg); border: 1px solid var(--accent-line); border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,.6); overflow: hidden;
+}
+.model-q { margin: 8px; padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); font-size: 12.5px; }
+.model-q:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.model-list { max-height: min(46vh, 360px); overflow-y: auto; padding: 0 6px 6px; }
+.model-group { padding: 8px 8px 3px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.model-row { display: block; width: 100%; text-align: left; padding: 6px 9px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font-size: 12.5px; cursor: pointer; overflow-wrap: anywhere; }
+.model-row.active { background: var(--accent-soft); }
+.model-row.current::after { content: ' ✓'; color: var(--accent); }
+.model-cap { padding: 7px 12px; border-top: 1px solid var(--border); font-size: 11.5px; min-height: 18px; }
+.model-cap.warn { color: var(--warn); }
+.model-empty { padding: 10px; }

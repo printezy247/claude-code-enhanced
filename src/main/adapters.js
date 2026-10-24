@@ -197,6 +197,11 @@ function capsFor(prov, model) {
   try { return modelCaps(prov, model); } catch { return { reasoning: null, vision: null, tools: null, maxOutput: 0 }; }
 }
 
+/** Tools go out only when the catalog does not say the model cannot call them (text-only ask mode). */
+function offersTools(body, caps) {
+  return caps.tools !== false && Array.isArray(body.tools) && body.tools.length > 0;
+}
+
 /** Images inside a tool_result: [{media_type, data}], in order. */
 function toolResultImages(b) {
   const out = [];
@@ -302,7 +307,7 @@ function buildOpenAIBody(body, wantStream, prov) {
   }
   out.messages = msgs;
 
-  if (Array.isArray(body.tools) && body.tools.length) {
+  if (offersTools(body, caps)) {
     out.tools = body.tools.map(t => ({
       type: 'function',
       function: { name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') },
@@ -437,7 +442,7 @@ function buildResponsesInput(body, prov) {
   if (body.temperature != null) req.temperature = body.temperature;
   if (body.top_p != null) req.top_p = body.top_p;
   if (caps.reasoning !== false && (body.effort || body.reasoning_effort)) req.reasoning = { effort: body.effort || body.reasoning_effort };
-  if (Array.isArray(body.tools) && body.tools.length) {
+  if (offersTools(body, caps)) {
     req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') }));
   }
   return req;
@@ -587,7 +592,7 @@ function buildGeminiBody(body, prov) {
   }
   if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) gen.stopSequences = body.stop_sequences;
   if (Object.keys(gen).length) req.generationConfig = gen;
-  if (Array.isArray(body.tools) && body.tools.length) {
+  if (offersTools(body, caps)) {
     req.tools = [{ functionDeclarations: body.tools.map(t => ({ name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'gemini') })) }];
   }
   return req;

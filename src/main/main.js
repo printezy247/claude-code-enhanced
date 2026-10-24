@@ -42,7 +42,7 @@ const workers = require('./workers');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
 const { startProxy, clearLastGoodModel } = require('./proxy');
-const { effortLevels } = require('./modelcontext');
+const { effortLevels, modelCaps } = require('./modelcontext');
 // Per-launch secret the translator proxy requires on every request. The proxy
 // attaches real provider API keys, so without it any local process could spend
 // them. See issue #8.
@@ -1632,6 +1632,14 @@ function registerIpc() {
     const prov = c.providerInstance || null;
     return { levels: effortLevels(prov, c.model || (prov && prov.model) || ''), current: c.effort || '' };
   }));
+  // What the catalog says about one model (for the picker's caption and the
+  // vision / context / tools warnings). Null fields mean "unknown, assume fine".
+  handle('chat:model-info', async ({ id, uid, model }) => {
+    const c = id ? chats.chats.get(id) : null;
+    const prov = uid ? store.providers.find(p => p.uid === uid) : (c && c.providerInstance) || null;
+    const m = String(model || (c && uid == null && c.model) || (prov && prov.model) || '').slice(0, 200);
+    return { ok: true, model: m, context: modelContext(prov, m) || 0, ...modelCaps(prov, m) };
+  });
   handle('chat:set-mode', owned('chats', async ({ id, mode }) => chats.setMode(id, mode)));
   // Per-chat reasoning effort and thinking budget. The settings existed in
   // chats.create but had no runtime control and no UI at all. #38
