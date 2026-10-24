@@ -9,9 +9,23 @@ import { createRequire } from 'node:module';
 import http from 'node:http';
 
 const require = createRequire(import.meta.url);
-const { McpClient, McpAuthError, callTool, deviceCodeAuth } = require('../src/main/mcpclient.js');
+const { McpClient, McpAuthError, callTool, deviceCodeAuth, headersWithAuth } = require('../src/main/mcpclient.js');
 
 const servers = [];
+
+describe('host OAuth request headers', () => {
+  it('adds a valid device-flow token to the configured MCP headers', () => {
+    const token = { accessToken: 'short-lived', tokenType: 'Bearer', expiresAt: 2000 };
+    expect(headersWithAuth({ Authorization: 'Basic old' }, token, 1000)).toEqual({
+      Authorization: 'Bearer short-lived',
+    });
+  });
+
+  it('does not send an expired token and preserves configured headers', () => {
+    const token = { accessToken: 'expired', tokenType: 'Bearer', expiresAt: 1000 };
+    expect(headersWithAuth({ 'X-Client': 'cce' }, token, 1000)).toEqual({ 'X-Client': 'cce' });
+  });
+});
 
 /** Start a local server; `handler` is a plain node:http request handler. */
 function startServer(handler) {
