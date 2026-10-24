@@ -1558,8 +1558,8 @@ function registerIpc() {
     }
   });
   handle('chat:last', async ({ cwd }) => ({ sessionId: chats.lastChatFor(cwd) }));
-  handle('chat:send', owned('chats', async ({ id, text, blocks }) => chats.send(id, text, blocks)));
-  handle('chat:steer', owned('chats', async ({ id, text, blocks }) => chats.steer(id, text, blocks)));
+  handle('chat:send', owned('chats', async ({ id, text, blocks, override }) => chats.send(id, text, blocks, { override })));
+  handle('chat:steer', owned('chats', async ({ id, text, blocks, override }) => (override ? chats.steer(id, text, blocks, { override }) : chats.steer(id, text, blocks))));
   handle('chat:interrupt', owned('chats', async ({ id }) => { await chats.interrupt(id); return {}; }));
   handle('chat:set-model', owned('chats', async ({ id, model }) => {
     // Mid-chat model switches need the same local pre-warm as chat creation:

@@ -18,6 +18,7 @@ const { createLoopGuard } = require('./loopguard');
 const { absFor, shareablePath } = require('./fileshare');
 const sdkoptions = require('./sdkoptions');
 const hostmcp = require('./hostmcp');
+const capabilities = require('./capabilities');
 
 // The Agent SDK is ESM-only; load it lazily via dynamic import from CJS.
 // In packaged builds the module must load from the UNPACKED on-disk copy —
@@ -1007,9 +1008,14 @@ class ChatManager extends EventEmitter {
     } catch { return null; }
   }
 
-  send(id, text, blocks) {
+  send(id, text, blocks, opts = {}) {
     const chat = this.chats.get(id);
     if (!chat || (!text && !(blocks && blocks.length))) return { ok: false };
+    // Check the task against the selected model. Only an explicit "no" blocks,
+    // and the model is never switched for the user.
+    const verdict = capabilities.gate(chat.providerInstance, chat.model, capabilities.needsOf({ blocks }),
+      { override: !!(opts && opts.override) });
+    if (!verdict.allow) return { ok: false, error: verdict.error, unsupported: verdict.unsupported };
     // Anthropic content blocks (e.g. pasted images) or plain text
     if (chat.guard) chat.guard.reset();
     chat.guardTripped = false;
@@ -1022,7 +1028,7 @@ class ChatManager extends EventEmitter {
     if (delivered === false) return { ok: false, error: 'this session has ended — open a new chat (Ctrl+Shift+T)' };
     chat.busy = true;
     this.emit('event', id, { kind: 'status', busy: true });
-    return { ok: true };
+    return verdict.notes.length ? { ok: true, notes: verdict.notes } : { ok: true };
   }
 
   /** The real path of a file the agent wrote in this chat, or null. */
@@ -1034,8 +1040,8 @@ class ChatManager extends EventEmitter {
   /** Like Claude Code: the message joins the input stream and the engine
    *  picks it up at the next step boundary. The running turn is not stopped
    *  (the Stop button does that). */
-  async steer(id, text, blocks) {
-    return this.send(id, text, blocks);
+  async steer(id, text, blocks, opts) {
+    return opts === undefined ? this.send(id, text, blocks) : this.send(id, text, blocks, opts);
   }
 
   async interrupt(id) {
