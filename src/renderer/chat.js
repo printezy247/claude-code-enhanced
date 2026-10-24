@@ -1980,11 +1980,6 @@ const Chat = (() => {
     const pct = Math.max(0, Math.min(100, Number(u.percentage) || 0));
     const trimmed = Math.max(0, Number(u.outputCharsTrimmed) || 0);
     const trimmedHint = trimmed ? ` · ${trimmed.toLocaleString()} tool-output characters kept out of model input` : '';
-    chat.ctxBar.classList.remove('hidden');
-    chat.ctxFill.style.width = pct.toFixed(1) + '%';
-    chat.ctxFill.style.background = pct > 85 ? 'var(--danger)' : pct > 65 ? 'var(--warn)' : 'var(--accent)';
-    chat.ctxBar.title = 'context: ' + (u.totalTokens || 0).toLocaleString() + ' / '
-      + (u.maxTokens || 0).toLocaleString() + ' tokens (' + pct.toFixed(0) + '%)' + trimmedHint;
     chat.ctxUsage = u;
     if (chat.compactBtn) {
       const ring = chat.compactBtn.querySelector('.ctx-ring');
