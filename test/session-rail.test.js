@@ -106,13 +106,18 @@ describe('right-hand session rail', () => {
     expect(call.payload.type).toBe('shell');
   });
 
-  it('refreshes the rail on a timer while it is open', async () => {
+  it('refreshes the rail when something happens, not on a short timer', async () => {
     h.window.toggleSplit(true);
     await flush(4);
-    const before = h.calls.filter(c => c.channel === 'git:info').length;
-    await new Promise(r => setTimeout(r, 6300));
+    const count = () => h.calls.filter(c => c.channel === 'git:info').length;
+    const before = count();
+    await new Promise(r => setTimeout(r, 1500));
     await flush(4);
-    expect(h.calls.filter(c => c.channel === 'git:info').length).toBeGreaterThan(before);
+    expect(count()).toBe(before);                 // idle: no polling
+    h.window.refreshOverview();                   // an event (turn end, tool finished…)
+    await new Promise(r => setTimeout(r, 800));
+    await flush(4);
+    expect(count()).toBeGreaterThan(before);
     h.window.toggleSplit(false);
   });
 });
