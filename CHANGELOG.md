@@ -2,6 +2,12 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.60] — 2026-10-24
+
+### Added
+- **Host-owned connector calls (opt-in, `hostConnectors` setting).** The model can call an approved connector tool without ever seeing its URL, headers or sign-in token; the app holds them. Your per-chat tool selection and per-tool permission prompts still apply, expired sign-ins are dropped, and secrets are masked in results and errors.
+- **Task-aware model checks.** Before a message is sent, the app checks the selected model against what the message needs (tool calling, image input). If the model clearly cannot do it, the send is refused with a plain message and you can send anyway. If the model is not in the catalog, the send goes through with a note. The app never switches model or provider for you.
+
 ## [0.9.59] — 2026-10-23
 
 ### Fixed
