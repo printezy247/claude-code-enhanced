@@ -34,11 +34,12 @@ Each item is tagged with how sure the finding is:
 
 Notes on the last batch: 4.3's folding was already covered by the transcript virtualization (a 100-row window); only the Monaco release on eviction was missing. 4.4's payload limits already exist (attach and file:read caps, per-channel IPC caps). 4.5 became a "Switch back" offer when the new provider fails before answering, because the engine only emits its first init frame once a message is sent.
 
+| 4.1 ES-module split | 0.9.64 | shipped (chat/, app/, providers/ modules bundled by esbuild) |
+
 Not done, and why:
 
 - **3.6 / 3.7 / 3.9 / 3.10 / 3.11** (Mistral call ids, long tool names, per-model temperature, parallel-call streams, prompt caching) need a reproduction against the real provider before a fix is worth its code.
 - **3.8, tools half** (warn when a model cannot call tools): only the vision half shipped.
-- **4.1 ES-module split** of `chat.js` / `app.js`: a large mechanical change with no user-visible effect; it deserves its own release.
 - **4.2 event-driven Overview**: still refreshes every 6 s while the window is visible (it skips redraws when nothing changed).
 - **4.3 transcript folding** for very long chats and **1.1 searchable model popover**: not started.
 
