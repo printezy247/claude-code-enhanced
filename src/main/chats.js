@@ -497,7 +497,7 @@ class ChatManager extends EventEmitter {
       // Auto-lean for small-context models when explicitly configured in settings
       const ctx = (typeof this.contextOf === 'function' && Number(this.contextOf(providerInstance, model))) || 0;
       if (ctx > 0 && ctx < 131072) {
-        options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'WebSearch'];
+        options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'AskUserQuestion'];
         isLean = true;
       }
     }
@@ -612,7 +612,7 @@ class ChatManager extends EventEmitter {
     // Every model/provider gets the action-oriented discipline:
     // plan before multi-step work, update on steer, check off as items finish,
     // and prioritize editing/building over endless file exploration.
-    options.appendSystemPrompt = 'For multi-step requests, create a todo list with TodoWrite (or TaskCreate/TaskUpdate). Focus on target files directly. Avoid endless file reading/searching: after inspecting the directly relevant code, proceed immediately to implementation and verification. Update the list when steered and mark items completed promptly. Prefer tools over prose checklists. If two tools share a name, prefer the server matching the task.';
+    options.appendSystemPrompt = appendPromptFor(options.tools, options.disallowedTools);
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)
@@ -1752,7 +1752,23 @@ function normalizeMode(mode, providerInstance, yolo) {
   return m;
 }
 
+/**
+ * The discipline every model gets: plan multi-step work, check items off, edit
+ * rather than endlessly explore, and ask the user through the question card
+ * (not in prose) when a decision or a missing fact is needed.
+ */
+function appendPromptFor(tools, disallowed) {
+  let p = 'For multi-step requests, create a todo list with TodoWrite (or TaskCreate/TaskUpdate). Focus on target files directly. Avoid endless file reading/searching: after inspecting the directly relevant code, proceed immediately to implementation and verification. Update the list when steered and mark items completed promptly. Prefer tools over prose checklists. If two tools share a name, prefer the server matching the task.';
+  const askable = (!Array.isArray(tools) || tools.includes('AskUserQuestion'))
+    && !(Array.isArray(disallowed) && disallowed.includes('AskUserQuestion'));
+  if (askable) {
+    p += ' When you need a decision or a missing fact from the user, call the AskUserQuestion tool with two to four short options instead of asking in plain text, then wait for the answer. Do not guess when a wrong guess would cost the user real work.';
+  }
+  return p;
+}
+
 module.exports = ChatManager;
+module.exports.appendPromptFor = appendPromptFor;
 module.exports.normalizeMode = normalizeMode;
 module.exports.wantsAutoPolicy = wantsAutoPolicy;
 module.exports.MODES = MODES;

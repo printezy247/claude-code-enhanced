@@ -2,6 +2,13 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.63] — 2026-10-24
+
+### Fixed
+- **Models are now told to use the question card.** The system prompt added for every model asks them to call AskUserQuestion (two to four short options) when they need a decision or a missing fact, instead of asking in plain text. It is left out when the tool is not available.
+- **The "Lean coding" and "Read-only" tool presets, and automatic lean mode for small-context models, now keep AskUserQuestion**, so small models can still ask you through the card. The custom tool checklist ticks it by default.
+- Checked and unchanged: the question card is drawn in the chat, answers go back to the engine as the tool's answers (multi-select as a list), Skip denies it, and the auto policy never approves a question on your behalf.
+
 ## [0.9.62] — 2026-10-24
 
 ### Changed
