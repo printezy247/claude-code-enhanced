@@ -1,12 +1,8 @@
-// Providers UI — OpenCode-style provider settings.
-//
-// Owns the "Connect" picker (all models.dev providers, searchable), the provider
-// detail panel (Auth / Models / Options / Advanced / Diagnostics tabs), and the
-// unified local-runtime model manager. app.js delegates here; el/toast/ccx/$/
-// state come from the shared renderer scope.
-'use strict';
+// Split from the former providers.js (roadmap 4.1). Behaviour is unchanged.
+import { el, state, toast } from '../app/core.js';
+import { refreshProviders } from '../app/provider-forms.js';
 
-const ProvidersUI = (() => {
+export const ProvidersUI = (() => {
   // uid -> {ok, error, at} from the last Test connection.
   const testResults = new Map();
   // uid -> {status:'idle'|'running'|'done'|'error', msg}

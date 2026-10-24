@@ -2,6 +2,13 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.64] — 2026-10-24
+
+### Changed
+- **The renderer is now ES modules.** The three big scripts that shared one global scope (`chat.js` ~5,400 lines, `app.js` ~3,400, `providers.js`) are split into modules by job — `chat/` (composer, transcript, stream, tool cards, permissions, model picker, panels, slash commands, events, session), `app/` (tabs, conversations sidebar, overview, connectors, settings, usage, provider forms) and `providers/` — each importing what it uses. `main.js` is the entry.
+- They are bundled by esbuild (`scripts/build-renderer.js`) into one script, `src/renderer/app.bundle.js`, which `index.html` loads. It is built automatically before `npm start`, `npm run smoke` and `npm run dist`; it is not committed, and the module sources are left out of the package.
+- No visible or behavioural change: screenshots of the app before and after are pixel-identical in the scenarios checked (start, picker open, Providers page, request rail), and the app boots in real Electron.
+
 ## [0.9.63] — 2026-10-24
 
 ### Fixed

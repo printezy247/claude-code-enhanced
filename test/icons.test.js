@@ -9,6 +9,7 @@ import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { loadRenderer, flush } = require('./helpers/renderer.js');
+const { rendererFiles, rendererSource } = require('./helpers/renderer-source.js');
 const icons = require('../src/shared/icons.js');
 
 const ROOT = join(__dirname, '..');
@@ -27,7 +28,7 @@ const COLOUR_EMOJI = /[\u{1F300}-\u{1FAFF}\u{1F1E6}-\u{1F1FF}\u{1F900}-\u{1F9FF}
 
 describe('the icon set itself', () => {
   it('has a name for every icon the UI asks for', () => {
-    const src = (read('src/renderer/chat.js') + read('src/renderer/app.js') + read('src/renderer/index.html'))
+    const src = (rendererSource() + read('src/renderer/index.html'))
       // Comments mention the attribute in prose; only real markup counts.
       .replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
     const asked = new Set([...src.matchAll(/data-icon="([a-zA-Z0-9]+)"/g)].map((m) => m[1]));
@@ -82,7 +83,7 @@ describe('the icon set itself', () => {
 });
 
 describe('no emoji are left doing icon work (#54)', () => {
-  for (const f of ['src/renderer/chat.js', 'src/renderer/app.js', 'src/renderer/index.html', 'src/renderer/providers.js']) {
+  for (const f of [...rendererFiles(), 'src/renderer/index.html']) {
     it(`${f} contains no emoji`, () => {
       const hits = read(f).match(new RegExp(COLOUR_EMOJI, 'gu')) || [];
       expect(hits, 'emoji left in ' + f + ': ' + [...new Set(hits)].join(' ')).toEqual([]);

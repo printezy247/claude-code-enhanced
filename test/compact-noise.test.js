@@ -1,9 +1,11 @@
 // The notes around /compact stay quiet: a long hook dump folds to one line, and
 // connectors the user switched off are not reported as "not ready".
 import { describe, it, expect } from 'vitest';
-import fs from 'node:fs';
+import { createRequire } from 'node:module';
 
-const src = fs.readFileSync(new URL('../src/renderer/chat.js', import.meta.url), 'utf8');
+const { rendererSource } = createRequire(import.meta.url)('./helpers/renderer-source.js');
+
+const src = rendererSource();
 
 describe('quiet system notes', () => {
   it('folds long command output into a <details> with a one-line label', () => {

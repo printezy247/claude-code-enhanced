@@ -10,6 +10,7 @@ import { join } from 'node:path';
 
 const require = createRequire(import.meta.url);
 const { loadRenderer, flush } = require('./helpers/renderer.js');
+const { rendererFiles, rendererSource } = require('./helpers/renderer-source.js');
 
 const ROOT = join(__dirname, '..');
 const css = () => readFileSync(join(ROOT, 'src', 'renderer', 'styles.css'), 'utf8');
@@ -176,7 +177,8 @@ describe('landmarks and live regions (#53)', () => {
 
 describe('dialogs declare themselves (#53)', () => {
   it('every modal overlay sets role=dialog and aria-modal', () => {
-    const src = readFileSync(join(ROOT, 'src', 'renderer', 'app.js'), 'utf8');
+    // The app shell's dialogs only (app/*.js and main.js), as before the split.
+    const src = rendererFiles().filter((f) => /\/app\/|\/main\.js$/.test(f)).map((f) => readFileSync(join(ROOT, f), 'utf8')).join('\n');
     const overlays = src.match(/el\('div', 'modal-overlay'\)/g) || [];
     expect(overlays.length).toBeGreaterThanOrEqual(4);
     const withRole = src.match(/overlay\.setAttribute\('role', 'dialog'\)/g) || [];
@@ -186,9 +188,9 @@ describe('dialogs declare themselves (#53)', () => {
 });
 
 describe('icon-only buttons have an accessible name (#53)', () => {
-  it('each glyph-only button in app.js and chat.js carries aria-label', () => {
+  it('each glyph-only button in the renderer modules carries aria-label', () => {
     let total = 0;
-    for (const f of ['src/renderer/app.js', 'src/renderer/chat.js']) {
+    for (const f of rendererFiles()) {
       const src = readFileSync(join(ROOT, f), 'utf8');
       // A button whose only content is a glyph, not a word.
       const glyphOnly = src.match(/el\('button', '[^']+', '(?:✕|▾|▶|■|✻|⏹|⇧|⋯|✎|⧉|⚙|↻|↶|＋)'\)/g) || [];

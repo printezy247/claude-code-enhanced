@@ -1,9 +1,9 @@
 // Loader for the renderer scripts in a jsdom window.
 //
-// src/renderer/*.js are plain scripts (no modules) that read `window.ccx`,
-// `document` and each other's globals. This harness builds the DOM shell from
-// index.html, installs a recording `ccx` stub, then evaluates app.js and chat.js
-// inside the window context and hands back everything tests need to poke at.
+// The renderer (src/renderer/main.js and its modules) reads `window.ccx` and
+// `document`. This harness builds the DOM shell from index.html, installs a
+// recording `ccx` stub, then evaluates the esbuild bundle inside the window
+// context and hands back everything tests need to poke at.
 'use strict';
 
 const fs = require('fs');
@@ -11,6 +11,17 @@ const path = require('path');
 const { JSDOM } = require('jsdom');
 
 const ROOT = path.join(__dirname, '..', '..');
+const { execFileSync } = require('child_process');
+
+let bundled = null;
+/**
+ * The renderer bundle, built once per test file. It is built in a child
+ * process: esbuild refuses to load inside a jsdom test environment.
+ */
+const bundle = () => bundled || (bundled = execFileSync(
+  process.execPath, [path.join(ROOT, 'scripts', 'build-renderer.js'), '--stdout'],
+  { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 },
+));
 const HTML = path.join(ROOT, 'src', 'renderer', 'index.html');
 
 /** A DOMPurify/marked stand-in: the real ones are UMD bundles loaded by tag. */
@@ -74,35 +85,17 @@ function loadRenderer(opts = {}) {
   window.FitAddon = { FitAddon: class { fit() {} } };
   window.monaco = { editor: {} };
 
-  // Both files are plain scripts sharing globals (app.js reads Chat, chat.js
-  // reads switchView/toast from app.js), so they must run in ONE eval scope.
-  // Each source's top-level `const` is then hoisted into that shared scope, and
-  // the tail re-publishes the names tests need onto window.
+  // The renderer is ES modules bundled by scripts/build-renderer.js. Build it in
+  // memory once per test file and evaluate the resulting classic script; its
+  // entry (src/renderer/main.js) publishes the globals tests reach for
+  // (Chat, switchView, createSession, toast, state, ...) on window.
   // src/shared/*.js are real <script> tags in index.html (stripped above), so
-  // load them here too: chat.js reads window.CCEIcons/CCEThink, providers.js CCETpl.
+  // load them here too: chat code reads window.CCEIcons/CCEThink, providers CCETpl.
   for (const f of ['icons.js', 'think.js', 'tpl.js', 'usertext.js']) {
     const s = fs.readFileSync(path.join(ROOT, 'src', 'shared', f), 'utf8');
     window.eval(s + '\n//# sourceURL=shared/' + f);
   }
-  const src = ['chat.js', 'providers.js', 'app.js'].map((f) => (
-    fs.readFileSync(path.join(ROOT, 'src', 'renderer', f), 'utf8')
-      + '\n//# sourceURL=' + f
-  )).join('\n;\n');
-
-  window.eval(src + `
-;window.Chat = Chat;
-window.switchView = switchView;
-window.createSession = createSession;
-window.toast = toast;
-window.state = state;
-window.tabRegistry = tabRegistry;
-window.__activate = window.__activate;
-window.killSession = killSession;
-window.recentlyClosedCount = () => recentlyClosed.length;
-window.paintDeclaredIcons = paintDeclaredIcons;
-window.elIcon = elIcon;
-window.parseForceCtx = (typeof parseForceCtx !== 'undefined') ? parseForceCtx : undefined;
-`);
+  window.eval(bundle() + '\n//# sourceURL=app.bundle.js');
 
   return { dom, window, ccx, calls, listeners };
 }

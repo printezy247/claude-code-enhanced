@@ -1,7 +1,7 @@
 {
   "name": "claude-code-enhanced",
   "productName": "Claude Code Enhanced",
-  "version": "0.9.63",
+  "version": "0.9.64",
   "description": "Chat UI, terminal sessions and MCP connectors for Claude Code.",
   "main": "src/main/main.js",
   "license": "MIT",
@@ -12,13 +12,16 @@
   "scripts": {
     "postinstall": "electron-builder install-app-deps",
     "icons": "electron scripts/render-icon.js",
+    "build:renderer": "node scripts/build-renderer.js",
+    "prestart": "npm run build:renderer",
     "start": "electron .",
     "rebuild": "electron-builder install-app-deps",
+    "presmoke": "npm run build:renderer",
     "smoke": "CCE_SMOKE=1 xvfb-run -a -s \"-screen 0 1280x860x24\" electron .",
     "test": "env -u CLAUDE_CODE_MAX_CONTEXT_TOKENS vitest run",
     "test:watch": "vitest",
     "changelog": "node scripts/changelog.js",
-    "dist": "node scripts/vendor-monaco.js && electron-builder --linux",
+    "dist": "node scripts/vendor-monaco.js && node scripts/build-renderer.js && electron-builder --linux",
     "vendor": "node scripts/vendor-monaco.js",
     "lint": "bash scripts/lint.sh",
     "bump": "npm version patch --no-git-tag-version"
@@ -49,6 +52,8 @@
     },
     "files": [
       "src/**/*",
+      "!src/renderer/{app,chat,providers}/**",
+      "!src/renderer/main.js",
       "build/icon.png",
       "package.json"
     ],
