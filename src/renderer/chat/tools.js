@@ -5,7 +5,7 @@ import { openPlanViewer, updatePlanViewer } from './panels.js';
 import { noteToolOutcome } from './picker.js';
 import { thoughtNode } from './stream.js';
 import { scrollDownSoft } from './transcript.js';
-import { el, md, splitThink } from './util.js';
+import { el, md, splitThink, stripAnsi } from './util.js';
 
 /* ---------------- tool metadata ---------------- */
 
@@ -428,7 +428,7 @@ function writeLiveOutput(ctx, text) {
     out = el('pre', 'tool-output mono');
     ctx.body.insertBefore(out, ctx.body.firstChild);
   }
-  out.textContent = ctx.liveText.slice(0, 8000);
+  out.textContent = stripAnsi(ctx.liveText).slice(0, 8000);
 }
 
 /**
@@ -710,7 +710,7 @@ function renderOutput(chat, toolUseId, knownCtx) {
   // Showing only the notice looks like the tool returned nothing, so offer the
   // path. #50
   const spill = /Full output saved to:\s*(\S+)/.exec(String(text));
-  const full = String(text);
+  const full = stripAnsi(text);
   out.textContent = full.slice(0, 8000) + (full.length > 8000 ? '\n… (' + (full.length - 8000) + ' more characters not shown)' : '');
   if (spill) {
     const note = el('div', 'tool-spill');
