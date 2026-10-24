@@ -254,8 +254,8 @@ function envWithLoginPath(base = {}) {
 // costs context, and the engine's own prompt plus skills is already ~68K, so
 // cutting the tool list is the only real lever for a 3-4B model. #41
 const LEAN_PRESETS = {
-  readOnly: { label: 'Read-only (no writes)', tools: ['Read', 'Grep', 'Glob', 'NotebookRead', 'WebFetch', 'WebSearch', 'TodoWrite'] },
-  lean: { label: 'Lean coding', tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch', 'TodoWrite'] },
+  readOnly: { label: 'Read-only (no writes)', tools: ['Read', 'Grep', 'Glob', 'NotebookRead', 'WebFetch', 'WebSearch', 'TodoWrite', 'AskUserQuestion'] },
+  lean: { label: 'Lean coding', tools: ['Read', 'Edit', 'Write', 'Grep', 'Glob', 'Bash', 'WebFetch', 'WebSearch', 'TodoWrite', 'AskUserQuestion'] },
   minimal: { label: 'Minimal (read + bash)', tools: ['Read', 'Grep', 'Bash'] },
 };
 

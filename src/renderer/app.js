@@ -2194,13 +2194,13 @@ function renderProviders() {
     for (const t of tools) {
       const cb = el('input'); cb.type = 'checkbox'; cb.value = t;
       cb.checked = current.includes(t);
-      if (!current.length) cb.checked = ['Read', 'Grep', 'Glob', 'Bash', 'TodoWrite'].includes(t);
+      if (!current.length) cb.checked = ['Read', 'Grep', 'Glob', 'Bash', 'TodoWrite', 'AskUserQuestion'].includes(t);
       const l = el('label', 'check lean-tool');
       l.appendChild(cb); l.appendChild(el('span', 'mono', t));
       leanCustomWrap.appendChild(l);
       leanCustomBoxes.push(cb);
     }
-    leanCustomWrap.appendChild(el('div', 'hint', 'MCP tools (mcp__*) are dynamic per session and always stay on. Unticking the tools a model needs will break it — when in doubt, keep Read, Bash and TodoWrite.'));
+    leanCustomWrap.appendChild(el('div', 'hint', 'MCP tools (mcp__*) are dynamic per session and always stay on. Unticking the tools a model needs will break it — when in doubt, keep Read, Bash, TodoWrite and AskUserQuestion (how the model asks you a question).'));
     leanCustomWrap.style.display = leanSel.value === 'custom' ? '' : 'none';
     leanSel.addEventListener('change', () => {
       leanCustomWrap.style.display = leanSel.value === 'custom' ? '' : 'none';
