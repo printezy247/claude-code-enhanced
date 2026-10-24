@@ -1277,6 +1277,7 @@ const Chat = (() => {
       const r = await ccx.invoke('chat:set-model', { id: chat.id, model });
       if (r.ok) {
         chat.model = r.model || model;
+        if (window.refreshOverview) window.refreshOverview(chat.id, 300);
         if (r.model && r.model !== model) toast('model name corrected → ' + r.model);
         setStatusLine(chat);
         refreshEffort(chat);
@@ -1312,9 +1313,12 @@ const Chat = (() => {
     }
     // Re-key: the old engine session is gone; this pane now IS the new chat.
     const oldId = chat.id;
+    // Remembered until the new provider answers a turn: if it fails first, the error offers a way back.
+    chat.switchedFrom = chat.provider && chat.provider.uid ? { uid: chat.provider.uid, name: chat.provider.name, model: chat.model || '' } : null;
     chats.delete(oldId);
     chat.id = r.id;
     chats.set(r.id, chat);
+    if (window.refreshOverview) window.refreshOverview(chat.id, 300);
     if (window.rekeyTab) window.rekeyTab(oldId, r.id);
     chat.provider = r.provider;
     chat.model = r.model || '';
@@ -2992,6 +2996,22 @@ const Chat = (() => {
     paint();
   }
 
+  /** Dispose a Monaco diff editor and put its card back to the click-to-show state. */
+  function releaseDiff(d) {
+    if (!d.__ed) return;
+    try { d.__ed.dispose(); } catch { /* disposed */ }
+    d.__ed = null;
+    d.classList.add('pending');
+    d.innerHTML = '<div class="hint">click the card header to show the diff</div>';
+    if (d.__diffData) {
+      d.__init = () => {
+        const fresh = renderDiff(d.__diffData.name, d.__diffData.input, d.__diffData.source);
+        d.replaceWith(fresh);
+        if (fresh.__init) fresh.__init();
+      };
+    }
+  }
+
   function appendUser(chat, text, uuid) {
     chat.msgs.querySelector('.chat-empty')?.remove();
     const wrap = el('div', 'msg user-msg');
@@ -3107,6 +3127,8 @@ const Chat = (() => {
       while (chat._winEnd - chat._winStart > VIRT_WINDOW) {
         const node = chat._allNodes[chat._winStart];
         if (node && node.parentNode === msgs) try { origRemove(node); } catch { /* ignore */ }
+        // An evicted card keeps no live Monaco editor; it rebuilds one when opened again.
+        if (node && node.querySelectorAll) node.querySelectorAll('.monaco-diff').forEach(releaseDiff);
         chat._winStart++;
       }
       chat._renderedStart = chat._winStart;
@@ -3264,6 +3286,7 @@ const Chat = (() => {
   }
 
   function updateBusyUi(chat) {
+    if (window.refreshOverview) window.refreshOverview(chat.id, 300);   // status: working / idle
     if (!chat.sendBtn) return;
     const isBusy = !!chat.busy;
     if (chat.busyModeBtn) {
@@ -3378,7 +3401,7 @@ const Chat = (() => {
     if (msg.session_id) chat.sessionId = msg.session_id;
     switch (msg.type) {
       case 'system':
-        if (msg.subtype === 'init') { chat.init = msg; onInit(chat); }
+        if (msg.subtype === 'init') { chat.init = msg; onInit(chat); if (window.refreshOverview) window.refreshOverview(chat.id); }
         else if (msg.subtype === 'compact_boundary') {
           chat.msgs.querySelector('.chat-empty')?.remove();
           const manual = msg.compact_metadata && msg.compact_metadata.trigger === 'manual';
@@ -3484,6 +3507,8 @@ const Chat = (() => {
       case 'result': {
         chat.lastResult = msg;
         endTurnCleanup(chat);
+        if (!msg.is_error && msg.subtype === 'success') chat.switchedFrom = null;   // the new provider works
+        if (window.refreshOverview) window.refreshOverview(chat.id);
         // Local-only observability: token-per-turn log for later analysis. #obs
         try {
           const u = msg.usage || {};
@@ -4588,6 +4613,8 @@ const Chat = (() => {
 
   function resolveToolResult(chat, block) {
     const ctx = chat.tools.get(block.tool_use_id);
+    // A tool that may have touched the working tree: refresh the Changes card (coalesced).
+    if (ctx && /^(Edit|Write|MultiEdit|NotebookEdit|Bash)$/.test(ctx.name || '') && window.refreshOverview) window.refreshOverview(chat.id, 3000);
     // The main process compacts a big result for the model and sends the
     // original text separately: the card shows the original. #feat-output-filter
     const original = chat.toolOriginals && chat.toolOriginals.get(block.tool_use_id);
@@ -5172,6 +5199,17 @@ const Chat = (() => {
       const def = el('button', 'btn small primary', 'Use the provider default');
       def.addEventListener('click', () => { switchModel(chat, '').then(() => { chat.modelSel.value = ''; }); });
       row.appendChild(def);
+      g.appendChild(row);
+      e.appendChild(g);
+    }
+    if (chat.switchedFrom && chat.switchedFrom.uid !== (chat.provider && chat.provider.uid)) {
+      const back = chat.switchedFrom;
+      const g = el('div', 'ctx-guide');
+      g.appendChild(el('div', 'hint', 'This provider has not answered yet since you switched to it. The conversation is intact on ' + (back.name || 'the previous provider') + '.'));
+      const row = el('div', 'perm-actions');
+      const b = el('button', 'btn small primary', 'Switch back to ' + (back.name || 'previous provider'));
+      b.addEventListener('click', () => { chat.switchedFrom = null; switchProvider(chat, back.uid, back.model); });
+      row.appendChild(b);
       g.appendChild(row);
       e.appendChild(g);
     }

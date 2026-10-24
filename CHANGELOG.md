@@ -2,6 +2,15 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## [0.9.62] — 2026-10-24
+
+### Changed
+- **The Overview updates on events, not on a 6-second timer**: when a turn starts or ends, a session begins, the model or provider changes, or a file-changing tool (Edit, Write, Bash…) finishes. Bursts are coalesced; a hidden window catches up when it returns. A 60-second safety refresh remains.
+- **Monaco diff editors are released when their card scrolls out of the page** (the transcript already keeps only a window of rows in view); they rebuild when the card is opened again.
+
+### Added
+- **A way back after a provider switch**: if the new provider fails before it has answered anything, the error offers "Switch back to <previous provider>" and the conversation continues there.
+
 ## [0.9.61] — 2026-10-24
 
 ### Fixed

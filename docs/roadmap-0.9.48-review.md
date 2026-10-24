@@ -30,6 +30,10 @@ Each item is tagged with how sure the finding is:
 | 2 Layout (2.1 sidebar, 2.2 one-line top strip) | 0.9.52 | shipped |
 | 4.6 unsent messages, 5.2 queue without images, 5.4 / 5.5 notices and sandbox | 0.9.53 | shipped |
 
+| 1.1 picker, 3.8 tools half (0.9.60); 3.6, 3.7, 3.9, 3.10, 3.11 (0.9.61); 4.2, 4.3 (editors), 4.5 (way back) (0.9.62) | 0.9.60-0.9.62 | shipped |
+
+Notes on the last batch: 4.3's folding was already covered by the transcript virtualization (a 100-row window); only the Monaco release on eviction was missing. 4.4's payload limits already exist (attach and file:read caps, per-channel IPC caps). 4.5 became a "Switch back" offer when the new provider fails before answering, because the engine only emits its first init frame once a message is sent.
+
 Not done, and why:
 
 - **3.6 / 3.7 / 3.9 / 3.10 / 3.11** (Mistral call ids, long tool names, per-model temperature, parallel-call streams, prompt caching) need a reproduction against the real provider before a fix is worth its code.

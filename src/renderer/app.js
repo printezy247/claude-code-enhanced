@@ -916,10 +916,19 @@ function renderOverview() {
       // Hidden or minimized: no git spawn and no repaint for a panel nobody sees.
       if (document.hidden) return;
       renderTasks(b, activeCwd());
-    }, 6000);
+    }, 60000);   // safety net only: the chat tells the Overview when something changed
   }
 }
 window.renderOverview = renderOverview;
+// Event-driven refresh: the chat calls this when a turn ends, a session starts, the
+// model changes or a file-changing tool finishes. Coalesced, and deferred while hidden.
+let ovTimer = null, ovDirty = false;
+window.refreshOverview = (chatId, delay = 500) => {
+  if (chatId && chatId !== state.activeId) return;
+  clearTimeout(ovTimer);
+  ovTimer = setTimeout(() => { if (document.hidden) ovDirty = true; else renderOverview(); }, delay);
+};
+document.addEventListener('visibilitychange', () => { if (!document.hidden && ovDirty) { ovDirty = false; renderOverview(); } });
 
 function renderSplit() {
   const kind = document.querySelector('#split-kind')?.value || 'changes';
