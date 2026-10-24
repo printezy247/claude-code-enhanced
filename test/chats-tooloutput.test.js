@@ -103,7 +103,7 @@ describe('the shell-output filter', () => {
   });
 
   it('compacts a large shell result for the model and ships the original to the card', async () => {
-    const { events } = await boot({ outputFilter: 'on', outputFilterMaxChars: 1000 });
+    const { mgr, events, id } = await boot({ outputFilter: 'on', outputFilterMaxChars: 1000 });
     const hook = lastOptions.hooks.PostToolUse[0].hooks[0];
     const big = 'x'.repeat(5000);
     const out = await hook({
@@ -121,10 +121,12 @@ describe('the shell-output filter', () => {
     expect(orig).toBeTruthy();
     expect(orig.toolUseId).toBe('tu1');
     expect(orig.text).toContain(big);
+    const usage = await mgr.context(id);
+    expect(usage.outputCharsTrimmed).toBe(big.length - out.hookSpecificOutput.updatedToolOutput.length);
   });
 
   it('leaves a short result alone', async () => {
-    const { events } = await boot({ outputFilter: 'on', outputFilterMaxChars: 8000 });
+    const { mgr, events, id } = await boot({ outputFilter: 'on', outputFilterMaxChars: 8000 });
     const hook = lastOptions.hooks.PostToolUse[0].hooks[0];
     const out = await hook({
       hook_event_name: 'PostToolUse',
@@ -135,6 +137,7 @@ describe('the shell-output filter', () => {
     });
     expect(!out.hookSpecificOutput).toBe(true);
     expect(events.find((e) => e.kind === 'tool-original')).toBeFalsy();
+    expect((await mgr.context(id)).outputCharsTrimmed).toBe(0);
   });
 
   it('clamps the budget it reads out of the settings', async () => {
