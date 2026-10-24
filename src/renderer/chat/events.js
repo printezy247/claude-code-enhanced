@@ -10,7 +10,7 @@ import { setBusy, setStatusLine } from './status.js';
 import { flushMarkdown, handleStream } from './stream.js';
 import { applyLiveOutput, parseTodoChecklist, renderBlock, renderTodos, resolveToolResult, storeToolOriginal } from './tools.js';
 import { appendCommandNote, appendError, appendSummary, appendUser, scrollDownSoft } from './transcript.js';
-import { chats, el } from './util.js';
+import { chats, el, esc } from './util.js';
 
 /* ---------------- background tasks ---------------- */
 
@@ -105,9 +105,9 @@ function bgTaskRow(chat, taskId, info) {
 /** Paint a task card from either a task_* event or a background_tasks_changed entry. */
 function bgTaskPaint(row, info) {
   const usage = info.usage ? ' · ' + Math.round((info.usage.total_tokens || 0) / 1000) + 'k tok' : '';
-  row.title.textContent = CCEIcons.svg('clock', 13) + ' ' + row.label
+  row.title.innerHTML = CCEIcons.svg('clock', 13) + ' ' + esc(row.label
     + (info.last_tool_name ? ' — ' + info.last_tool_name : '')
-    + (info.status ? ' · ' + info.status : '') + usage;
+    + (info.status ? ' · ' + info.status : '') + usage);
   if (info.summary) row.title.title = String(info.summary).slice(0, 600);
 }
 
@@ -459,8 +459,8 @@ function onRateLimit(chat, msg) {
 // subagent rule, or an interrupt race). The user should see it.
 function onPermissionDenied(chat, msg) {
   const reason = msg.reason || msg.message || 'no reason given';
-  chat.msgs.appendChild(el('div', 'sys-note warn',
-    CCEIcons.svg('error', 13) + ' ' + String(msg.tool_name || 'tool') + ' denied: ' + String(reason).slice(0, 200)));
+  chat.msgs.appendChild(elIcon('div', 'sys-note warn',
+    CCEIcons.svg('error', 13) + ' ' + esc(String(msg.tool_name || 'tool') + ' denied: ' + String(reason).slice(0, 200))));
   scrollDownSoft(chat);
 }
 

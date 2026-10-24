@@ -126,6 +126,38 @@ function wireChrome() {
   })();
   
 
+  // Drag-resize the Overview (right edge of the chat).
+  (() => {
+    const pane = $('#overviewpane');
+    if (!pane) return;
+    const root = document.documentElement;
+    const clamp = (w) => Math.max(240, Math.min(560, Math.round(w)));
+    try { const saved = Number(localStorage.getItem('cce.ovWidth')); if (saved) root.style.setProperty('--ov-w', clamp(saved) + 'px'); } catch { /* private mode */ }
+    const grip = document.createElement('div');
+    grip.id = 'ov-resize';
+    grip.title = 'Drag to resize · double-click to reset';
+    pane.prepend(grip);
+    grip.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = pane.getBoundingClientRect().width;
+      document.body.classList.add('ov-resizing');
+      const move = (ev) => root.style.setProperty('--ov-w', clamp(startW - (ev.clientX - startX)) + 'px');
+      const up = () => {
+        document.removeEventListener('mousemove', move);
+        document.removeEventListener('mouseup', up);
+        document.body.classList.remove('ov-resizing');
+        try { localStorage.setItem('cce.ovWidth', String(clamp(pane.getBoundingClientRect().width))); } catch { /* private mode */ }
+      };
+      document.addEventListener('mousemove', move);
+      document.addEventListener('mouseup', up);
+    });
+    grip.addEventListener('dblclick', () => {
+      root.style.removeProperty('--ov-w');
+      try { localStorage.removeItem('cce.ovWidth'); } catch { /* private mode */ }
+    });
+  })();
+
   // global shortcuts
   document.addEventListener('keydown', (e) => {
     // The active tab decides what copy/paste and Tab mean: a chat composer must

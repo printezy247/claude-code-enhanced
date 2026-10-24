@@ -2,6 +2,12 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.65
+- Fixed: a denied-tool note and background-task rows printed raw `<svg …>` text instead of an icon.
+- Fixed: terminal colour codes (`[0m`, `[32m`) no longer show up in tool output cards.
+- Changed: on wide windows the conversation stays on the window's centre line when the left sidebar is open.
+- New: drag the Overview's left edge to resize it (240–560 px, remembered; double-click resets).
+
 ## [0.9.64] — 2026-10-24
 
 ### Changed
