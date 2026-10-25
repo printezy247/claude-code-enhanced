@@ -326,8 +326,11 @@ describe('session options', () => {
 
   it('appends the todo mandate to the session system prompt', async () => {
     await openChat();
-    expect(lastOptions.appendSystemPrompt).toMatch(/todo/i);
-    expect(lastOptions.appendSystemPrompt).toMatch(/TodoWrite/);
+    // query() reads only systemPrompt.append; a top-level appendSystemPrompt is dropped.
+    expect(lastOptions.appendSystemPrompt).toBeUndefined();
+    expect(lastOptions.systemPrompt.preset).toBe('claude_code');
+    expect(lastOptions.systemPrompt.append).toMatch(/todo/i);
+    expect(lastOptions.systemPrompt.append).toMatch(/TodoWrite/);
   });
 
   it('points background calls at the chat model on a translated provider', async () => {

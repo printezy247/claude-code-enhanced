@@ -353,6 +353,10 @@ function toolResultText(b) {
   }
   content = String(content == null ? '' : content);
   if (!content.trim()) content = b.is_error ? '(the tool failed with no output)' : '(no output)';
+  // OpenAI `tool` messages and Gemini function responses carry no error flag,
+  // so a failure read as a plain result and small models ran the call again
+  // unchanged. Say it in the text.
+  if (b.is_error && !/^\s*error\b/i.test(content)) content = 'ERROR: ' + content;
   return content;
 }
 

@@ -497,7 +497,7 @@ class ChatManager extends EventEmitter {
       // Auto-lean for small-context models when explicitly configured in settings
       const ctx = (typeof this.contextOf === 'function' && Number(this.contextOf(providerInstance, model))) || 0;
       if (ctx > 0 && ctx < 131072) {
-        options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'AskUserQuestion'];
+        options.tools = ['Bash', 'Read', 'Edit', 'Write', 'Grep', 'Glob', 'WebFetch', 'WebSearch', 'TodoWrite', 'AskUserQuestion'];
         isLean = true;
       }
     }
@@ -598,21 +598,28 @@ class ChatManager extends EventEmitter {
     const bootstrap = settings && settings.minimalPrompt
       ? ''
       : await bootstrapPrompt(dir, { minimal: minimalBootstrap, includeReadme });
-    if (bootstrap) {
+    // The extra instructions travel in `systemPrompt.append`: it is the only
+    // field query() reads (a top-level `appendSystemPrompt` option is dropped,
+    // which is how the discipline text never reached the model).
+    // Every model/provider gets the action-oriented discipline: plan
+    // multi-step work, update on steer, check items off as they finish, and
+    // ask through the question card instead of guessing.
+    // Minimal-prompt mode keeps the base prompt as small as it can be, so it
+    // gets neither.
+    const appendText = settings && settings.minimalPrompt
+      ? ''
+      : [bootstrap, appendPromptFor(options.tools, options.disallowedTools)].filter(Boolean).join('\n\n');
+    if (appendText) {
       options.systemPrompt = {
         type: 'preset',
         preset: 'claude_code',
-        append: bootstrap,
+        append: appendText,
         snapshot: true,
       };
     }
     // Skills synced from Claude Desktop live one folder too deep for the engine.
     const synced = settings && settings.minimalPrompt ? null : syncedSkillsPlugin();
     if (synced) options.plugins = [...(options.plugins || []), { type: 'local', path: synced }];
-    // Every model/provider gets the action-oriented discipline:
-    // plan before multi-step work, update on steer, check off as items finish,
-    // and prioritize editing/building over endless file exploration.
-    options.appendSystemPrompt = appendPromptFor(options.tools, options.disallowedTools);
     // (The duplicate `resume === 'last'` block that read a nonexistent
     // settings._lastChatByCwd was removed here — lastChatFor above is the one
     // real source. #18)
@@ -1756,15 +1763,26 @@ function normalizeMode(mode, providerInstance, yolo) {
  * The discipline every model gets: plan multi-step work, check items off, edit
  * rather than endlessly explore, and ask the user through the question card
  * (not in prose) when a decision or a missing fact is needed.
+ *
+ * Only tools the chat really has are named: a model told to call a tool that
+ * is not in its list gets "No such tool" and tries again.
  */
 function appendPromptFor(tools, disallowed) {
-  let p = 'For multi-step requests, create a todo list with TodoWrite (or TaskCreate/TaskUpdate). Focus on target files directly. Avoid endless file reading/searching: after inspecting the directly relevant code, proceed immediately to implementation and verification. Update the list when steered and mark items completed promptly. Prefer tools over prose checklists. If two tools share a name, prefer the server matching the task.';
-  const askable = (!Array.isArray(tools) || tools.includes('AskUserQuestion'))
-    && !(Array.isArray(disallowed) && disallowed.includes('AskUserQuestion'));
-  if (askable) {
-    p += ' When you need a decision or a missing fact from the user, call the AskUserQuestion tool with two to four short options instead of asking in plain text, then wait for the answer. Do not guess when a wrong guess would cost the user real work.';
+  const has = (name) => (!Array.isArray(tools) || tools.includes(name))
+    && !(Array.isArray(disallowed) && disallowed.includes(name));
+  const parts = [];
+  const todo = ['TodoWrite', 'TaskCreate'].filter(has);
+  if (todo.length) {
+    const names = !Array.isArray(tools) ? 'TodoWrite (or TaskCreate/TaskUpdate)' : todo.join(' or ');
+    parts.push('For multi-step requests, keep a todo list with ' + names + ', update it when the user steers, and mark items completed as soon as they are done.');
   }
-  return p;
+  parts.push('When the task is to change something, read the directly relevant code, then make the change and verify it; do not keep exploring. '
+    + 'When the task is a question, a review or an explanation, answer from what you read and do not edit files unless asked. '
+    + 'Prefer tools over prose checklists. If two tools share a name, prefer the server matching the task.');
+  if (has('AskUserQuestion')) {
+    parts.push('When you need a decision or a missing fact from the user, call the AskUserQuestion tool with two to four short options instead of asking in plain text, then wait for the answer. Do not guess when a wrong guess would cost the user real work.');
+  }
+  return parts.join(' ');
 }
 
 module.exports = ChatManager;

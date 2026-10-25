@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.68
+- Fixed: the planning/ask-the-user instructions were never sent to the model (they were set on an option the engine ignores); they now travel in the system prompt. Chats resumed from an older session keep their recorded prompt until the next compaction.
+- Changed: the instructions no longer push a review or a question into edits, and name a todo tool only when the chat has one. The auto-lean tool set now includes TodoWrite.
+- Fixed: a failed tool result now reads `ERROR: …` for OpenAI-format and Gemini providers (they have no error flag), so small models stop re-running a call that failed.
+
 ## 0.9.67
 - Fixed: plugin/MCP tools whose names contain characters OpenAI-format APIs reject (colons, dots, spaces — e.g. `plugin:ecc:…` browser and device tools) are now sent under a safe alias and mapped back, instead of being refused or dropped for non-Anthropic models.
 
