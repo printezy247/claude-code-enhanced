@@ -9,9 +9,14 @@ const MAX_NAME = 64;
 const hash = (s, n) => crypto.createHash('sha1').update(String(s)).digest('hex').slice(0, n);
 
 /** A stable wire name of at most 64 characters for a longer tool name. */
+const BAD_CHARS = /[^a-zA-Z0-9_-]/;
 function shortName(name) {
   const s = String(name || '');
-  return s.length <= MAX_NAME ? s : s.slice(0, MAX_NAME - 9) + '_' + hash(s, 8);
+  if (s.length <= MAX_NAME && !BAD_CHARS.test(s)) return s;
+  // OpenAI-format APIs accept only [a-zA-Z0-9_-]; a plugin tool such as
+  // "mcp__plugin:ecc:chrome.devtools__x" is rejected (or silently dropped).
+  const clean = s.replace(/[^a-zA-Z0-9_-]/g, '_');
+  return clean.slice(0, MAX_NAME - 9) + '_' + hash(s, 8);
 }
 
 /**
@@ -25,7 +30,7 @@ function wrapToolNames(body) {
     if (!Array.isArray(m.content)) continue;
     for (const b of m.content) if (b && b.type === 'tool_use' && b.name) names.add(b.name);
   }
-  const long = [...names].filter((n) => n.length > MAX_NAME);
+  const long = [...names].filter((n) => n.length > MAX_NAME || BAD_CHARS.test(n));
   if (!long.length) return { body, back: (n) => n };
   const wire = new Map(long.map((n) => [n, shortName(n)]));
   const orig = new Map(long.map((n) => [shortName(n), n]));
