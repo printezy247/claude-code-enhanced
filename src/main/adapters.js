@@ -86,6 +86,45 @@ function googleEffort(body) {
   return b <= 1024 ? 'minimal' : b <= 4096 ? 'low' : b <= 16384 ? 'medium' : 'high';
 }
 
+/**
+ * Which reasoning setting a provider is KNOWN to accept on chat/completions:
+ * 'effort' (top-level reasoning_effort), 'openrouter' (a `reasoning` object),
+ * or '' (send none). Most OpenAI-compatible servers reject fields they do not
+ * know, so an unknown provider gets nothing. A provider entry can force the
+ * answer with `reasoningParam: 'effort' | 'openrouter' | 'none'`.
+ */
+function reasoningParam(prov, model) {
+  const forced = prov && prov.reasoningParam;
+  if (forced === 'effort' || forced === 'openrouter') return forced;
+  if (forced === 'none') return '';
+  const base = String((prov && prov.baseUrl) || '').toLowerCase();
+  const m = String(model || '').toLowerCase().replace(/^.*\//, '');
+  if (/openrouter\.ai/.test(base)) return 'openrouter';
+  if (/api\.openai\.com/.test(base)) return /^(o\d|gpt-5)/.test(m) ? 'effort' : '';
+  if (/api\.groq\.com/.test(base)) return /gpt-oss|qwen3/.test(m) ? 'effort' : '';
+  if (/api\.x\.ai/.test(base)) return /^grok-3-mini/.test(m) ? 'effort' : '';
+  if (/:11434\b|ollama/.test(base) || (prov && prov.presetId === 'ollama')) return 'effort';
+  return '';
+}
+
+/** OpenAI-style effort levels; Claude-only levels are clamped. */
+function effortLevel(body) {
+  const e = String((body.output_config && body.output_config.effort) || body.reasoning_effort || body.effort || '').toLowerCase();
+  return e === 'max' ? 'high' : e;
+}
+
+/**
+ * Thinking models that want their earlier reasoning handed back next to the
+ * tool calls it led to (DeepSeek answers 400 without it; Kimi and MiniMax
+ * lose the thread). `replayReasoning` on the provider forces it on or off.
+ */
+function replaysReasoning(prov, model) {
+  if (prov && typeof prov.replayReasoning === 'boolean') return prov.replayReasoning;
+  const base = String((prov && prov.baseUrl) || '').toLowerCase();
+  return /deepseek|kimi|moonshot|minimax/i.test(String(model || ''))
+    || /api\.deepseek\.com|moonshot\.(ai|cn)|api\.kimi\.com|api\.minimax(i)?\.(io|com)/.test(base);
+}
+
 function upHeaders(prov) {
   const h = { 'content-type': 'application/json' };
   // Gateways that fingerprint the client (OpenCode Go) reject a request with
@@ -238,10 +277,14 @@ function buildOpenAIBody(body, wantStream, prov) {
     const eff = googleEffort(body);
     if (eff) out.reasoning_effort = eff;
   } else {
-    if (body.reasoning_effort) out.reasoning_effort = body.reasoning_effort;
-    else if (body.effort) out.reasoning_effort = body.effort;
-    if (body.thinking && body.thinking.budget_tokens != null) {
-      out.reasoning = { max_tokens: body.thinking.budget_tokens };
+    const kind = reasoningParam(prov, body.model);
+    const eff = effortLevel(body);
+    if (kind === 'effort') {
+      if (eff) out.reasoning_effort = eff;
+    } else if (kind === 'openrouter') {
+      // OpenRouter takes one of effort / max_tokens inside `reasoning`.
+      if (eff) out.reasoning = { effort: eff };
+      else if (body.thinking && body.thinking.budget_tokens != null) out.reasoning = { max_tokens: body.thinking.budget_tokens };
     }
   }
   const msgs = [];
@@ -265,11 +308,12 @@ function buildOpenAIBody(body, wantStream, prov) {
 
     if (m.role === 'assistant') {
       let text = '';
+      let thought = '';
       const toolCalls = [];
       for (const b of c) {
         if (b.type === 'text') text += b.text;
         else if (b.type === 'tool_use') toolCalls.push({ id: wireToolId(prov, b.id), type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input || {}) } });
-        else if (b.type === 'thinking') { /* not translated */ }
+        else if (b.type === 'thinking' && typeof b.thinking === 'string') thought += b.thinking;
       }
       // Reasoning that leaked into an earlier reply must not be replayed as if
       // the model had said it out loud.
@@ -279,6 +323,7 @@ function buildOpenAIBody(body, wantStream, prov) {
       if (!text && !toolCalls.length) continue;
       const msg = { role: 'assistant', content: text || null };
       if (toolCalls.length) msg.tool_calls = toolCalls;
+      if (thought.trim() && replaysReasoning(prov, body.model)) msg.reasoning_content = thought;
       msgs.push(msg);
       continue;
     }
@@ -460,7 +505,7 @@ function buildResponsesInput(body, prov) {
   const topP = body.top_p != null ? body.top_p : samp.top_p;
   if (temp != null && caps.temperature !== false) req.temperature = temp;
   if (topP != null && caps.temperature !== false) req.top_p = topP;
-  if (caps.reasoning !== false && (body.effort || body.reasoning_effort)) req.reasoning = { effort: body.effort || body.reasoning_effort };
+  if (caps.reasoning !== false && effortLevel(body)) req.reasoning = { effort: effortLevel(body) };
   if (offersTools(body, caps)) {
     req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') }));
   }
@@ -808,6 +853,6 @@ async function listModels(prov) {
 module.exports = {
   callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream,
   providerCooldown,
-  buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink, sanitizeSchema, thoughtSignatures,
+  buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink, reasoningParam, replaysReasoning, sanitizeSchema, thoughtSignatures,
   responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE, responsesChunks, geminiChunks,
 };
