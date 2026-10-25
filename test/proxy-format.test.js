@@ -220,7 +220,7 @@ describe('request sent to an OpenAI-format provider', () => {
     ]);
     expect(out.messages.map(m => m.role)).toEqual(['assistant', 'tool', 'assistant', 'tool']);
     expect(out.messages[1].content).toBe('(no output)');
-    expect(out.messages[3].content).toBe('[image]');
+    expect(out.messages[3].content).toBe('ERROR: [image]');
   });
 
   it('keeps system text at the start, where every provider accepts it', () => {
