@@ -58,7 +58,21 @@ const store = new Store();
 const auth = new AuthStore();
 const sessions = new SessionManager();
 // The manager needs the proxy token so proxied chats authenticate.
-const chats = new ChatManager({ proxyToken, contextOf: modelContext });
+// Which connectors each project has used. Counted per tool call, written at most
+// every couple of seconds: the second chat in a repo starts with the right ones.
+const connectorauto = require('./connectorauto');
+let connectorSaveTimer = null;
+const connectorMemory = {
+  usage: (cwd) => (store.settings.connectorUsage || {})[cwd] || {},
+  note: (cwd, server) => {
+    store.settings.connectorUsage = connectorauto.recordUse(store.settings.connectorUsage, cwd, server);
+    if (!connectorSaveTimer) {
+      connectorSaveTimer = setTimeout(() => { connectorSaveTimer = null; try { store.save(); } catch { /* disk full: next one will */ } }, 2000);
+      if (connectorSaveTimer.unref) connectorSaveTimer.unref();
+    }
+  },
+};
+const chats = new ChatManager({ proxyToken, contextOf: modelContext, connectorMemory });
 // Which window owns which chat and terminal session. The managers are global
 // — their ids come from one counter each — so a second manager would mint the
 // same ids and two windows would fight over one chat. This registry is what
@@ -2448,6 +2462,9 @@ function registerIpc() {
       incoming.outputFilterMaxChars = clampMaxChars(incoming.outputFilterMaxChars);
     }
     if ('webFetchDomains' in incoming) incoming.webFetchDomains = normalizeDomains(incoming.webFetchDomains);
+    if ('connectorModes' in incoming) incoming.connectorModes = connectorauto.normalizeModes(incoming.connectorModes);
+    if ('connectorPick' in incoming && !['auto', 'off', 'always'].includes(incoming.connectorPick)) incoming.connectorPick = 'auto';
+    delete incoming.connectorUsage;   // written by the app as connectors are used, never by the renderer
     if ('streamIdleSeconds' in incoming) {
       incoming.streamIdleSeconds = clampIdleSeconds(incoming.streamIdleSeconds);
     }

@@ -16,6 +16,7 @@ const { compactToolOutput, toolResultText, clampMaxChars, FILTERED_TOOLS, clampI
 const managedconfig = require('./managedconfig');
 const { createLoopGuard } = require('./loopguard');
 const webdomains = require('./webdomains');
+const connectorauto = require('./connectorauto');
 const { absFor, shareablePath } = require('./fileshare');
 const sdkoptions = require('./sdkoptions');
 const hostmcp = require('./hostmcp');
@@ -82,10 +83,24 @@ const autopolicy = require('./autopolicy');
  *
  * Values the user set themselves are left alone.
  */
+/**
+ * Does the model get MCP tools by name and load a definition when it asks?
+ * Anthropic's own API and the translated providers do (this proxy expands the
+ * `tool_reference` results). A third-party gateway that speaks the Anthropic
+ * format is left alone: most drop those results, and the tools would never load.
+ */
+function toolSearchApplies(provider, settings = {}) {
+  if (settings.toolSearch === false) return false;
+  if (!provider) return true;
+  if ((provider.protocol || 'openai') !== 'anthropic') return true;
+  return /(^|\.)anthropic\.com/i.test(String(provider.baseUrl || ''));
+}
+
 function leanEngineEnv({ env = {}, provider, model, settings = {}, contextOf } = {}) {
   const out = {};
+  if (toolSearchApplies(provider, settings) && env.ENABLE_TOOL_SEARCH == null) out.ENABLE_TOOL_SEARCH = 'true';
+  // The rest only matters where the engine cannot tell the window or has no prompt caching.
   if (!provider || (provider.protocol || 'openai') === 'anthropic') return out;
-  if (settings.toolSearch !== false && env.ENABLE_TOOL_SEARCH == null) out.ENABLE_TOOL_SEARCH = 'true';
   if (env.CLAUDE_CODE_MAX_CONTEXT_TOKENS != null) {
     out.CLAUDE_CODE_MAX_CONTEXT_TOKENS = String(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS); // user's own choice wins
   } else if (typeof contextOf === 'function') {
@@ -226,8 +241,14 @@ function cwdOf(full) {
 }
 
 class ChatManager extends EventEmitter {
-  constructor({ proxyToken = null, sdk = null, contextOf = null } = {}) {
+  constructor({ proxyToken = null, sdk = null, contextOf = null, connectorMemory = null } = {}) {
     super();
+    // { usage(cwd) -> {server: count}, note(cwd, server) }: which connectors each
+    // project has used, kept across chats and restarts. In memory when none is injected.
+    this.connectorMemory = connectorMemory || (() => {
+      let usage = {};
+      return { usage: (cwd) => usage[cwd] || {}, note: (cwd, server) => { usage = connectorauto.recordUse(usage, cwd, server); } };
+    })();
     this.proxyToken = proxyToken;
     // (provider, model) -> context window in tokens, or 0 when unknown.
     this.contextOf = contextOf;
@@ -862,6 +883,12 @@ class ChatManager extends EventEmitter {
       checkpoints: [],   // user-message uuids -> rewind anchors (file checkpointing)
       guard: createLoopGuard(),   // stops an agent that repeats itself
       written: new Set(),         // files the agent wrote: the only ones the UI may share
+      settings: settings || {},
+      // Connectors: use this chat has made of each, which ones CCE switched off for it, and
+      // which were used in the last few turns (kept on, so a conversation keeps its tools).
+      connectorUses: {}, autoOff: new Set(), usedByTurn: [], turnUses: new Set(),
+      toolSearchOn: toolSearchApplies(providerInstance, settings || {}),
+      tickChain: Promise.resolve(), recoverTimer: null, picked: null,
     };
     this.lastCreatedId = id;
     const abort = new AbortController();
@@ -906,6 +933,13 @@ class ChatManager extends EventEmitter {
             // engine default on every switch.
             if (!chat.model) chat.model = msg.model || chat.model;
             this._rememberSession(dir, chat.sessionId);
+            // Connectors are up: apply the user's choices and the starting pick, and
+            // start watching for ones that failed.
+            if (!chat.connectorsStarted) {
+              chat.connectorsStarted = true;
+              this._connectorTick(id, '').catch(() => {});
+              this._scheduleRecovery(id, 0);
+            }
           }
           if (msg.type === 'assistant' && Array.isArray(msg.message && msg.message.content)) {
             // The main agent and each subagent are judged on their own history.
@@ -916,6 +950,12 @@ class ChatManager extends EventEmitter {
               if (!scope && fp && ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(b.name)) {
                 if (chat.written.size >= 500) chat.written.delete(chat.written.values().next().value);
                 chat.written.add(absFor(dir, fp));
+              }
+              const server = connectorauto.serverOf(b.name);
+              if (server) {
+                chat.connectorUses[server] = (chat.connectorUses[server] || 0) + 1;
+                chat.turnUses.add(server);
+                try { this.connectorMemory.note(dir, server); } catch { /* memory is best effort */ }
               }
               const trip = chat.guard.record(b, scope);
               if (!trip.tripped) continue;
@@ -932,6 +972,7 @@ class ChatManager extends EventEmitter {
             }
           }
           if (msg.type === 'result') {
+            if (chat.turnUses.size) { chat.usedByTurn.push(chat.turnUses); chat.usedByTurn = chat.usedByTurn.slice(-3); chat.turnUses = new Set(); }
             chat.guard.reset();
             chat.guardTripped = false;
             chat.lastResult = msg;
@@ -1077,9 +1118,27 @@ class ChatManager extends EventEmitter {
     const content = blocks && blocks.length
       ? [...blocks, ...(text ? [{ type: 'text', text }] : [])]
       : text;
+    const frame = { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: chat.sessionId || '' };
+    // Connectors are chosen for this message first, so the model is shown the right
+    // ones on this turn. Bounded: a slow engine must not hold the message back.
+    if (this._connectorPolicyActive(chat)) {
+      chat.busy = true;
+      this.emit('event', id, { kind: 'status', busy: true });
+      Promise.race([
+        this._connectorTick(id, typeof content === 'string' ? content : (text || '')).catch(() => {}),
+        new Promise((r) => setTimeout(r, 1500).unref()),
+      ]).then(() => {
+        if (chat.push(frame) === false) {
+          chat.busy = false;
+          this.emit('event', id, { kind: 'status', busy: false });
+          this.emit('event', id, { kind: 'error', error: 'this session has ended — open a new chat (Ctrl+Shift+T)' });
+        }
+      });
+      return verdict.notes.length ? { ok: true, notes: verdict.notes } : { ok: true };
+    }
     // A closed input stream drops the message silently; say so instead of
     // marking the chat busy forever.
-    const delivered = chat.push({ type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: chat.sessionId || '' });
+    const delivered = chat.push(frame);
     if (delivered === false) return { ok: false, error: 'this session has ended — open a new chat (Ctrl+Shift+T)' };
     chat.busy = true;
     this.emit('event', id, { kind: 'status', busy: true });
@@ -1194,7 +1253,97 @@ class ChatManager extends EventEmitter {
     return this._chat(id).checkpoints.slice(-50);
   }
 
-  async mcpStatus(id) { return await this._chat(id).q.mcpServerStatus(); }
+  async mcpStatus(id) {
+    const chat = this._chat(id);
+    const raw = await chat.q.mcpServerStatus();
+    if (!Array.isArray(raw)) return raw;
+    const usage = this.connectorMemory.usage(chat.cwd) || {};
+    return raw.map((s) => {
+      const mode = connectorauto.modeFor(chat.settings && chat.settings.connectorModes, chat.cwd, s.name);
+      const uses = chat.connectorUses[s.name] || 0;
+      let how = '';
+      if (mode === 'on') how = 'pinned';
+      else if (mode === 'off') how = 'off';
+      else if (uses > 0) how = 'used ' + uses + '×';
+      else if (s.status === 'disabled' && chat.autoOff.has(s.name)) how = 'auto · idle';
+      else if (s.status === 'connected') how = 'auto · loaded';
+      return { ...s, mode, uses, projectUses: usage[s.name] || 0, how, autoOff: chat.autoOff.has(s.name) };
+    });
+  }
+
+  /** Does this chat need the connector decision made before each message? */
+  _connectorPolicyActive(chat) {
+    if (!chat || !chat.q || typeof chat.q.toggleMcpServer !== 'function') return false;
+    if (chat.autoOff.size) return true;
+    const m = connectorauto.normalizeModes(chat.settings && chat.settings.connectorModes);
+    if (Object.keys(m.global).length || (m.projects[chat.cwd] && Object.keys(m.projects[chat.cwd]).length)) return true;
+    return this._pickActive(chat);
+  }
+
+  _pickActive(chat) {
+    const ctx = typeof this.contextOf === 'function' ? Number(this.contextOf(chat.providerInstance, chat.model)) || 0 : 0;
+    return connectorauto.needsPick({ contextTokens: ctx, toolSearchOn: chat.toolSearchOn, setting: (chat.settings && chat.settings.connectorPick) || 'auto' });
+  }
+
+  /**
+   * Decide which connectors this chat shows for a message, and switch the rest
+   * off (or back on) through the engine. Serialised per chat so two messages
+   * never toggle at once. Returns the list of changes made.
+   */
+  _connectorTick(id, prompt) {
+    const chat = this.chats.get(id);
+    if (!chat) return Promise.resolve([]);
+    const run = async () => {
+      const q = chat.q;
+      if (!q || typeof q.mcpServerStatus !== 'function' || typeof q.toggleMcpServer !== 'function') return [];
+      const servers = await q.mcpServerStatus();
+      if (!Array.isArray(servers) || !servers.length) return [];
+      const ctx = typeof this.contextOf === 'function' ? Number(this.contextOf(chat.providerInstance, chat.model)) || 0 : 0;
+      const pick = this._pickActive(chat);
+      const recent = new Set([...chat.usedByTurn.flatMap((s) => [...s]), ...chat.turnUses]);
+      const modes = chat.settings && chat.settings.connectorModes;
+      const d = connectorauto.plan({
+        servers, prompt, cwd: chat.cwd, modes, pick,
+        toolBudget: connectorauto.toolBudgetFor(ctx, chat.toolSearchOn),
+        projectUsage: this.connectorMemory.usage(chat.cwd) || {}, chatUses: chat.connectorUses, recent,
+      });
+      chat.picked = d;
+      const changes = [];
+      for (const s of servers) {
+        if (s.status === 'connected' && d.hide.has(s.name)) {
+          await q.toggleMcpServer(s.name, false);
+          chat.autoOff.add(s.name);
+          changes.push({ name: s.name, enabled: false, why: d.why[s.name] || '' });
+        } else if (s.status === 'disabled' && d.show.has(s.name)
+          && (chat.autoOff.has(s.name) || connectorauto.modeFor(modes, chat.cwd, s.name) === 'on')) {
+          await q.toggleMcpServer(s.name, true);
+          chat.autoOff.delete(s.name);
+          changes.push({ name: s.name, enabled: true, why: d.why[s.name] || '' });
+        }
+      }
+      if (changes.length) this.emit('event', id, { kind: 'connectors-changed', changes });
+      return changes;
+    };
+    chat.tickChain = chat.tickChain.then(run, run);
+    return chat.tickChain;
+  }
+
+  /** A failed connector is reconnected on its own, with growing waits, a few times. "Needs sign-in" is left: that needs the user. */
+  _scheduleRecovery(id, attempt) {
+    const chat = this.chats.get(id);
+    const wait = connectorauto.reconnectDelay(attempt) * 1000;
+    if (!chat || !wait) return;
+    chat.recoverTimer = setTimeout(async () => {
+      const c = this.chats.get(id);
+      if (!c || !c.q || typeof c.q.mcpServerStatus !== 'function' || typeof c.q.reconnectMcpServer !== 'function') return;
+      let servers = [];
+      try { servers = await c.q.mcpServerStatus(); } catch { /* try again later */ }
+      const failed = (Array.isArray(servers) ? servers : []).filter((s) => s.status === 'failed');
+      for (const s of failed) { try { await c.q.reconnectMcpServer(s.name); } catch { /* next round */ } }
+      if (failed.length || (Array.isArray(servers) && servers.some((s) => s.status === 'pending'))) this._scheduleRecovery(id, attempt + 1);
+    }, wait);
+    if (chat.recoverTimer.unref) chat.recoverTimer.unref();
+  }
   async mcpToggle(id, name, enabled) { return await this._chat(id).q.toggleMcpServer(String(name), !!enabled); }
   async mcpReconnect(id, name) { return await this._chat(id).q.reconnectMcpServer(String(name)); }
 
@@ -1745,6 +1894,7 @@ class ChatManager extends EventEmitter {
     this._settlePending(id);
     if (!chat) return;
     clearTimeout(chat.watchdog);       // never fire "engine did not start" on a closed tab
+    clearTimeout(chat.recoverTimer);
     try { chat.close && chat.close(); } catch { /* stream already ended */ }
     try { chat.abort.abort(); } catch { /* already closing */ }
   }
@@ -1851,6 +2001,7 @@ module.exports.MODES = MODES;
 module.exports.TASK_SUBTYPES = TASK_SUBTYPES;
 module.exports.transcriptItems = transcriptItems;
 module.exports.leanEngineEnv = leanEngineEnv;
+module.exports.toolSearchApplies = toolSearchApplies;
 module.exports.pluginOverrides = pluginOverrides;
 module.exports.sandboxNpmCache = sandboxNpmCache;
 module.exports.PERM_TIMEOUT_MESSAGE = PERM_TIMEOUT_MESSAGE;

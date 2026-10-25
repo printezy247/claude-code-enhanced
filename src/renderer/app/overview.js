@@ -620,8 +620,8 @@ function renderTasks(target, cwd, only) {
     }));
   }
 
-  // Connectors: the MCP servers this session can call tools on, with the
-  // per-session switch the desktop app offers. #feat-connector-tools
+  // Connectors: the MCP servers this session can call tools on. Status only:
+  // CCE switches them on and off by itself. #feat-connector-tools
   const conn = card('connectors', 'Connectors', 'plug2');
   const connRows = el('div', 'task-rows');
   conn.inner.appendChild(connRows);
@@ -658,18 +658,24 @@ function renderTasks(target, cwd, only) {
         d.appendChild(el('div', 'hint', text));
         connRows.appendChild(d);
       };
-      if (connected.length >= 5) {
-        note(connected.length + ' connectors live', 'Each connector adds MCP preamble to every turn. Disconnect unused ones in Providers.');
-      }
-      // Warn about tool-name collisions across connectors (#wrong-tool-calls).
+      // Same tool name on two connectors: the names are namespaced by server, and a
+      // connector that is a copy of another is switched off for this chat on its own.
       const names = [];
       for (const s of connected) for (const t of (s.tools || [])) names.push(t.name);
       const dupes = names.filter((n, i) => names.indexOf(n) !== i);
       if (dupes.length) {
         const uniq = [...new Set(dupes)];
-        note('⚠ ' + uniq.length + ' duplicate tool name' + (uniq.length === 1 ? '' : 's'),
-          'Duplicate tool names across connectors: ' + uniq.join(', ') + '. Prefer the server matching the task.');
+        note('ⓘ ' + uniq.length + ' shared tool name' + (uniq.length === 1 ? '' : 's'),
+          'Shared tool names across connectors: ' + uniq.join(', ') + '. Handled automatically: each call goes to its own connector, and a connector that duplicates another is left out of this chat.');
       }
+      // Status only: connectors are switched on and off by CCE, per message. What the
+      // user can decide lives in Settings, as Auto / Always on / Off per connector.
+      const act = async (btn, sv) => {
+        btn.disabled = true;
+        await ccx.invoke('chat:mcp', { id: chat.id, op: 'reconnect', name: sv.name });
+        window.__connCache = {};
+        renderOverview();
+      };
       for (const sv of servers) {
         const row = el('div', 'task-row hint conn-row');
         row.appendChild(el('span', 'st-dot st-' + String(sv.status || 'pending').replace(/[^a-z-]/g, '')));
@@ -678,25 +684,23 @@ function renderTasks(target, cwd, only) {
         row.appendChild(name);
         const tools = (sv.tools || []).length;
         row.appendChild(el('span', 'ctx-tokens', tools ? tools + ' tools' : sv.status || ''));
-        // A switch, not a word: on = enabled for this session.
-        const on = sv.status !== 'disabled';
-        const tog = el('button', 'switch' + (on ? ' on' : ''));
-        tog.setAttribute('role', 'switch');
-        tog.setAttribute('aria-checked', on ? 'true' : 'false');
-        tog.setAttribute('aria-label', (on ? 'Disable ' : 'Enable ') + sv.name + ' for this session');
-        tog.title = (on ? 'Disable' : 'Enable') + ' for this session';
-        tog.textContent = on ? 'disable' : 'enable';
-        tog.addEventListener('click', async () => {
-          tog.disabled = true;
-          await ccx.invoke('chat:mcp', {
-            id: chat.id, op: 'toggle', name: sv.name, enabled: sv.status === 'disabled',
-          });
-          window.__connCache = {};
-          renderOverview();
-        });
-        row.appendChild(tog);
+        if (sv.how) row.appendChild(el('span', 'conn-how', sv.how));
+        // A button appears only when the connector needs the user.
+        if (sv.status === 'needs-auth') {
+          const b = el('button', 'btn tiny conn-act', 'Sign in');
+          b.addEventListener('click', () => act(b, sv));
+          row.appendChild(b);
+        } else if (sv.status === 'failed') {
+          const b = el('button', 'btn tiny conn-act', 'Reconnect');
+          b.title = sv.error ? String(sv.error).slice(0, 200) : 'Try again';
+          b.addEventListener('click', () => act(b, sv));
+          row.appendChild(b);
+        }
         connRows.appendChild(row);
       }
+      const manage = el('button', 'btn tiny conn-manage', 'Manage connectors →');
+      manage.addEventListener('click', () => window.switchView && window.switchView('connectors'));
+      connRows.appendChild(manage);
     }));
   } else {
     connRows.appendChild(el('div', 'task-row hint', 'start a chat to see connectors'));

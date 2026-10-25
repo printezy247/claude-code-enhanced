@@ -632,7 +632,7 @@ const MCP_CLS = { connected: 'mcp-ok', failed: 'mcp-err', 'needs-auth': 'mcp-war
 async function toggleMcpPanel(chat) {
   if (panelOpen(chat, 'chat-mcp-panel')) return;
   const panel = makePanel(chat, 'chat-mcp-panel', 'plug2', 'MCP servers (live)',
-    'Live session status. Disable/enable applies to this session only; reconnect retries a failed server. Click a server to see its tools.');
+    'Live session status. Connectors switch on and off by themselves; reconnect retries a failed server. Click a server to see its tools.');
   const filter = el('input', 'skills-search');
   filter.placeholder = 'Filter servers or tools…';
   panel.appendChild(filter);
@@ -695,13 +695,9 @@ async function toggleMcpPanel(chat) {
         row.__tools = tl;
       }
       if (s.error) row.appendChild(el('span', 'skill-desc', String(s.error).slice(0, 120)));
-      const tog = el('button', 'btn small', s.status === 'disabled' ? 'enable' : 'disable');
-      tog.addEventListener('click', async () => {
-        tog.disabled = true;
-        const nr = await ccx.invoke('chat:mcp', { id: chat.id, op: 'toggle', name: s.name, enabled: s.status === 'disabled' });
-        if (!nr.ok) { toast(nr.error, 'err'); tog.disabled = false; } else load();
-      });
-      row.appendChild(tog);
+      // No enable/disable here: CCE switches connectors on and off by itself, and
+      // what the user decides is set in Settings → Connectors.
+      if (s.how) row.appendChild(el('span', 'chip', s.how));
       if (s.status === 'failed' || s.status === 'needs-auth') {
         const rc = elIcon('button', 'btn small', CCEIcons.svg('refresh', 14) + ' reconnect');
         rc.addEventListener('click', async () => {
