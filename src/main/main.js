@@ -52,6 +52,7 @@ const ChatManager = require('./chats');
 const { modelContext } = require('./modelcontext');
 const { WindowRegistry, route } = require('./windows');
 const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
+const { normalizeDomains } = require('./webdomains');
 
 const store = new Store();
 const auth = new AuthStore();
@@ -1436,6 +1437,11 @@ function registerIpc() {
     // notification about that chat must raise THAT window — not the newest
     // one, which with two windows open is a different chat's window. #F8
     const owner = route(windowRegistry, 'chats', id, win);
+    // "Always allow" on a fetch: remember the site for every later chat.
+    if (evt && evt.kind === 'web-domain-approved' && evt.host) {
+      store.settings.webFetchDomains = normalizeDomains([...(store.settings.webFetchDomains || []), evt.host]);
+      store.save();
+    }
     // Desktop notification for permission prompts — the card is easy to miss
     // behind a terminal window, and an unanswered one silently times out.
     if (evt && evt.kind === 'permission') {
@@ -2441,6 +2447,7 @@ function registerIpc() {
     if ('outputFilterMaxChars' in incoming) {
       incoming.outputFilterMaxChars = clampMaxChars(incoming.outputFilterMaxChars);
     }
+    if ('webFetchDomains' in incoming) incoming.webFetchDomains = normalizeDomains(incoming.webFetchDomains);
     if ('streamIdleSeconds' in incoming) {
       incoming.streamIdleSeconds = clampIdleSeconds(incoming.streamIdleSeconds);
     }

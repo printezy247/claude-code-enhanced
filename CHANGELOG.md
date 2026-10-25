@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.73
+- Fixed: four shell commands the auto policy approved but should have asked about: `uniq in out` (writes a file), `tree -o` (writes a file), `tail -f` (never ends and hangs the turn), and `cat ~/.config/gh/hosts.yml` (prints a stored token). `file -C`, `date` with a time to set, and `hostname` with a name are also asked about now.
+- Changed: the credential-file list covers `.config/gh`, `.config/gcloud`, `.git-credentials`, `.docker/config.json`, `.kube`, `.azure`, `.pgpass`, shell history, `*.pem`/`*.key`/`*.p12` and `/proc/*/environ`, and it now applies to the Read, Grep and Glob tools too, not only to shell text.
+- Changed: WebFetch asks before fetching a site you have not approved, so text in a web page cannot make the agent send data out in a URL unseen. Approved sites come from Settings → Web fetch (one per line; `*.example.com` covers subdomains) and from "Always allow" on the prompt, which saves the site for every later chat. Web search is unchanged.
+
 ## 0.9.72
 - Fixed: a model that thinks for a long time with no output was treated as a dead connection. The proxy now sends a keep-alive ping every 15 seconds while a reply is open.
 - Added: Settings → seconds of silence before a stalled reply is stopped (30–1800, default 180). It was fixed at 180.
