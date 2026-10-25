@@ -2,6 +2,13 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.70
+- Changed: the loop guard now judges a repeat by what came back. The same call returning the same result three times is a loop; a call whose result keeps changing (watching a build, polling a status) is not. Repeated reads of task output (TaskOutput, BashOutput, TaskGet, TaskList) are waiting, never a loop.
+- Changed: a shell command that changes a file (`>`, `sed -i`, `tee`, `mv`, `cp`, `git commit`...) counts as progress, like Write and Edit, so a test, edit, test cycle done through the shell is no longer flagged.
+- Added: the same error three times in a row (even from different commands) is caught as a loop.
+- Added: subagents are judged separately from the main agent and from each other.
+- Changed: the first time a loop is detected the repeating call is not run; the agent is told why and to change approach, and the turn goes on. If it loops again without any progress, the turn is stopped as before. The chat shows a note for each.
+
 ## 0.9.69
 - Fixed: a JSON example in the model's prose (`{"name": "rm_everything", …}`) was run as a real tool call. A call recovered from text or reasoning now only counts if it names a tool the request offers; loose spellings (`bash`, `read_file`) are mapped to the real tool, and a request that offers no tools (titles, summaries) recovers nothing.
 - Fixed: text next to an unusable JSON blob (`hello {…} bye`) was swallowed; it now stays in the reply.

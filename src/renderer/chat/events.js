@@ -192,8 +192,14 @@ export function handleEvent(evt) {
     }
   }
   else if (kind === 'loop-guard') {
-    chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' stopped — the agent was repeating itself (' + String(evt.reason || 'same step again') + '). Send a new instruction to continue.'));
-    toast('Stopped a repeating loop', 'err');
+    const why = String(evt.reason || 'same step again');
+    if (evt.action === 'redirect') {
+      // First trip: the call was not run and the agent was told to change course.
+      chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' the agent was repeating itself (' + why + ') — that step was skipped and it was told to try something different.'));
+    } else {
+      chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' stopped — the agent was repeating itself (' + why + '). Send a new instruction to continue.'));
+      toast('Stopped a repeating loop', 'err');
+    }
     scrollDownSoft(chat);
   }
   else if (kind === 'error') appendError(chat, evt.error);
