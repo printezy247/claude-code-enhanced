@@ -44,6 +44,44 @@ function applyConnectorStatus() {
   });
 }
 
+const MODE_LABEL = { auto: 'Auto', on: 'Always on', off: 'Off' };
+
+/**
+ * How CCE uses one connector: Auto (the default: it is connected, and shown to
+ * the model when the message needs it), Always on, or Off. Saved for every
+ * project or for the folder of the chat that is open.
+ */
+function modeControl(name) {
+  const wrap = el('span', 'conn-mode');
+  const sess = state.sessions && state.sessions.get(state.activeId);
+  const cwd = (sess && sess.cwd) || '';
+  const mode = el('select', 'skills-search conn-mode-sel');
+  for (const m of ['auto', 'on', 'off']) { const o = el('option', '', MODE_LABEL[m]); o.value = m; mode.appendChild(o); }
+  mode.setAttribute('aria-label', 'How ' + name + ' is used');
+  const scope = el('select', 'skills-search conn-scope-sel');
+  const all = el('option', '', 'all projects'); all.value = 'global'; scope.appendChild(all);
+  if (cwd) { const here = el('option', '', 'this project'); here.value = cwd; scope.appendChild(here); }
+  scope.setAttribute('aria-label', 'Where the ' + name + ' choice applies');
+  const read = () => {
+    const m = (state.settings && state.settings.connectorModes) || {};
+    return scope.value === 'global' ? ((m.global || {})[name] || 'auto') : (((m.projects || {})[scope.value] || {})[name] || 'auto');
+  };
+  mode.value = read();
+  scope.addEventListener('change', () => { mode.value = read(); });
+  mode.addEventListener('change', async () => {
+    const cur = (state.settings && state.settings.connectorModes) || {};
+    const next = { global: { ...(cur.global || {}) }, projects: { ...(cur.projects || {}) } };
+    const bucket = scope.value === 'global' ? next.global : (next.projects[scope.value] = { ...(next.projects[scope.value] || {}) });
+    if (mode.value === 'auto') delete bucket[name]; else bucket[name] = mode.value;
+    const r = await ccx.invoke('settings:set', { settings: { connectorModes: next } });
+    if (r && r.ok) { state.settings = r.settings; toast(name + ': ' + MODE_LABEL[mode.value] + (scope.value === 'global' ? ' in all projects' : ' in this project'), 'ok'); }
+    else { mode.value = read(); toast((r && r.error) || 'Could not save', 'err'); }
+  });
+  wrap.appendChild(mode);
+  wrap.appendChild(scope);
+  return wrap;
+}
+
 function mcpRow(s, removable, { quiet = false } = {}) {
   const row = el('div', 'mcp-row');
   const [txt, cls] = connectorChip(s);
@@ -55,6 +93,7 @@ function mcpRow(s, removable, { quiet = false } = {}) {
   if ((s.state === 'failed' || s.state === 'degraded') && s.detail) row.appendChild(el('span', 'meta mcp-why', s.detail));
   // In the sign-in group the summary already says how; one line per row was noise.
   if (s.state === 'auth' && !quiet) row.appendChild(el('span', 'meta mcp-why', 'run /mcp in a session → Authenticate'));
+  if (!quiet) row.appendChild(modeControl(s.name));
   if (removable) {
     const rm = el('button', 'btn small danger', 'Remove');
     rm.addEventListener('click', async () => {

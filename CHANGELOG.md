@@ -2,6 +2,16 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.74
+- Changed: connectors switch on and off by themselves. Every connector stays connected; what changes per chat is which ones the model is shown. The per-chat switch on the Overview card and the enable/disable buttons in the live MCP panel are gone, because that change applied to one session and was lost in the next chat.
+- Added: tool search for every provider that supports it (the default login, Anthropic's API and translated providers), so the model sees connector tool names and loads a definition only when it asks. A third-party gateway that speaks the Anthropic format is left as it was.
+- Added: for a model with a small window (under ~128k) or without tool search, CCE scores each connector against your message (server name, tool names and descriptions, what this project used before, what this chat used) and shows the best fits within a tool budget. It decides before the message is sent, and keeps a connector the chat used in the last few turns.
+- Added: the connectors each project uses are remembered, so the second chat in a repo starts with the right ones.
+- Added: a connector that is a copy of another (same tools registered twice) is left out of the chat; the better fit stays. Connectors that only share a generic tool name are not touched.
+- Added: a failed connector reconnects on its own after 5 s, 15 s, 45 s, 2 min and 5 min, then stops. "Needs sign-in" stays as a Sign in button, since it needs you.
+- Added: Settings → Connectors has Auto (default) / Always on / Off for each connector, for all projects or only the open one. Always on is never dropped by the picker or as a duplicate.
+- Changed: the Overview card shows a status dot, name, tool count and how each connector is used (auto · loaded, auto · idle, used 3×, pinned), Sign in / Reconnect only where needed, and a Manage connectors link. The "disconnect unused ones" note is gone.
+
 ## 0.9.73
 - Fixed: four shell commands the auto policy approved but should have asked about: `uniq in out` (writes a file), `tree -o` (writes a file), `tail -f` (never ends and hangs the turn), and `cat ~/.config/gh/hosts.yml` (prints a stored token). `file -C`, `date` with a time to set, and `hostname` with a name are also asked about now.
 - Changed: the credential-file list covers `.config/gh`, `.config/gcloud`, `.git-credentials`, `.docker/config.json`, `.kube`, `.azure`, `.pgpass`, shell history, `*.pem`/`*.key`/`*.p12` and `/proc/*/environ`, and it now applies to the Read, Grep and Glob tools too, not only to shell text.

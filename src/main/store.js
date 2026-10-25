@@ -8,6 +8,7 @@ const { app } = require('electron');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
 const { normalizeDomains } = require('./webdomains');
+const { normalizeModes, normalizeUsage } = require('./connectorauto');
 
 const DEFAULT_SETTINGS = {
   claudePath: '',            // empty = auto-detect
@@ -37,6 +38,9 @@ const DEFAULT_SETTINGS = {
   // (30k) limit. #feat-output-filter
   outputFilter: 'on',
   outputFilterMaxChars: 8000,
+  connectorModes: { global: {}, projects: {} },   // per connector: auto (default) / on / off, for all projects or one folder
+  connectorUsage: {},       // folder -> { connector: calls }: remembered so a new chat starts with the right ones
+  connectorPick: 'auto',    // 'auto': pick connectors per message only for small windows; 'off'; 'always'
   webFetchDomains: [],      // sites WebFetch may read without asking; anything else asks first
   streamIdleSeconds: 180,   // how long a silent stream may stay silent before the turn is called dead
   autoNudge: false,         // off by default: avoids burning whole turns on closing remarks
@@ -102,6 +106,9 @@ class Store {
     }
     this.data.settings.streamIdleSeconds = clampIdleSeconds(this.data.settings.streamIdleSeconds);
     this.data.settings.webFetchDomains = normalizeDomains(this.data.settings.webFetchDomains);
+    this.data.settings.connectorModes = normalizeModes(this.data.settings.connectorModes);
+    this.data.settings.connectorUsage = normalizeUsage(this.data.settings.connectorUsage);
+    if (!['auto', 'off', 'always'].includes(this.data.settings.connectorPick)) this.data.settings.connectorPick = 'auto';
     this.save();
   }
 

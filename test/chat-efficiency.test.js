@@ -35,7 +35,12 @@ describe('smaller requests on translated providers', () => {
     expect(leanEngineEnv({ provider: { ...QWEN, protocol: 'anthropic' } })).toEqual({});
     expect(leanEngineEnv({ provider: QWEN, env: { ENABLE_TOOL_SEARCH: 'false' } })).toEqual({});
     expect(leanEngineEnv({ provider: QWEN, settings: { toolSearch: false } })).toEqual({});
-    expect(leanEngineEnv({ provider: null })).toEqual({});
+  });
+
+  it('turns tool search on for Anthropic\'s own API and the default login too, not only translated providers', () => {
+    expect(leanEngineEnv({ provider: null })).toEqual({ ENABLE_TOOL_SEARCH: 'true' });
+    expect(leanEngineEnv({ provider: { protocol: 'anthropic', baseUrl: 'https://api.anthropic.com' } })).toEqual({ ENABLE_TOOL_SEARCH: 'true' });
+    expect(leanEngineEnv({ provider: null, settings: { toolSearch: false } })).toEqual({});
   });
 
   it('tells the engine a model\'s real window, raising above 200k too', () => {
