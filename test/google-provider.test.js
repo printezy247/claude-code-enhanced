@@ -103,9 +103,9 @@ describe('thinking and effort sent to google', () => {
     expect(eff('turbo')).toBeUndefined();
   });
 
-  it('compat: other providers keep the reasoning field and any effort', () => {
-    const out = adapters.buildOpenAIBody(turn({ effort: 'xhigh' }), true, other);
-    expect(out.reasoning).toEqual({ max_tokens: 31999 });
+  it('compat: a provider that accepts effort keeps it, and never gets a `reasoning` field', () => {
+    const out = adapters.buildOpenAIBody(turn({ model: 'gpt-5', effort: 'xhigh' }), true, other);
+    expect(out.reasoning).toBeUndefined();
     expect(out.reasoning_effort).toBe('xhigh');
   });
 

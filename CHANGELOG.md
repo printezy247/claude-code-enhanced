@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.71
+- Fixed: reasoning settings were sent to every OpenAI-compatible provider, and servers that do not know them answered with a 400 (a `reasoning` object was even sent to api.openai.com). They now go only where they are known to work: `reasoning_effort` to OpenAI o-series / GPT-5, Groq gpt-oss / Qwen3, xAI grok-3-mini and Ollama; a `reasoning` object to OpenRouter. Any other server gets neither. A provider entry can override this with `reasoningParam` (`effort`, `openrouter` or `none`).
+- Fixed: Claude's `max` effort level is clamped to `high` for OpenAI-style providers.
+- Fixed: DeepSeek, Kimi and MiniMax thinking models now get their earlier reasoning back (`reasoning_content`) next to the tool call it led to. DeepSeek answers 400 without it and the others lose the thread. A provider entry can force this on or off with `replayReasoning`.
+
 ## 0.9.70
 - Changed: the loop guard now judges a repeat by what came back. The same call returning the same result three times is a loop; a call whose result keeps changing (watching a build, polling a status) is not. Repeated reads of task output (TaskOutput, BashOutput, TaskGet, TaskList) are waiting, never a loop.
 - Changed: a shell command that changes a file (`>`, `sed -i`, `tee`, `mv`, `cp`, `git commit`...) counts as progress, like Write and Edit, so a test, edit, test cycle done through the shell is no longer flagged.

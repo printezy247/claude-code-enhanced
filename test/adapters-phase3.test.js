@@ -90,8 +90,8 @@ describe('catalog gating', () => {
     expect(req.max_output_tokens).toBe(1000);
   }));
 
-  it('keeps effort for an uncatalogued model', () => {
-    const out = buildOpenAIBody({ model: 'unknown', messages: [], max_tokens: 32000, effort: 'high' }, false, { presetId: 'nope' });
+  it('keeps effort for an uncatalogued model on a provider that accepts it', () => {
+    const out = buildOpenAIBody({ model: 'unknown', messages: [], max_tokens: 32000, effort: 'high' }, false, { presetId: 'nope', reasoningParam: 'effort' });
     expect(out.reasoning_effort).toBe('high');
     expect(out.max_tokens).toBe(32000);
   });
