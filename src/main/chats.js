@@ -467,6 +467,28 @@ class ChatManager extends EventEmitter {
         }],
       };
     }
+    // Loop guard, first trip: the repeating call is not run; the model is told
+    // why and what to do instead. A second trip stops the turn (see the stream).
+    options.hooks = options.hooks || {};
+    options.hooks.PreToolUse = [{
+      hooks: [async (input) => {
+        const live = this.chats.get(id);
+        const callId = input && input.tool_use_id;
+        if (!live || !live.guard || !callId) return {};
+        // The hook can beat the stream frame that announces the call.
+        for (let i = 0; i < 10 && !live.guard.known(callId); i++) await new Promise((r) => setTimeout(r, 10));
+        const why = live.guard.denial(callId);
+        if (!why) return {};
+        return {
+          hookSpecificOutput: {
+            hookEventName: 'PreToolUse',
+            permissionDecision: 'deny',
+            permissionDecisionReason: 'Loop guard: ' + why + '. This call was not run because it would repeat work without a new result. '
+              + 'Change approach: reread the output you already have, try a different command or file, or tell the user what is blocking you.',
+          },
+        };
+      }],
+    }];
     if (model) options.model = model;
     if (resume && resume !== 'last') options.resume = resume;
     if (resume === 'last') {
@@ -870,18 +892,26 @@ class ChatManager extends EventEmitter {
             if (!chat.model) chat.model = msg.model || chat.model;
             this._rememberSession(dir, chat.sessionId);
           }
-          if (msg.type === 'assistant' && !msg.parent_tool_use_id && Array.isArray(msg.message && msg.message.content)) {
+          if (msg.type === 'assistant' && Array.isArray(msg.message && msg.message.content)) {
+            // The main agent and each subagent are judged on their own history.
+            const scope = msg.parent_tool_use_id || '';
             for (const b of msg.message.content) {
               if (!b || b.type !== 'tool_use') continue;
               const fp = b.input && (b.input.file_path || b.input.notebook_path);
-              if (fp && ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(b.name)) {
+              if (!scope && fp && ['Write', 'Edit', 'MultiEdit', 'NotebookEdit'].includes(b.name)) {
                 if (chat.written.size >= 500) chat.written.delete(chat.written.values().next().value);
                 chat.written.add(absFor(dir, fp));
               }
-              const trip = chat.guard.record(b);
-              if (trip.tripped && !chat.guardTripped) {
+              const trip = chat.guard.record(b, scope);
+              if (!trip.tripped) continue;
+              if (trip.strike < 2) {
+                // First time: the call is denied with a corrective message (see the
+                // PreToolUse hook) and the agent gets to change course.
+                this.emit('event', id, { kind: 'loop-guard', reason: trip.reason, action: 'redirect' });
+              } else if (!chat.guardTripped) {
+                // Still looping after being told: stop the turn.
                 chat.guardTripped = true;
-                this.emit('event', id, { kind: 'loop-guard', reason: trip.reason });
+                this.emit('event', id, { kind: 'loop-guard', reason: trip.reason, action: 'stop' });
                 this.interrupt(id).catch(() => {});
               }
             }
@@ -915,7 +945,10 @@ class ChatManager extends EventEmitter {
           // A finished tool call ends the live stream of its output. #feat-live-output
           if (msg.type === 'user' && msg.message && Array.isArray(msg.message.content)) {
             for (const b of msg.message.content) {
-              if (b && b.type === 'tool_result' && b.tool_use_id) this._endTaskByTool(id, b.tool_use_id);
+              if (b && b.type === 'tool_result' && b.tool_use_id) {
+                this._endTaskByTool(id, b.tool_use_id);
+                if (chat.guard) chat.guard.result(b.tool_use_id, b.content, b.is_error === true);
+              }
             }
           }
           if (msg.type === 'system' && TASK_SUBTYPES.includes(msg.subtype)) {
