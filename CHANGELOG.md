@@ -2,6 +2,9 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.67
+- Fixed: plugin/MCP tools whose names contain characters OpenAI-format APIs reject (colons, dots, spaces — e.g. `plugin:ecc:…` browser and device tools) are now sent under a safe alias and mapped back, instead of being refused or dropped for non-Anthropic models.
+
 ## 0.9.66
 - New: per-model sampling defaults when a request sets none (Qwen 0.55, Gemini 1.0; DeepSeek-R1 and models that reject sampling get none). A provider can pin its own `temperature` / `topP`.
 - Fixed: the context-window probe now sends the provider's API key, so gated `/models` endpoints answer.

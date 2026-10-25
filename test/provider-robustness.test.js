@@ -107,3 +107,16 @@ describe('cache accounting (3.11)', () => {
     expect(typeof plain.messages[0].content).toBe('string');
   });
 });
+
+describe('tool names with characters OpenAI rejects', () => {
+  it('colons and dots are replaced and restored', () => {
+    const n = 'mcp__plugin:ecc:chrome.devtools__navigate page';
+    const { body, back } = wrapToolNames({ tools: [{ name: n }] });
+    expect(body.tools[0].name).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+    expect(back(body.tools[0].name)).toBe(n);
+  });
+  it('valid names are untouched', () => {
+    const b = { tools: [{ name: 'mcp__chrome-devtools__navigate_page' }] };
+    expect(wrapToolNames(b).body).toBe(b);
+  });
+});
