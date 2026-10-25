@@ -322,18 +322,28 @@ describe('adapter routing through the proxy', () => {
 describe('upstream fetch retry (broken-IPv6 hosts)', () => {
   const { fetchUpstream } = require('../src/main/adapters.js');
 
-  it('succeeds on the second attempt after a connection failure', async () => {
+  it('retries a connection that was refused before anything was sent', async () => {
+    const real = globalThis.fetch;
     let n = 0;
-    const srv = http.createServer((_q, res) => {
+    globalThis.fetch = async () => {
       n++;
-      if (n === 1) { res.socket.destroy(); return; }
-      res.writeHead(200, { 'content-type': 'application/json' });
-      res.end('{"ok":true}');
-    });
+      if (n === 1) throw Object.assign(new TypeError('fetch failed'), { cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }) });
+      return new Response('{"ok":true}', { status: 200 });
+    };
+    try {
+      const r = await fetchUpstream('http://127.0.0.1:9/x', { headers: {} }, AbortSignal.timeout(10000));
+      expect(r.status).toBe(200);
+      expect(n).toBe(2);
+    } finally { globalThis.fetch = real; }
+  });
+
+  it('does not resend a request the server had already received', async () => {
+    let n = 0;
+    const srv = http.createServer((_q, res) => { n++; res.socket.destroy(); });
     await listen(srv);
-    const r = await fetchUpstream('http://127.0.0.1:' + srv.address().port + '/x', { headers: {} }, AbortSignal.timeout(10000));
-    expect(r.status).toBe(200);
-    expect(n).toBe(2);
+    await expect(fetchUpstream('http://127.0.0.1:' + srv.address().port + '/x', { headers: {} }, AbortSignal.timeout(10000)))
+      .rejects.toThrow();
+    expect(n).toBe(1);
     await close(srv);
   });
 

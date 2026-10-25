@@ -32,6 +32,33 @@ function clampMaxChars(maxChars) {
   return Math.min(MAX_MAX_CHARS, Math.max(MIN_MAX_CHARS, Math.round(n)));
 }
 
+const DEFAULT_IDLE_SECONDS = 180;
+
+/**
+ * How long a silent engine stream may stay silent before the turn is called dead.
+ * Lives here with the other Settings clamps: the main process uses the number.
+ * @param {unknown} seconds
+ * @returns {number} 30…1800
+ */
+function clampIdleSeconds(seconds) {
+  const n = Number(seconds);
+  if (!Number.isFinite(n) || n <= 0) return DEFAULT_IDLE_SECONDS;
+  return Math.min(1800, Math.max(30, Math.round(n)));
+}
+
+/** Tools whose output is compacted by this filter. */
+const FILTERED_TOOLS = ['Bash', 'Grep', 'Glob', 'Read'];
+
+/**
+ * How much of one tool's output the model may read. A file the model asked to
+ * read is the work itself, so Read gets a larger share than a search or a log.
+ */
+function budgetFor(toolName, maxChars) {
+  const base = clampMaxChars(maxChars);
+  if (toolName === 'Read') return Math.min(MAX_MAX_CHARS, Math.max(base * 3, 24000));
+  return base;
+}
+
 /**
  * The plain text of a tool result, whatever shape the engine used.
  * @param {unknown} content
@@ -57,6 +84,10 @@ function toolResultText(content) {
     if (content.stderr) out.push(String(content.stderr));
     if (out.length) return out.join('\n');
     if (content.text) return String(content.text);
+    // Read: { file: { content } }. Grep: { content } or { filenames }. Glob: { filenames }.
+    if (content.file && typeof content.file.content === 'string') return content.file.content;
+    if (typeof content.content === 'string') return content.content;
+    if (Array.isArray(content.filenames)) return content.filenames.map(String).join('\n');
     return '';
   }
   return String(content);
@@ -105,17 +136,19 @@ function compactBashOutput({ output, command = '', maxChars = DEFAULT_MAX_CHARS 
  */
 function compactToolOutput({ output, toolName = 'tool', detail = '', maxChars = DEFAULT_MAX_CHARS } = {}) {
   const original = toolResultText(output);
-  const limit = clampMaxChars(maxChars);
+  const limit = budgetFor(toolName, maxChars);
   if (original.length <= limit) return { text: original, original, compacted: false };
 
-  const collapsed = collapseRepeats(original);
+  // Collapsing repeats rewrites the text; a file's blank lines must come back as written.
+  const collapsed = toolName === 'Read' ? original : collapseRepeats(original);
   const body = collapsed.length < original.length ? collapsed : original;
   const lines = original.split('\n').length;
   const det = detail ? ' (' + String(detail).slice(0, 200) + ')' : '';
   const label = toolName === 'Bash' ? 'shell output' : toolName + ' output';
+  const hint = toolName === 'Read' ? ' — read a narrower range with offset and limit for the rest' : '';
   const headerFor = (stated) => '[cce] compacted ' + label + ': '
     + lines + ' lines, ' + original.length + ' chars, model sees ' + stated + ' chars'
-    + det + '\n';
+    + det + hint + '\n';
   const headerRoom = headerFor('').length + 8;
   const budget = Math.max(0, limit - headerRoom - MARKER_ROOM);
 
@@ -151,5 +184,5 @@ function statedLength(base) {
 
 module.exports = {
   compactBashOutput, compactToolOutput, collapseRepeats, toolResultText,
-  DEFAULT_MAX_CHARS, MIN_MAX_CHARS, MAX_MAX_CHARS, clampMaxChars,
+  DEFAULT_MAX_CHARS, MIN_MAX_CHARS, MAX_MAX_CHARS, clampMaxChars, budgetFor, FILTERED_TOOLS, clampIdleSeconds, DEFAULT_IDLE_SECONDS,
 };

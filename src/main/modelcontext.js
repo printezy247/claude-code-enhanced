@@ -7,14 +7,33 @@ const modelsdev = require('./modelsdev');
 const ENGINE_DEFAULT_WINDOW = 200_000;
 
 const contextCache = new Map();
+// A probe that failed (timeout, 401, a gateway with no /models) is remembered
+// for a few minutes, not for the life of the app: the key may be fixed or the
+// network back a moment later.
+const PROBE_FAIL_TTL_MS = 5 * 60_000;
+const PROBE_TIMEOUT_MS = 8_000;
+const probeFailures = new Map();
 
+// First match wins, so a specific family comes before the general one. Where
+// the window differs across a family the lower figure is used: claiming more
+// than a model has stops compaction from firing before the provider errors.
 const KNOWN_MODEL_ALIASES = [
-  { match: /gemini-(?:1\.5|2\.0|2\.5)-(?:pro|flash)/i, context: 1_000_000 },
+  { match: /gemini-(?:1\.5|2\.0|2\.5|3(?:\.\d)?)-(?:pro|flash)/i, context: 1_000_000 },
   { match: /claude-(?:3|3\.5|3\.7|4)-(?:sonnet|haiku|opus)/i, context: 200_000 },
-  { match: /deepseek-(?:r1|v3|chat|coder)/i, context: 128_000 },
+  { match: /claude-(?:sonnet|haiku|opus)-[45]/i, context: 200_000 },
+  { match: /deepseek-(?:r1|v3|v4|chat|coder|reasoner)/i, context: 128_000 },
+  { match: /llama-4/i, context: 1_000_000 },
   { match: /llama-3\.[123]/i, context: 128_000 },
+  { match: /qwen3?-coder/i, context: 262_144 },
   { match: /qwen(?:2\.5|3)/i, context: 131_072 },
-  { match: /o(?:1|3|4)(?:-mini|-preview)?/i, context: 200_000 },
+  { match: /kimi-k2/i, context: 131_072 },
+  { match: /glm-4\.[5-9]/i, context: 131_072 },
+  { match: /gpt-oss/i, context: 131_072 },
+  { match: /grok-4/i, context: 256_000 },
+  { match: /grok-3/i, context: 131_072 },
+  { match: /gpt-5/i, context: 400_000 },
+  { match: /gpt-4\.1/i, context: 1_047_576 },
+  { match: /(?:^|[/:])o(?:1|3|4)(?:-mini|-pro|-preview)?(?:$|-\d)/i, context: 200_000 },
   { match: /gpt-4o(?:-mini)?/i, context: 128_000 },
   { match: /gpt-4-turbo/i, context: 128_000 },
   { match: /gpt-4-32k/i, context: 32_768 },
@@ -131,25 +150,16 @@ async function probeContextWindow(provider, model) {
   const baseUrl = provider && (provider.baseUrl || '');
   const pid = provider && (provider.presetId || provider.modelsDevId || provider.id || '');
   const cacheKey = `${pid || baseUrl}:${id}`;
-  if (contextCache.has(cacheKey)) return contextCache.get(cacheKey);
+  if (contextCache.get(cacheKey) > 0) return contextCache.get(cacheKey);
+  const failedAt = probeFailures.get(cacheKey);
+  if (failedAt && Date.now() - failedAt < PROBE_FAIL_TTL_MS) return 0;
 
   if (!baseUrl) return 0;
+  const fail = () => { probeFailures.set(cacheKey, Date.now()); return 0; };
   try {
     const url = baseUrl.replace(/\/+$/, '') + '/models';
-    // Gated /models endpoints answer 401 without the provider's key.
-    const headers = {};
-    const key = provider && provider.apiKey;
-    if (key) {
-      if (provider.keyHeader === 'x-api-key') headers['x-api-key'] = key;
-      else if (/generativelanguage\.googleapis\.com/i.test(baseUrl)) headers['x-goog-api-key'] = key;
-      else headers.Authorization = 'Bearer ' + key;
-    }
-    if (provider && provider.headers && typeof provider.headers === 'object') Object.assign(headers, provider.headers);
-    const res = await fetch(url, Object.keys(headers).length ? { headers } : undefined);
-    if (!res || !res.ok) {
-      contextCache.set(cacheKey, 0);
-      return 0;
-    }
+    const res = await fetch(url, { headers: probeHeaders(provider, baseUrl), signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+    if (!res || !res.ok) return fail();
     const json = await res.json();
     const list = Array.isArray(json) ? json : (Array.isArray(json && json.data) ? json.data : []);
     const hit = list.find(m => m && (m.id === id || m.name === id));
@@ -161,12 +171,30 @@ async function probeContextWindow(provider, model) {
         return ctx;
       }
     }
-    contextCache.set(cacheKey, 0);
-    return 0;
+    return fail();
   } catch {
-    contextCache.set(cacheKey, 0);
-    return 0;
+    return fail();
   }
+}
+
+/**
+ * Headers for a provider's /models listing. Gated endpoints answer 401 without
+ * the provider's key, and each family spells the key differently: Anthropic
+ * wants x-api-key plus a version, Google its own header, the rest a bearer.
+ */
+function probeHeaders(provider, baseUrl) {
+  const headers = { accept: 'application/json' };
+  const key = provider && provider.apiKey;
+  const anthropic = /(^|\.)anthropic\.com/i.test(baseUrl) || (provider && provider.protocol === 'anthropic');
+  if (key) {
+    if (/generativelanguage\.googleapis\.com/i.test(baseUrl) || (provider && provider.keyHeader === 'x-goog-api-key')) headers['x-goog-api-key'] = key;
+    else if (provider && provider.keyHeader === 'bearer') headers.Authorization = 'Bearer ' + key;
+    else if ((provider && provider.keyHeader === 'x-api-key') || anthropic) headers['x-api-key'] = key;
+    else headers.Authorization = 'Bearer ' + key;
+  }
+  if (anthropic) headers['anthropic-version'] = '2023-06-01';
+  if (provider && provider.headers && typeof provider.headers === 'object') Object.assign(headers, provider.headers);
+  return headers;
 }
 
 /**
@@ -195,4 +223,6 @@ function samplingDefaults(provider, model) {
   return out;
 }
 
-module.exports = { samplingDefaults, SAMPLING_DEFAULTS, modelContext, modelCaps, effortLevels, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };
+function clearProbeFailures() { probeFailures.clear(); }
+
+module.exports = { probeHeaders, clearProbeFailures, PROBE_FAIL_TTL_MS, samplingDefaults, SAMPLING_DEFAULTS, modelContext, modelCaps, effortLevels, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };

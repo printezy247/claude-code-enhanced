@@ -11,6 +11,23 @@ const { wrapToolNames } = require('./toolnames');
 const { resolveToolName, callSignature, repairToolArgs, requiresArgs } = require('./toolcalls');
 const { openaiBase } = adapters;
 const { sseLines } = require('./sse');
+const tokencount = require('./tokencount');
+
+// A model that thinks for a minute sends nothing for a minute, and the engine
+// reads a silent stream as a dead one (its idle timeout). A ping is an SSE
+// event the engine ignores, so it only proves the proxy is alive.
+const KEEPALIVE_MS = Number(process.env.CCE_KEEPALIVE_MS) > 0 ? Number(process.env.CCE_KEEPALIVE_MS) : 15_000;
+function startKeepAlive(res, ms = KEEPALIVE_MS) {
+  const t = setInterval(() => {
+    if (res.writableEnded || res.destroyed) { clearInterval(t); return; }
+    try { res.write('event: ping\ndata: {"type":"ping"}\n\n'); } catch { clearInterval(t); }
+  }, ms);
+  if (t.unref) t.unref();
+  const stop = () => clearInterval(t);
+  res.on('close', stop);
+  res.on('finish', stop);
+  return stop;
+}
 
 // Port 0 = ask the OS for a free port. A fixed 8199 collides with any other
 // listener and, before #8, exposed provider keys to that process.
@@ -92,9 +109,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     return;
   }
   if (restPath === '/v1/messages/count_tokens') {
-    const est = Math.max(1, Math.round(JSON.stringify(body.messages || []).length / 4)
-      + Math.round(JSON.stringify(body.system || '').length / 4)
-      + Math.round(JSON.stringify(body.tools || []).length / 4));
+    const est = tokencount.estimatePrompt(body);
     res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ input_tokens: est, is_approximate: true }));
     return;
   }
@@ -211,6 +226,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   const sse = (event, data) => {
     res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n');
   };
+  startKeepAlive(res);
   sse('message_start', { type: 'message_start', message: { id: 'msg_proxy', type: 'message', role: 'assistant', model: body.model, content: [], stop_reason: null, usage: { input_tokens: inTokens(body), output_tokens: 0 } } });
 
   let reasonBuf = '';
@@ -219,6 +235,10 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   // this; otherwise the engine sees zero input tokens, which breaks the context
   // meter and the auto-compact decision. #9
   let promptTokens = inTokens(body);
+  const rawPrompt = tokencount.estimateBody(body);
+  let realPrompt = false;   // the provider reported the prompt size
+  let realOut = false;      // the provider reported the reply size
+  let estOut = 0;           // our own count of the reply, used when it did not
   let cachedTokens = 0;     // prompt tokens the provider served from its cache
   let blockOpen = false;   // a content_block is currently open
   let blockIdx = -1;
@@ -248,7 +268,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
       closeBlock(); openBlock({ type: 'text', text: '' });
     }
     if (s.trim()) sawText = true;
-    outTokens++;
+    estOut += tokencount.estimateText(s);
     sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'text_delta', text: s } });
   };
   // Reasoning goes out as a real thinking block, so the chat shows the model
@@ -256,6 +276,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   const emitThinking = (s) => {
     if (!s) return;
     reasonAll += s;
+    estOut += tokencount.estimateText(s);
     if (!blockOpen || blockType !== 'thinking') {
       if (!s.trim()) return;
       closeBlock(); openBlock({ type: 'thinking', thinking: '', signature: '' });
@@ -365,6 +386,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
       sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: args || '{}' } });
       stopReason = 'tool_use';
       sawTool = true;
+      estOut += tokencount.estimateText(t.name) + tokencount.estimateText(args) + 4;
     }
     toolBuf.clear();
   };
@@ -388,8 +410,8 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         if (!choice) {
           if (j.usage) {
             const p = j.usage.prompt_tokens || j.usage.input_tokens;
-            if (p) promptTokens = p;
-            if (j.usage.completion_tokens) outTokens = j.usage.completion_tokens;
+            if (p) { promptTokens = p; realPrompt = true; }
+            if (j.usage.completion_tokens) { outTokens = j.usage.completion_tokens; realOut = true; }
             cachedTokens = cachedFrom(j.usage) || cachedTokens;
           }
           return;
@@ -438,8 +460,8 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         }
         if (j.usage) {
           const p = j.usage.prompt_tokens || j.usage.input_tokens;
-          if (p) promptTokens = p;
-          if (j.usage.completion_tokens) outTokens = j.usage.completion_tokens;
+          if (p) { promptTokens = p; realPrompt = true; }
+          if (j.usage.completion_tokens) { outTokens = j.usage.completion_tokens; realOut = true; }
           cachedTokens = cachedFrom(j.usage) || cachedTokens;
         }
     };
@@ -510,6 +532,10 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   // reasoning is the answer.
   if (!sawText && !sawTool && reasonAll.trim()) emitText(reasonAll.trim());
   closeBlock();
+  // No reply size from the provider: our count of what was sent. A real prompt
+  // size teaches the next estimate for this model.
+  if (!realOut) outTokens = Math.max(outTokens, Math.round(estOut));
+  if (realPrompt) tokencount.noteActual(body.model, rawPrompt, promptTokens);
   sse('message_delta', { type: 'message_delta', delta: { stop_reason: stopReason, stop_sequence: null }, usage: anthropicUsage(promptTokens, outTokens, cachedTokens) });
   sse('message_stop', { type: 'message_stop' });
   if (!res.writableEnded && !res.destroyed) { try { res.end(); } catch { /* socket gone */ } }
@@ -738,6 +764,7 @@ async function passthroughAnthropic(body, prov, res, inHeaders) {
     return;
   }
   res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+  startKeepAlive(res);
   const fix = (line) => {
     if (!line.startsWith('data:')) return line;
     let j;
@@ -871,12 +898,7 @@ function aggregateToAnthropic(j, body, back = (n) => n) {
  * context is empty. ~4 chars/token is the standard rough ratio.
  */
 function inTokens(body) {
-  try {
-    const msgs = JSON.stringify(body.messages || []);
-    const sys = JSON.stringify(body.system || '');
-    const tools = JSON.stringify(body.tools || []);
-    return Math.max(1, Math.round(msgs.length / 4) + Math.round(sys.length / 4) + Math.round(tools.length / 4));
-  } catch { return 1; }
+  return tokencount.estimatePrompt(body);
 }
 
 // Text-embedded tool calls. Small local models (granite, qwen3 3-4B) emit the

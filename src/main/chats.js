@@ -12,7 +12,7 @@ const { EventEmitter } = require('events');
 const providers = require('./providers');
 const { promptAppend: bootstrapPrompt, syncedSkillsPlugin } = require('./bootstrap');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
-const { compactBashOutput, compactToolOutput, toolResultText, clampMaxChars } = require('./toolfilter');
+const { compactToolOutput, toolResultText, clampMaxChars, FILTERED_TOOLS, clampIdleSeconds } = require('./toolfilter');
 const managedconfig = require('./managedconfig');
 const { createLoopGuard } = require('./loopguard');
 const { absFor, shareablePath } = require('./fileshare');
@@ -431,8 +431,10 @@ class ChatManager extends EventEmitter {
       ...(settings && settings.loginEnv ? { PATH: settings.loginEnv.PATH || process.env.PATH } : {}),
     };
     // Fail faster than the 300s default when the engine stream stalls mid-turn
-    // (long Bash runs keep streaming, so a dead body means a dead turn).
-    options.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = '180000';
+    // (long Bash runs keep streaming, so a dead body means a dead turn). The
+    // proxy pings every 15 s, so a slow model that is still alive does not trip
+    // it; the wait is a setting for hosts that are slower than that.
+    options.env.CLAUDE_STREAM_IDLE_TIMEOUT_MS = String(clampIdleSeconds(settings && settings.streamIdleSeconds) * 1000);
     // Shell-output filter. The model reads a compacted result; the card in the
     // UI keeps the original, so nothing is hidden from the user. #feat-output-filter
     if (!settings || settings.outputFilter !== 'off') {
@@ -443,14 +445,15 @@ class ChatManager extends EventEmitter {
       const maxChars = clampMaxChars(settings && settings.outputFilterMaxChars);
       options.hooks = {
         PostToolUse: [{
-          matcher: 'Bash',
+          matcher: FILTERED_TOOLS.join('|'),
           hooks: [async (input) => {
             const name = String((input && input.tool_name) || '');
-            if (name !== 'Bash') return {};
+            if (!FILTERED_TOOLS.includes(name)) return {};
             const original = toolResultText(input.tool_response);
             if (!original) return {};
-            const command = (input.tool_input && input.tool_input.command) || '';
-            const r = compactBashOutput({ output: original, command, maxChars });
+            const ti = (input && input.tool_input) || {};
+            const detail = ti.command || ti.pattern || ti.file_path || '';
+            const r = compactToolOutput({ output: original, toolName: name, detail, maxChars });
             // Nothing was cut: the model already reads everything, and the
             // card would show the same text twice.
             if (!r.compacted) return {};
