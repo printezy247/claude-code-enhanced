@@ -68,6 +68,9 @@ async function withProxy(upstreamHandler, opts = {}) {
   };
 }
 
+// A call recovered from prose only counts when the request offers that tool.
+const READ_TOOL = { name: 'Read', description: 'read', input_schema: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } };
+
 describe('proxy auth (#8)', () => {
   let h;
   beforeAll(async () => {
@@ -185,7 +188,7 @@ describe('streamed translation end to end (#1, #9)', () => {
       s({ choices: [{ delta: {}, finish_reason: 'stop' }] });
       res.end('data: [DONE]\n\n');
     });
-    const body = { model: 'm', max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'read /x/y.ts' }] };
+    const body = { model: 'm', max_tokens: 64, stream: true, messages: [{ role: 'user', content: 'read /x/y.ts' }], tools: [READ_TOOL] };
     const res = await h.call('/v1/messages', body);
     const text = await res.text();
     const tools = toolsFromSse(text);
@@ -389,7 +392,7 @@ describe('aggregate (non-streamed) translation', () => {
     const proxy = await startProxy(() => ({ baseUrl: 'http://127.0.0.1:' + upPort, apiKey: '' }), { port: 0 });
     const res = await fetch('http://127.0.0.1:' + proxy.port + '/px/t1/v1/messages', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'm', max_tokens: 64, stream: false, messages: [{ role: 'user', content: 'x' }] }),
+      body: JSON.stringify({ model: 'm', max_tokens: 64, stream: false, messages: [{ role: 'user', content: 'x' }], tools: [READ_TOOL] }),
     });
     const j = await res.json();
     await close(proxy.server);

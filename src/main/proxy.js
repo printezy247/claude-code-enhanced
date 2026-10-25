@@ -8,6 +8,7 @@ const http = require('http');
 const crypto = require('crypto');
 const adapters = require('./adapters');
 const { wrapToolNames } = require('./toolnames');
+const { resolveToolName, callSignature, repairToolArgs, requiresArgs } = require('./toolcalls');
 const { openaiBase } = adapters;
 const { sseLines } = require('./sse');
 
@@ -227,6 +228,11 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   let sawText = false;     // the reply has visible text
   let sawTool = false;     // the reply has at least one tool call
   let sawFinish = false;   // finish_reason or [DONE] arrived: the stream really ended
+  let sawFinishReason = false;   // a finish_reason arrived: the model ended its reply on its own
+  // The tools this request offers: a call recovered from prose or reasoning only
+  // counts when it names one of them.
+  const knownTools = new Set(((body && body.tools) || []).map((t) => t && t.name).filter(Boolean));
+  const cutNotes = [];     // notes about cut-off calls, held until the stream's end is known
   let failed = null;       // error that ended the stream early
   const toolBuf = new Map();   // openai tool_call index -> {id, name, args}
   const textTools = [];        // calls recovered from the text channel
@@ -295,35 +301,68 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
       if (seg.think) { emitThinking(seg.s); continue; }
       // Text may hide a whole tool call (local models do this); split it out
       // so the engine sees a real tool_use block. #1
-      const split = extractTextToolCalls(seg.s, textCarry);
+      const split = extractTextToolCalls(seg.s, textCarry, knownTools);
       textCarry = split.carry;
       emitText(split.text);
       for (const t of split.tools) queueTextTool(t);
     }
   };
+  // A call found in prose or reasoning is queued, not sent: it goes out with the
+  // rest at the end of the reply, in order, and only if it is a real tool.
   const queueTextTool = (t) => {
-    textTools.push({ id: 'call_txt_' + (blockIdx + textTools.length + 1) + '_' + Date.now(), name: t.name, args: JSON.stringify(t.args || {}) });
+    const name = resolveToolName(t.name, knownTools);
+    if (!name) return false;
+    textTools.push({ id: 'call_txt_' + (blockIdx + textTools.length + 1) + '_' + Date.now(), name, args: JSON.stringify(t.args || {}), recovered: true });
+    return true;
   };
   // Anthropic content blocks are strictly sequential, but OpenAI interleaves
   // argument chunks across parallel tool calls — emit each call whole, in order.
   const flushTools = () => {
     // Calls found in the text channel go out first: they were produced before
     // any structured tool_call could arrive.
-    const all = textTools.splice(0).concat([...toolBuf].sort((a, b) => a[0] - b[0]).map(([, t]) => t));
+    const structured = [...toolBuf].sort((x, y) => x[0] - y[0]).map(([, t]) => t);
+    for (const t of structured) {
+      // A model's loose spelling of a real tool ("bash", "read_file").
+      const fixed = resolveToolName(t.name, knownTools);
+      if (fixed) t.name = fixed;
+    }
+    // The same call can arrive twice (once in the reasoning, once structured):
+    // run it once.
+    const seen = new Set(structured.filter((t) => t.name && toolArgsComplete(t.args)).map((t) => callSignature(t.name, t.args)));
+    const all = [];
+    for (const t of textTools.splice(0)) {
+      const sig = callSignature(t.name, t.args);
+      if (seen.has(sig)) continue;
+      seen.add(sig);
+      all.push(t);
+    }
+    all.push(...structured);
+    const cut = stopReason === 'max_tokens' || !sawFinishReason;
     for (const t of all) {
       if (!t.name) continue;
-      // Arguments cut off mid-JSON (length limit, dropped stream) used to go
-      // out as a "complete" call: the engine ran the tool with {} or failed,
-      // and the model re-issued it — the repeated-task loop. Say so instead.
-      if (!toolArgsComplete(t.args)) {
-        console.warn('[proxy] incomplete tool arguments dropped:', t.name);
-        emitText('\n[The call to ' + t.name + ' was cut off before its arguments were complete, so it was not run.'
-          + (stopReason === 'max_tokens' ? ' The reply hit the output-token limit.' : '') + ']\n');
-        continue;
+      let args = t.args;
+      if (!toolArgsComplete(args)) {
+        // A model's slip (finished its reply, wrote bad JSON) can be mended. A
+        // cut-off call cannot: closing it would run a write with half its content.
+        const fixedArgs = cut ? null : repairToolArgs(args);
+        if (fixedArgs) {
+          args = JSON.stringify(fixedArgs);
+        } else if (!cut && requiresArgs(body.tools, t.name)) {
+          // Let the engine's own input check tell the model what is missing; it
+          // then retries with arguments instead of the turn ending in silence.
+          console.warn('[proxy] unusable tool arguments, engine will reject:', t.name);
+          args = '{}';
+        } else {
+          console.warn('[proxy] incomplete tool arguments dropped:', t.name);
+          const note = '\n[The call to ' + t.name + ' was cut off before its arguments were complete, so it was not run.'
+            + (stopReason === 'max_tokens' ? ' The reply hit the output-token limit.' : '') + ']\n';
+          if (sawFinishReason) emitText(note); else cutNotes.push(note);
+          continue;
+        }
       }
       closeBlock();
       openBlock({ type: 'tool_use', id: t.id, name: tn.back(t.name) });
-      sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: t.args || '{}' } });
+      sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: args || '{}' } });
       stopReason = 'tool_use';
       sawTool = true;
     }
@@ -366,15 +405,8 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
           while ((m2 = reasonBuf.match(/<tool_call>([\s\S]*?)<\/tool_call>/))) {
             reasonBuf = reasonBuf.slice(reasonBuf.indexOf(m2[0]) + m2[0].length);
             let parsed = null;
-            try { parsed = JSON.parse(m2[1].trim()); } catch { /* partial/invalid */ }
-            const fname = parsed && parsed.name;
-            if (!fname) continue;
-            closeBlock();
-            stopReason = 'tool_use';
-            sawTool = true;
-            openBlock({ type: 'tool_use', id: 'call_' + blockIdx + '_' + Date.now(), name: fname });
-            const args = parsed.arguments != null ? (typeof parsed.arguments === 'string' ? parsed.arguments : JSON.stringify(parsed.arguments)) : '{}';
-            sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: args } });
+            try { parsed = parseToolJson(m2[1]); } catch { /* partial/invalid */ }
+            if (parsed) queueTextTool(parsed);
           }
           // Only an unfinished call needs to wait for more chunks.
           const openAt = reasonBuf.lastIndexOf('<tool_call>');
@@ -393,6 +425,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         }
         if (choice.finish_reason) {
           sawFinish = true;
+          sawFinishReason = true;
           const hadTool = sawTool;
           stopReason = choice.finish_reason === 'tool_calls' ? 'tool_use' : choice.finish_reason === 'length' ? 'max_tokens' : 'end_turn';
           flushTools();
@@ -439,9 +472,8 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   if (textCarry.trim()) {
     let parsed = null;
     try { parsed = parseToolJson(textCarry); } catch { /* not a call after all */ }
-    if (parsed) queueTextTool(parsed);
-    // Held-back text that was never a tool call is still the model's answer.
-    else emitText(textCarry);
+    // Held-back text that was never a call to a real tool is still the model's answer.
+    if (!(parsed && queueTextTool(parsed))) emitText(textCarry);
   }
   // The upstream closed with no finish_reason, no [DONE] and nothing said: a
   // dropped connection, not an empty answer. Report it so the engine retries.
@@ -458,7 +490,20 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   if (!sawFinish && sawText && !sawTool && !toolBuf.size && !textTools.length) {
     emitText('\n[The provider closed the stream before the reply was finished. Send "continue" to resume.]\n');
   }
+  const hadVisible = sawText || sawTool;
   flushTools();   // tool calls buffered for sequential emission (no finish_reason seen)
+  if (cutNotes.length) {
+    // The stream died inside a tool call. With nothing else said, report a
+    // dropped connection so the engine asks again; otherwise say what was lost.
+    if (!hadVisible && !sawTool) {
+      if (!res.writableEnded && !res.destroyed) {
+        try { sse('error', { type: 'error', error: { type: 'api_error', message: 'The provider stream ended in the middle of a tool call' } }); } catch { /* socket gone */ }
+        try { res.end(); } catch { /* socket gone */ }
+      }
+      return;
+    }
+    for (const n of cutNotes) emitText(n);
+  }
   if (stopReason === 'tool_use' && !sawTool) stopReason = 'end_turn';
   // The model reasoned and then said nothing. The engine reads that as an empty
   // reply (and a summary made this way fails compaction outright), so the
@@ -749,7 +794,8 @@ function aggregateToAnthropic(j, body, back = (n) => n) {
   }
   // Tool calls hiding in the text channel (bare JSON or dangling tags), and in
   // the reasoning channel: same recovery as the streamed path.
-  const split = extractTextToolCalls(String(m.content || ''), '');
+  const known = new Set(((body && body.tools) || []).map((t) => t && t.name).filter(Boolean));
+  const split = extractTextToolCalls(String(m.content || ''), '', known);
   m.content = split.text;
   for (const t of split.tools) {
     (m.tool_calls = m.tool_calls || []).push({
@@ -758,7 +804,7 @@ function aggregateToAnthropic(j, body, back = (n) => n) {
     });
   }
   if (reasoning) {
-    const rsplit = extractTextToolCalls(reasoning, '');
+    const rsplit = extractTextToolCalls(reasoning, '', known);
     for (const t of rsplit.tools) {
       (m.tool_calls = m.tool_calls || []).push({
         id: 'call_agg_rsn_' + (m.tool_calls || []).length, type: 'function',
@@ -769,17 +815,28 @@ function aggregateToAnthropic(j, body, back = (n) => n) {
   const content = [];
   if (reasoning.trim()) content.push({ type: 'thinking', thinking: reasoning.trim().slice(0, 8000) });
   if (m.content) content.push({ type: 'text', text: m.content });
+  const cutOff = choice.finish_reason === 'length';
+  const seenCalls = new Set();
   for (const tc of m.tool_calls || []) {
     if (!tc.function || !tc.function.name) continue;
+    const callName = resolveToolName(tc.function.name, known) || tc.function.name;
     let input;
     try { input = JSON.parse(tc.function.arguments || '{}'); } catch { input = undefined; }
-    // Unparseable arguments: running the tool with {} made the model retry
-    // the same call over and over. Report the cut-off call instead.
-    if (!input || typeof input !== 'object') {
-      content.push({ type: 'text', text: '[The call to ' + tc.function.name + ' was cut off before its arguments were complete, so it was not run.]' });
-      continue;
+    if (!input || typeof input !== 'object' || Array.isArray(input)) {
+      // A slip (the model finished its reply) is mended; a cut-off call never is.
+      const fixed = cutOff ? null : repairToolArgs(tc.function.arguments);
+      if (fixed) input = fixed;
+      else if (!cutOff && requiresArgs(body && body.tools, callName)) input = {};   // the engine's input check tells the model what is missing
+      else {
+        content.push({ type: 'text', text: '[The call to ' + callName + ' was cut off before its arguments were complete, so it was not run.]' });
+        continue;
+      }
     }
-    content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: back(tc.function.name), input });
+    // The same call in the reasoning and as a structured call runs once.
+    const sig = callSignature(callName, input);
+    if (seenCalls.has(sig)) continue;
+    seenCalls.add(sig);
+    content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: back(callName), input });
   }
   // Thought, then said nothing: the reasoning is all there is, so it is the answer.
   if (!m.content && !(m.tool_calls || []).length && reasoning.trim()) content.push({ type: 'text', text: reasoning.trim() });
@@ -837,9 +894,11 @@ const TOOL_TAG_RE = /<\s*(?:tool_call|tool_use)\s*>([\s\S]*?)<\s*\/\s*(?:tool_ca
  *
  * @param {string} chunk  newly arrived text
  * @param {string} carry  text withheld from previous calls
+ * @param {Set<string>} [known] tool names this request offers; a call to anything
+ *   else stays text (prose that merely shows a JSON example is not a call)
  * @returns {{text: string, tools: Array<{name:string,args:object}>, carry: string}}
  */
-function extractTextToolCalls(chunk, carry) {
+function extractTextToolCalls(chunk, carry, known) {
   const buf = (carry || '') + (chunk || '');
   const tools = [];
   let plain = '';
@@ -867,7 +926,11 @@ function extractTextToolCalls(chunk, carry) {
         return { text: plain, tools, carry: buf.slice(start) };
       }
       const end = afterTag + closeMatch.index + closeMatch[0].length;
-      const parsed = parseToolJson(buf.slice(afterTag, afterTag + closeMatch.index));
+      let parsed = parseToolJson(buf.slice(afterTag, afterTag + closeMatch.index));
+      if (parsed && known) {
+        const name = resolveToolName(parsed.name, known);
+        parsed = name ? { ...parsed, name } : null;
+      }
       if (parsed) {
         tools.push(parsed);
         plain += buf.slice(i, start);
@@ -887,8 +950,16 @@ function extractTextToolCalls(chunk, carry) {
       plain += buf.slice(i, start);
       return { text: plain, tools, carry: buf.slice(start) };
     }
-    const parsed = parseToolJson(bal.json);
-    if (!parsed) { i = start + bal.end; continue; }   // keep as text
+    let parsed = parseToolJson(bal.json);
+    if (parsed && known) {
+      const name = resolveToolName(parsed.name, known);
+      parsed = name ? { ...parsed, name } : null;
+    }
+    if (!parsed) {   // not a call to a real tool: it stays in the text, with what came before it
+      plain += buf.slice(i, start + bal.end);
+      i = start + bal.end;
+      continue;
+    }
     tools.push(parsed);
     plain += buf.slice(i, start);
     i = start + bal.end;

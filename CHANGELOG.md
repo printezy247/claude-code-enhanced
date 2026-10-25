@@ -2,6 +2,14 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.69
+- Fixed: a JSON example in the model's prose (`{"name": "rm_everything", …}`) was run as a real tool call. A call recovered from text or reasoning now only counts if it names a tool the request offers; loose spellings (`bash`, `read_file`) are mapped to the real tool, and a request that offers no tools (titles, summaries) recovers nothing.
+- Fixed: text next to an unusable JSON blob (`hello {…} bye`) was swallowed; it now stays in the reply.
+- Fixed: a call written in the reasoning *and* sent as a structured call ran twice, and reasoning-channel calls could land before the thinking. Calls are now de-duplicated and sent in order at the end of the reply.
+- Changed: a model's JSON slip (trailing comma, `True`/`None`, single quotes, a missing closing brace) is mended instead of ending the turn. A call that was cut off (output limit, dropped stream) is still never mended, since closing it would run a write with half its content. A finished reply whose arguments are unusable reaches the engine, which then tells the model what is missing; a stream that dies inside a call with nothing else said is reported so the engine retries.
+- Fixed (Gemini): a malformed tool call is retried instead of ending as an empty reply; MAX_TOKENS is a cut; safety stops and blocked prompts say why in the non-streamed path too.
+- Fixed (Responses API): argument chunks are matched to their call by item id / position (an unknown id used to be glued onto call 0); calls that arrive only in `output_item.done` are taken; `response.failed`/error events and `incomplete`/`failed` plain replies are reported.
+
 ## 0.9.68
 - Fixed: the planning/ask-the-user instructions were never sent to the model (they were set on an option the engine ignores); they now travel in the system prompt. Chats resumed from an older session keep their recorded prompt until the next compaction.
 - Changed: the instructions no longer push a review or a question into edits, and name a todo tool only when the chat has one. The auto-lean tool set now includes TodoWrite.

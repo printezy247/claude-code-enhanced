@@ -469,19 +469,50 @@ function buildResponsesInput(body, prov) {
 
 /** Translate a /responses SSE stream into OpenAI chat.completions chunks. */
 async function* responsesChunks(upstream, model) {
-  const toolIdx = new Map();
+  // A call's argument chunks name it by item id (and output position); a lookup
+  // that falls back to call #0 glued two calls' arguments together.
+  const slot = new Map();
+  const argsSeen = new Set();
   let n = 0;
+  const chunk = (delta, extra = {}) => ({ id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta, ...extra }] });
+  const slotOf = (ev) => {
+    if (ev.item_id != null && slot.has(ev.item_id)) return slot.get(ev.item_id);
+    if (ev.output_index != null && slot.has('o' + ev.output_index)) return slot.get('o' + ev.output_index);
+    return n - 1;
+  };
+  const open = (item, outputIndex) => {
+    const idx = n++;
+    slot.set(item.id || item.call_id, idx);
+    if (outputIndex != null) slot.set('o' + outputIndex, idx);
+    return idx;
+  };
   for await (const ev of parsedDataEvents(upstream.body)) {
     const type = ev.type || '';
     if (type === 'response.output_text.delta' && ev.delta) {
-      yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: ev.delta } }] };
+      yield chunk({ content: ev.delta });
     } else if (type === 'response.output_item.added' && ev.item && ev.item.type === 'function_call') {
-      const idx = n++;
-      toolIdx.set(ev.item.id || ev.item.call_id, idx);
-      yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, id: ev.item.call_id || ev.item.id, type: 'function', function: { name: ev.item.name, arguments: '' } }] } }] };
+      const idx = open(ev.item, ev.output_index);
+      yield chunk({ tool_calls: [{ index: idx, id: ev.item.call_id || ev.item.id, type: 'function', function: { name: ev.item.name, arguments: '' } }] });
     } else if (type === 'response.function_call_arguments.delta') {
-      const idx = toolIdx.get(ev.item_id) != null ? toolIdx.get(ev.item_id) : 0;
-      yield { id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { tool_calls: [{ index: idx, function: { arguments: ev.delta || '' } }] } }] };
+      const idx = slotOf(ev);
+      if (idx < 0) continue;
+      argsSeen.add(idx);
+      yield chunk({ tool_calls: [{ index: idx, function: { arguments: ev.delta || '' } }] });
+    } else if (type === 'response.output_item.done' && ev.item && ev.item.type === 'function_call') {
+      // Some servers send a call only here, or send its arguments only here.
+      const known = slot.has(ev.item.id || ev.item.call_id);
+      const idx = known ? slot.get(ev.item.id || ev.item.call_id) : open(ev.item, ev.output_index);
+      if (!known) {
+        yield chunk({ tool_calls: [{ index: idx, id: ev.item.call_id || ev.item.id, type: 'function', function: { name: ev.item.name, arguments: ev.item.arguments || '' } }] });
+      } else if (!argsSeen.has(idx) && ev.item.arguments) {
+        yield chunk({ tool_calls: [{ index: idx, function: { arguments: ev.item.arguments } }] });
+      }
+      argsSeen.add(idx);
+    } else if (type === 'response.failed' || type === 'error') {
+      // An error inside a 200 stream: surface it, do not end as if nothing happened.
+      const e = (ev.response && ev.response.error) || ev.error || ev;
+      yield { error: { status: 502, message: String((e && (e.message || e.code)) || 'the provider reported a failed response') } };
+      return;
     } else if (type === 'response.completed' || type === 'response.incomplete') {
       const u = (ev.response && ev.response.usage) || {};
       const hasTools = n > 0;
@@ -510,6 +541,10 @@ async function callResponses(body, prov, wantStream, signal) {
 }
 
 function responsesToOpenAI(j, model) {
+  if (j && (j.status === 'failed' || (j.error && !(j.output || []).length))) {
+    const e = j.error || (j.incomplete_details && { message: j.incomplete_details.reason }) || {};
+    return { error: { status: 502, message: String(e.message || e.code || 'the provider reported a failed response') } };
+  }
   let text = '';
   const toolCalls = [];
   for (const item of j.output || []) {
@@ -523,7 +558,8 @@ function responsesToOpenAI(j, model) {
   if (toolCalls.length) msg.tool_calls = toolCalls;
   return {
     id: j.id || nowId('resp'), object: 'chat.completion', model,
-    choices: [{ index: 0, message: msg, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }],
+    // An unfinished reply (output limit, filter) is not a finished one.
+    choices: [{ index: 0, message: msg, finish_reason: j.status === 'incomplete' ? 'length' : toolCalls.length ? 'tool_calls' : 'stop' }],
     usage: { prompt_tokens: (j.usage && j.usage.input_tokens) || 0, completion_tokens: (j.usage && j.usage.output_tokens) || 0 },
   };
 }
@@ -620,11 +656,38 @@ function buildGeminiBody(body, prov) {
   return req;
 }
 
+/**
+ * How a Gemini candidate ended. Only STOP is a clean finish: MAX_TOKENS is a cut,
+ * a malformed or unexpected tool call is worth asking again (the stream is
+ * reported as failed so the engine retries), and a safety or recitation stop
+ * says why instead of reading as a short answer.
+ */
+const GEMINI_RETRY = new Set(['MALFORMED_FUNCTION_CALL', 'UNEXPECTED_TOOL_CALL']);
+function geminiEnd(reason, calls) {
+  if (!reason || reason === 'STOP') return { finish: calls ? 'tool_calls' : 'stop' };
+  if (reason === 'MAX_TOKENS') return { finish: 'length' };
+  if (!calls && GEMINI_RETRY.has(reason)) {
+    return { retry: { status: 502, message: 'Gemini returned a malformed tool call (' + reason + ')' } };
+  }
+  return { finish: calls ? 'tool_calls' : 'stop', note: '\n\n[response stopped by provider: ' + reason + ']' };
+}
+
+/** A prompt Gemini refused outright carries no candidate, only this. */
+function geminiBlock(ev) {
+  const r = ev && ev.promptFeedback && ev.promptFeedback.blockReason;
+  return r ? '[the prompt was blocked by the provider: ' + r + ']' : '';
+}
+
 async function* geminiChunks(upstream, model) {
   let n = 0;
   for await (const ev of parsedDataEvents(upstream.body)) {
     const cand = (ev.candidates || [])[0];
     if (!cand) {
+      const blocked = geminiBlock(ev);
+      if (blocked) {
+        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: blocked } }] };
+        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] };
+      }
       if (ev.usageMetadata) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [], usage: { prompt_tokens: ev.usageMetadata.promptTokenCount || 0, completion_tokens: ev.usageMetadata.candidatesTokenCount || 0 } };
       continue;
     }
@@ -639,11 +702,10 @@ async function* geminiChunks(upstream, model) {
       }
     }
     if (cand.finishReason) {
-      if (cand.finishReason !== 'STOP' && cand.finishReason !== 'MAX_TOKENS') {
-        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: '\n\n[response stopped by provider: ' + cand.finishReason + ']' } }] };
-      }
-      const fr = cand.finishReason === 'MAX_TOKENS' ? 'length' : (n > 0 ? 'tool_calls' : 'stop');
-      yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: fr }] };
+      const end = geminiEnd(cand.finishReason, n);
+      if (end.retry) { yield { error: end.retry }; return; }
+      if (end.note) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: end.note } }] };
+      yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: {}, finish_reason: end.finish }] };
     }
   }
   yield DONE;
@@ -678,11 +740,16 @@ function geminiToOpenAI(j, model) {
       toolCalls.push({ id, type: 'function', function: { name: p.functionCall.name, arguments: JSON.stringify(p.functionCall.args || {}) } });
     }
   }
+  const end = geminiEnd(cand.finishReason, toolCalls.length);
+  if (end.retry) return { error: end.retry };
+  const blocked = cand.content ? '' : geminiBlock(j);
+  if (end.note) text += end.note;
+  if (blocked) text += blocked;
   const msg = { role: 'assistant', content: text || null };
   if (toolCalls.length) msg.tool_calls = toolCalls;
   return {
     id: nowId('gem'), object: 'chat.completion', model,
-    choices: [{ index: 0, message: msg, finish_reason: toolCalls.length ? 'tool_calls' : 'stop' }],
+    choices: [{ index: 0, message: msg, finish_reason: end.finish }],
     usage: { prompt_tokens: (j.usageMetadata && j.usageMetadata.promptTokenCount) || 0, completion_tokens: (j.usageMetadata && j.usageMetadata.candidatesTokenCount) || 0 },
   };
 }
