@@ -159,6 +159,22 @@ function resolveApiKey(instance, auth, env) {
   return '';
 }
 
+/**
+ * A cheap tool-capable model from the catalog for a provider that names no
+ * small-fast model (flash / mini / haiku / lite / nano), lowest input price
+ * first. Third-party providers only: a Claude login keeps the engine default.
+ */
+function catalogSmallModel(instance) {
+  try {
+    const pid = instance && (instance.presetId || instance.modelsDevId);
+    if (!pid || /(^|\.)anthropic\.com/i.test(String(instance.baseUrl || ''))) return '';
+    const list = modelsdev.modelsFor(pid).filter((m) => m && m.tool_call && /(flash|mini|haiku|lite|nano|small)/i.test(m.id) && !/(embed|image|tts|audio|live)/i.test(m.id));
+    if (!list.length) return '';
+    const price = (m) => (m.cost && Number(m.cost.input)) || 1e9;
+    return list.slice().sort((a, b) => price(a) - price(b))[0].id;
+  } catch { return ''; }
+}
+
 /** The env a session needs for the selected provider. */
 function envFor(instance, settings) {
   const env = {};
@@ -184,7 +200,8 @@ function envFor(instance, settings) {
     }
   }
   if (instance.model) env.ANTHROPIC_MODEL = instance.model;
-  if (instance.smallFastModel) env.ANTHROPIC_SMALL_FAST_MODEL = instance.smallFastModel;
+  const small = instance.smallFastModel || catalogSmallModel(instance);
+  if (small) env.ANTHROPIC_SMALL_FAST_MODEL = small;
   if (instance.envExtras) {
     for (const [k, v] of Object.entries(instance.envExtras)) {
       if (/^[A-Z_][A-Z0-9_]*$/i.test(k) && typeof v === 'string') env[k] = v;
@@ -544,7 +561,7 @@ async function ensureFreshAuthOnce(inst, authOrDeps, oauthModOverride) {
 }
 
 module.exports = {
-  normalizeModelFields, chatModelFor,
+  normalizeModelFields, chatModelFor, catalogSmallModel,
   keyUrlMismatch, normalizeBaseUrl,
   PRESETS, ensureDefaults, envFor, publicInstance, newUid,
   useAuth, catalogEntries, makeInstance, entryFor, resolveApiKey,

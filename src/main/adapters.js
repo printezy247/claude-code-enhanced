@@ -310,10 +310,10 @@ function buildOpenAIBody(body, wantStream, prov) {
     if (msgs[0] && msgs[0].role === 'system') msgs[0].content += '\n\n' + lateSystem.join('\n\n');
     else msgs.unshift({ role: 'system', content: lateSystem.join('\n\n') });
   }
-  // OpenRouter passes Anthropic's explicit cache breakpoints through for Claude
+  // OpenRouter passes explicit cache breakpoints through for Claude and Gemini
   // models: mark the system prompt (the stable prefix) so later turns read it
   // from cache. Providers that cache automatically (OpenAI, DeepSeek) need nothing.
-  if (/openrouter\.ai/i.test(String(prov && prov.baseUrl)) && /^anthropic\//i.test(String(body.model))
+  if (/openrouter\.ai/i.test(String(prov && prov.baseUrl)) && /^(anthropic|google\/gemini)/i.test(String(body.model))
     && msgs[0] && msgs[0].role === 'system' && typeof msgs[0].content === 'string') {
     msgs[0] = { ...msgs[0], content: [{ type: 'text', text: msgs[0].content, cache_control: { type: 'ephemeral' } }] };
   }

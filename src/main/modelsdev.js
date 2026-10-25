@@ -142,6 +142,8 @@ function normalizeModelId(id) {
   s = s.replace(/:(latest|free)$/i, '');
   s = s.replace(/-(latest|preview|preview-\d+)$/i, '');
   s = s.replace(/-v\d+:\d+$/, '');
+  // Mistral's dated releases: mistral-large-2411, codestral-2501
+  s = s.replace(/^((?:mistral|ministral|codestral|pixtral|magistral|devstral)[a-z0-9.-]*?)-\d{4}$/i, '$1');
   return s;
 }
 

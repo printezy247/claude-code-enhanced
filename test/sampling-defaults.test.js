@@ -36,3 +36,26 @@ describe('context probe auth', () => {
     expect(seen[0].headers.Authorization).toBe('Bearer k1');
   });
 });
+
+describe('phase 1 extras', () => {
+  const modelsdev = require('../src/main/modelsdev.js');
+  const providers = require('../src/main/providers.js');
+  test('dated Mistral ids normalise', () => {
+    expect(modelsdev.normalizeModelId('mistral-large-2411')).toBe('mistral-large');
+    expect(modelsdev.normalizeModelId('codestral-2501')).toBe('codestral');
+    expect(modelsdev.normalizeModelId('gpt-4o-2024-08-06')).toBe('gpt-4o');
+    expect(modelsdev.normalizeModelId('qwen3-2507')).toBe('qwen3-2507');
+  });
+  test('OpenRouter Gemini gets a cache breakpoint', () => {
+    const prov = { baseUrl: 'https://openrouter.ai/api/v1' };
+    const b = { model: 'google/gemini-2.5-pro', system: 'sys', messages: [{ role: 'user', content: 'hi' }] };
+    const out = adapters.buildOpenAIBody(b, false, prov);
+    expect(out.messages[0].content[0].cache_control).toEqual({ type: 'ephemeral' });
+  });
+  test('catalog small model is picked for a provider with none', () => {
+    const pid = 'google';
+    const m = providers.catalogSmallModel({ presetId: pid, baseUrl: 'https://generativelanguage.googleapis.com' });
+    expect(typeof m).toBe('string');
+    expect(providers.catalogSmallModel({ presetId: pid, baseUrl: 'https://api.anthropic.com' })).toBe('');
+  });
+});
