@@ -7,6 +7,7 @@ const os = require('os');
 const { app } = require('electron');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
+const { normalizeDomains } = require('./webdomains');
 
 const DEFAULT_SETTINGS = {
   claudePath: '',            // empty = auto-detect
@@ -36,6 +37,7 @@ const DEFAULT_SETTINGS = {
   // (30k) limit. #feat-output-filter
   outputFilter: 'on',
   outputFilterMaxChars: 8000,
+  webFetchDomains: [],      // sites WebFetch may read without asking; anything else asks first
   streamIdleSeconds: 180,   // how long a silent stream may stay silent before the turn is called dead
   autoNudge: false,         // off by default: avoids burning whole turns on closing remarks
   thinkingBudget: 2048,     // sensible default to prevent unbounded thinking token burn (blank/0 = model default)
@@ -99,6 +101,7 @@ class Store {
         clampMaxChars(this.data.settings.outputFilterMaxChars);
     }
     this.data.settings.streamIdleSeconds = clampIdleSeconds(this.data.settings.streamIdleSeconds);
+    this.data.settings.webFetchDomains = normalizeDomains(this.data.settings.webFetchDomains);
     this.save();
   }
 

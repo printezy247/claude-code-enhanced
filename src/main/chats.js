@@ -15,6 +15,7 @@ const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { compactToolOutput, toolResultText, clampMaxChars, FILTERED_TOOLS, clampIdleSeconds } = require('./toolfilter');
 const managedconfig = require('./managedconfig');
 const { createLoopGuard } = require('./loopguard');
+const webdomains = require('./webdomains');
 const { absFor, shareablePath } = require('./fileshare');
 const sdkoptions = require('./sdkoptions');
 const hostmcp = require('./hostmcp');
@@ -409,8 +410,9 @@ class ChatManager extends EventEmitter {
       // tool in a terminal tab had no effect on chat tabs. #12
       settingSources: ['user', 'project', 'local'],
       includePartialMessages: true,          // stream_event frames for live typing
+      // WebFetch is not here: it asks for a site the user has not approved (the
+      // permission handler below). Search sends a query, not a request to a site.
       allowedTools: Array.from(new Set([
-        'WebFetch',
         'WebSearch',
         ...(Array.isArray(settings?.allowedTools) ? settings.allowedTools : []),
       ])),
@@ -752,8 +754,18 @@ class ChatManager extends EventEmitter {
         const live = this.chats.get(id);
         if (live && live.autoPolicy && autopolicy.autoAllows(toolName, input)) return { behavior: 'allow' };
       }
-      if (!alwaysAsk && ['WebFetch', 'WebSearch'].includes(toolName)) {
+      if (!alwaysAsk && toolName === 'WebSearch') {
         if (!settings || !Array.isArray(settings.blockedTools) || !settings.blockedTools.includes(toolName)) {
+          return { behavior: 'allow' };
+        }
+      }
+      // A fetch of a site the user has approved (Settings, an earlier "always
+      // allow", this chat) runs; any other site asks, so page text cannot
+      // send data to an address of its choosing without the user seeing it.
+      if (!alwaysAsk && toolName === 'WebFetch') {
+        const host = webdomains.hostOf(input && input.url);
+        const live = this.chats.get(id);
+        if (host && webdomains.isApprovedHost(host, settings && settings.webFetchDomains, live && live.webHosts)) {
           return { behavior: 'allow' };
         }
       }
@@ -1550,6 +1562,16 @@ class ChatManager extends EventEmitter {
       // tool's answers (engine reads updatedInput.answers, keyed by question).
       entry.resolve({ behavior: 'allow', updatedInput: { ...(entry.input || {}), answers } });
     } else if (decision === 'always') {
+      // "Always allow" on a fetch approves that site: for this chat now, and in
+      // Settings for every chat after (the host listens for the event).
+      if (entry.toolName === 'WebFetch') {
+        const host = webdomains.hostOf(entry.input && entry.input.url);
+        const live = this.chats.get(id);
+        if (host && live) {
+          (live.webHosts = live.webHosts || new Set()).add(host);
+          this.emit('event', id, { kind: 'web-domain-approved', host });
+        }
+      }
       // Use the engine's own suggestions. A bare { toolName } rule approves EVERY
       // use of the tool for the session — one "yes" to `ls` would have allowed
       // `rm -rf`. The SDK documents updatedPermissions as the intended channel. #3

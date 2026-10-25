@@ -42,9 +42,53 @@ const RUNNERS = {
   pytest: { any: true }, vitest: { sub: ['run'] }, jest: { any: true },
 };
 
-const SENSITIVE = /(^|[/\s])(\.ssh|\.aws|\.gnupg|\.netrc|\.npmrc|\.pypirc|\.env(\.\w+)?|id_rsa|id_ed25519|credentials|shadow)(\b|$)/i;
+/**
+ * Files that hold a secret. Matched against shell text and against the paths
+ * the read tools are given, so a credential cannot be read by a tool the
+ * policy approves without asking.
+ */
+const SENSITIVE = new RegExp([
+  // a name, wherever it sits in a path
+  '(^|[/\\s"\'=])(\\.ssh|\\.aws|\\.gnupg|\\.netrc|\\.npmrc|\\.pypirc|\\.pgpass|\\.my\\.cnf|\\.git-credentials|\\.vault-token|\\.azure|\\.kube|\\.env(\\.\\w+)?|id_rsa|id_dsa|id_ecdsa|id_ed25519|credentials|shadow|\\.bash_history|\\.zsh_history)(\\b|$)',
+  // a folder that holds credentials, under .config or .local/share
+  '(^|[/\\s"\'=])\\.config/(gh|gcloud|op|hub|glab-cli|doctl|heroku|rclone|git/credentials)(/|\\s|$|["\'])',
+  '(^|[/\\s"\'=])\\.docker/config\\.json',
+  '(^|[/\\s"\'=])\\.local/share/keyrings',
+  '(^|[/\\s"\'=])\\.terraform\\.d/credentials',
+  // a key or certificate file by extension
+  '\\.(pem|key|p12|pfx|jks|keystore|kdbx)(\\s|$|["\'])',
+  // the process environment
+  '/proc/[^/\\s]+/environ',
+].join('|'), 'i');
+
+/** True when a path or shell text names a credential file. */
+function isSensitivePath(text) {
+  return SENSITIVE.test(String(text || ''));
+}
 /** Anything that redirects, substitutes, backgrounds (a lone &) or spans lines. */
 const FORBIDDEN_SHELL = /[`<>&\n\r]|\$\(|\$\{|\$[A-Za-z_]/;
+
+/** Short-flag clusters: does `-aLo` carry the letter? (`--long` options never match.) */
+const hasShort = (tok, letters) => new RegExp('^-(?!-)[A-Za-z]*[' + letters + ']').test(tok);
+
+/**
+ * Per-command checks for read-only commands that still write or hang with the
+ * wrong arguments. Each returns true when the call is NOT safe.
+ */
+const UNSAFE_ARGS = {
+  // `uniq in out` writes `out`.
+  uniq: (rest) => rest.filter((t) => !t.startsWith('-')).length > 1,
+  // `tree -o file` writes the listing to a file.
+  tree: (rest) => rest.some((t) => hasShort(t, 'o') || t === '--output' || t.startsWith('--output=')),
+  // `tail -f` never ends and hangs the turn.
+  tail: (rest) => rest.some((t) => hasShort(t, 'fF') || /^--(follow|retry)\b/.test(t)),
+  // `file -C` compiles a magic file, writing it next to the source.
+  file: (rest) => rest.some((t) => hasShort(t, 'C') || t === '--compile'),
+  // `date 010112002026` and `date -s` set the clock: only formats and zone flags are plain reads.
+  date: (rest) => rest.some((t) => !(/^\+/.test(t) || /^(-u|-R|--utc|--universal|--rfc-email)$/.test(t) || /^(-I(date|hours|minutes|seconds|ns)?|--iso-8601(=\w+)?)$/.test(t))),
+  // `hostname name` renames the machine.
+  hostname: (rest) => rest.some((t) => !/^(-f|-s|-d|-i|-I|-A|-a|-y|--fqdn|--short|--domain|--ip-address|--all-ip-addresses|--all-fqdns|--alias|--yp|--nis)$/.test(t)),
+};
 
 function segmentIsSafe(segment) {
   const tokens = segment.trim().split(/\s+/).filter(Boolean);
@@ -55,7 +99,8 @@ function segmentIsSafe(segment) {
 
   if (Object.prototype.hasOwnProperty.call(READ_ONLY, cmd)) {
     const bad = READ_ONLY[cmd];
-    return !rest.some((t) => bad.some((b) => t === b || t.startsWith(b + '=')));
+    if (rest.some((t) => bad.some((b) => t === b || t.startsWith(b + '=')))) return false;
+    return !(UNSAFE_ARGS[cmd] && UNSAFE_ARGS[cmd](rest));
   }
   if (cmd === 'git') {
     const sub = rest[0];
@@ -95,9 +140,13 @@ function isSafeBash(command) {
 
 /** Should CCE's auto policy approve this tool call without asking? */
 function autoAllows(toolName, input) {
-  if (SAFE_TOOLS.has(toolName)) return true;
+  if (SAFE_TOOLS.has(toolName)) {
+    // A read tool pointed at a credential file is not plain inspection.
+    const i = input || {};
+    return !(isSensitivePath(i.file_path) || isSensitivePath(i.path) || isSensitivePath(i.pattern) || isSensitivePath(i.glob));
+  }
   if (toolName === 'Bash') return isSafeBash(input && input.command);
   return false;
 }
 
-module.exports = { autoAllows, isSafeBash, SAFE_TOOLS };
+module.exports = { autoAllows, isSafeBash, isSensitivePath, SAFE_TOOLS };

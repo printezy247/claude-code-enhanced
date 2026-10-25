@@ -170,6 +170,24 @@ export function renderSettings() {
   c3b.appendChild(el('div', 'hint', 'A reply that is still being thought through keeps the connection alive on its own. Raise this for a slow local model that goes quiet for minutes between words. Applies to new chats.'));
   body.appendChild(c3b);
 
+  // Sites the agent may fetch without asking. Any other site asks first, so a
+  // web page cannot make the agent send data to an address of its choosing.
+  const c3w = el('div', 'settings-card');
+  c3w.appendChild(el('h4', '', 'Web fetch'));
+  const wfLabel = el('label', 'fld');
+  wfLabel.appendChild(el('span', '', 'sites the agent may read without asking (one per line)'));
+  const wf = el('textarea', 'force-ctx');
+  wf.id = 'opt-webfetch-domains';
+  wf.rows = 4;
+  wf.spellcheck = false;
+  wf.placeholder = 'docs.python.org\n*.github.com';
+  wf.value = (Array.isArray(s.webFetchDomains) ? s.webFetchDomains : []).join('\n');
+  wf.addEventListener('change', () => saveSettings({ webFetchDomains: wf.value }));
+  wfLabel.appendChild(wf);
+  c3w.appendChild(wfLabel);
+  c3w.appendChild(el('div', 'hint', 'A fetch of any other site shows a permission card; “Always allow” on it adds the site here. “*.example.com” covers its subdomains, not example.com itself. Web search is not affected. Applies to new chats.'));
+  body.appendChild(c3w);
+
   // sandbox
   const c4 = el('div', 'settings-card');
   c4.appendChild(el('h4', '', 'Sandboxed command execution'));
