@@ -136,7 +136,16 @@ async function probeContextWindow(provider, model) {
   if (!baseUrl) return 0;
   try {
     const url = baseUrl.replace(/\/+$/, '') + '/models';
-    const res = await fetch(url);
+    // Gated /models endpoints answer 401 without the provider's key.
+    const headers = {};
+    const key = provider && provider.apiKey;
+    if (key) {
+      if (provider.keyHeader === 'x-api-key') headers['x-api-key'] = key;
+      else if (/generativelanguage\.googleapis\.com/i.test(baseUrl)) headers['x-goog-api-key'] = key;
+      else headers.Authorization = 'Bearer ' + key;
+    }
+    if (provider && provider.headers && typeof provider.headers === 'object') Object.assign(headers, provider.headers);
+    const res = await fetch(url, Object.keys(headers).length ? { headers } : undefined);
     if (!res || !res.ok) {
       contextCache.set(cacheKey, 0);
       return 0;
@@ -160,4 +169,30 @@ async function probeContextWindow(provider, model) {
   }
 }
 
-module.exports = { modelContext, modelCaps, effortLevels, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };
+/**
+ * Sampling defaults a model family does best with, when the client sent none.
+ * A provider can pin its own with `temperature` / `topP`. Reasoning models
+ * that reject sampling (catalog temperature:false, DeepSeek-R1) get nothing.
+ */
+const SAMPLING_DEFAULTS = [
+  { match: /deepseek[-_/]?r1|deepseek-reasoner/i, none: true },
+  { match: /qwen/i, temperature: 0.55, top_p: 1 },
+  { match: /gemini/i, temperature: 1.0 },
+];
+function samplingDefaults(provider, model) {
+  const out = {};
+  const id = String(model || (provider && provider.model) || '');
+  const own = (v) => (typeof v === 'number' && isFinite(v) ? v : null);
+  const ownT = own(provider && provider.temperature);
+  const ownP = own(provider && provider.topP);
+  if (ownT != null) out.temperature = ownT;
+  if (ownP != null) out.top_p = ownP;
+  if (ownT != null && ownP != null) return out;
+  const row = SAMPLING_DEFAULTS.find((r) => r.match.test(id));
+  if (!row || row.none) return out;
+  if (out.temperature == null && row.temperature != null) out.temperature = row.temperature;
+  if (out.top_p == null && row.top_p != null) out.top_p = row.top_p;
+  return out;
+}
+
+module.exports = { samplingDefaults, SAMPLING_DEFAULTS, modelContext, modelCaps, effortLevels, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };

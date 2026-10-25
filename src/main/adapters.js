@@ -12,7 +12,7 @@ const { parsedDataEvents } = require('./sse');
 const bedrock = require('./bedrock.js');
 const modelsdev = require('./modelsdev.js');
 const { wireToolId } = require('./toolnames');
-const { modelCaps } = require('./modelcontext.js');
+const { modelCaps, samplingDefaults } = require('./modelcontext.js');
 
 /** OpenAI-compatible root for a provider base URL (bare Ollama roots get /v1). */
 function openaiBase(baseUrl) {
@@ -225,8 +225,11 @@ function buildOpenAIBody(body, wantStream, prov) {
   if (caps.maxOutput > 0 && maxTokens > caps.maxOutput) maxTokens = caps.maxOutput;
   const out = { model: body.model, stream: !!wantStream, max_tokens: maxTokens };
   // Reasoning models (o-series, GPT-5) reject sampling parameters outright.
-  if (body.temperature != null && caps.temperature !== false) out.temperature = body.temperature;
-  if (body.top_p != null && caps.temperature !== false) out.top_p = body.top_p;
+  const samp = caps.temperature === false ? {} : samplingDefaults(prov, body.model);
+  const temp = body.temperature != null ? body.temperature : samp.temperature;
+  const topP = body.top_p != null ? body.top_p : samp.top_p;
+  if (temp != null && caps.temperature !== false) out.temperature = temp;
+  if (topP != null && caps.temperature !== false) out.top_p = topP;
   if (caps.reasoning === false) {
     // A model the catalog marks as non-reasoning rejects (or ignores) effort
     // and thinking budgets: send neither.
@@ -307,10 +310,10 @@ function buildOpenAIBody(body, wantStream, prov) {
     if (msgs[0] && msgs[0].role === 'system') msgs[0].content += '\n\n' + lateSystem.join('\n\n');
     else msgs.unshift({ role: 'system', content: lateSystem.join('\n\n') });
   }
-  // OpenRouter passes Anthropic's explicit cache breakpoints through for Claude
+  // OpenRouter passes explicit cache breakpoints through for Claude and Gemini
   // models: mark the system prompt (the stable prefix) so later turns read it
   // from cache. Providers that cache automatically (OpenAI, DeepSeek) need nothing.
-  if (/openrouter\.ai/i.test(String(prov && prov.baseUrl)) && /^anthropic\//i.test(String(body.model))
+  if (/openrouter\.ai/i.test(String(prov && prov.baseUrl)) && /^(anthropic|google\/gemini)/i.test(String(body.model))
     && msgs[0] && msgs[0].role === 'system' && typeof msgs[0].content === 'string') {
     msgs[0] = { ...msgs[0], content: [{ type: 'text', text: msgs[0].content, cache_control: { type: 'ephemeral' } }] };
   }
@@ -448,8 +451,11 @@ function buildResponsesInput(body, prov) {
   const req = { model: body.model, input, max_output_tokens: maxOut };
   if (lateSystem.length) instructions = (instructions ? instructions + '\n\n' : '') + lateSystem.join('\n\n');
   if (instructions) req.instructions = String(instructions);
-  if (body.temperature != null && caps.temperature !== false) req.temperature = body.temperature;
-  if (body.top_p != null && caps.temperature !== false) req.top_p = body.top_p;
+  const samp = caps.temperature === false ? {} : samplingDefaults(prov, body.model);
+  const temp = body.temperature != null ? body.temperature : samp.temperature;
+  const topP = body.top_p != null ? body.top_p : samp.top_p;
+  if (temp != null && caps.temperature !== false) req.temperature = temp;
+  if (topP != null && caps.temperature !== false) req.top_p = topP;
   if (caps.reasoning !== false && (body.effort || body.reasoning_effort)) req.reasoning = { effort: body.effort || body.reasoning_effort };
   if (offersTools(body, caps)) {
     req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') }));
@@ -587,8 +593,11 @@ function buildGeminiBody(body, prov) {
   if (systemText) req.systemInstruction = { parts: [{ text: String(systemText) }] };
   const gen = {};
   if (body.max_tokens) gen.maxOutputTokens = caps.maxOutput > 0 ? Math.min(body.max_tokens, caps.maxOutput) : body.max_tokens;
-  if (body.temperature != null && caps.temperature !== false) gen.temperature = body.temperature;
-  if (body.top_p != null) gen.topP = body.top_p;
+  const samp = caps.temperature === false ? {} : samplingDefaults(prov, body.model);
+  const temp = body.temperature != null ? body.temperature : samp.temperature;
+  const topP = body.top_p != null ? body.top_p : samp.top_p;
+  if (temp != null && caps.temperature !== false) gen.temperature = temp;
+  if (topP != null) gen.topP = topP;
   if (prov && isGoogle(prov)) {
     // Google: budget 1..24576, or a level, never both.
     const b = body.thinking && body.thinking.budget_tokens;

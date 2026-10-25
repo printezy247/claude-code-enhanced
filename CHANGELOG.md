@@ -2,6 +2,13 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.66
+- New: per-model sampling defaults when a request sets none (Qwen 0.55, Gemini 1.0; DeepSeek-R1 and models that reject sampling get none). A provider can pin its own `temperature` / `topP`.
+- Fixed: the context-window probe now sends the provider's API key, so gated `/models` endpoints answer.
+- New: OpenRouter Gemini models get a prompt-cache breakpoint on the system prompt, like Claude (cache-read tokens already show in the rail).
+- Fixed: Mistral dated ids (`mistral-large-2411`, `codestral-2501`) match their catalog entry for capabilities and context.
+- New: a provider with no small-fast model gets the cheapest tool-capable flash/mini/lite model from the catalog.
+
 ## 0.9.65
 - Fixed: a denied-tool note and background-task rows printed raw `<svg …>` text instead of an icon.
 - Fixed: terminal colour codes (`[0m`, `[32m`) no longer show up in tool output cards.
