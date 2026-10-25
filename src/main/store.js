@@ -6,7 +6,7 @@ const path = require('path');
 const os = require('os');
 const { app } = require('electron');
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
-const { clampMaxChars } = require('./toolfilter');
+const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
 
 const DEFAULT_SETTINGS = {
   claudePath: '',            // empty = auto-detect
@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
   // (30k) limit. #feat-output-filter
   outputFilter: 'on',
   outputFilterMaxChars: 8000,
+  streamIdleSeconds: 180,   // how long a silent stream may stay silent before the turn is called dead
   autoNudge: false,         // off by default: avoids burning whole turns on closing remarks
   thinkingBudget: 2048,     // sensible default to prevent unbounded thinking token burn (blank/0 = model default)
   localNumCtx: 73728,        // context to load local Ollama models with (claude base prompt ≈66K tokens; more costs RAM)
@@ -97,6 +98,7 @@ class Store {
       this.data.settings.outputFilterMaxChars =
         clampMaxChars(this.data.settings.outputFilterMaxChars);
     }
+    this.data.settings.streamIdleSeconds = clampIdleSeconds(this.data.settings.streamIdleSeconds);
     this.save();
   }
 

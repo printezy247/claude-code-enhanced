@@ -2,6 +2,15 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.72
+- Fixed: a model that thinks for a long time with no output was treated as a dead connection. The proxy now sends a keep-alive ping every 15 seconds while a reply is open.
+- Added: Settings → seconds of silence before a stalled reply is stopped (30–1800, default 180). It was fixed at 180.
+- Changed: prompt-size estimates read the request by content type (code and JSON count denser than prose, CJK about a token a character, images a fixed cost, not their base64 length) and are corrected from the provider's real counts for that model. A reply with no reported size is counted from what was streamed instead of from the number of chunks.
+- Changed: Read, Grep and Glob results are compacted for the model like shell output (the card keeps the full text). Read keeps a larger share, keeps repeated lines as written, and says how to read a narrower range.
+- Fixed: the context-window probe had no timeout, skipped the Anthropic version header, and remembered one failure for the life of the app. It now times out after 8 s, sends the key the way each family expects, and retries after 5 minutes.
+- Changed: model-name context table covers GPT-4.1/5, Gemini 3, Claude 4/5, Qwen3-Coder, Kimi K2, GLM-4.5+, Grok and Llama 4, and no longer reads `o1` out of the middle of an unrelated name.
+- Fixed: a request that had already reached the provider was sent again after a dropped socket or a 504, paying for the reply twice. Only a failure before the connection is made (refused, DNS, unreachable) is retried, plus 429 and 502.
+
 ## 0.9.71
 - Fixed: reasoning settings were sent to every OpenAI-compatible provider, and servers that do not know them answered with a 400 (a `reasoning` object was even sent to api.openai.com). They now go only where they are known to work: `reasoning_effort` to OpenAI o-series / GPT-5, Groq gpt-oss / Qwen3, xAI grok-3-mini and Ollama; a `reasoning` object to OpenRouter. Any other server gets neither. A provider entry can override this with `reasoningParam` (`effort`, `openrouter` or `none`).
 - Fixed: Claude's `max` effort level is clamped to `high` for OpenAI-style providers.

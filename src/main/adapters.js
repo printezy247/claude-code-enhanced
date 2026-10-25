@@ -22,12 +22,30 @@ function openaiBase(baseUrl) {
 }
 
 /**
- * fetch with one retry on connection-level failure. Hosts with broken IPv6
- * (AAAA records that refuse instantly) fail every other connection while the
- * next one succeeds, so a single retry turns an api_retry storm into a
- * slightly slower first byte. Never retries aborts (user interrupt / timeout).
+ * fetch with one retry on a failure that happened before the connection was
+ * made. Hosts with broken IPv6 (AAAA records that refuse instantly) fail every
+ * other connection while the next one succeeds, so a single retry turns an
+ * api_retry storm into a slightly slower first byte.
+ *
+ * Nothing else is retried: once the request has been sent the model may be
+ * working on it, and sending it again pays for the reply twice. That rules out
+ * a socket that closes after the request, a stalled header, an abort (user
+ * interrupt / timeout), and a 504 (the gateway gave up while the model ran).
  */
-const RETRY_STATUS = new Set([429, 502, 504]);
+const RETRY_STATUS = new Set([429, 502]);
+const PRE_CONNECT_CODES = new Set([
+  'ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'EHOSTUNREACH', 'ENETUNREACH',
+  'EADDRNOTAVAIL', 'ETIMEDOUT', 'UND_ERR_CONNECT_TIMEOUT',
+]);
+/** True when the failure came before any byte of the request left. */
+function isPreConnectError(err) {
+  for (let e = err, n = 0; e && n < 4; e = e.cause, n++) {
+    if (e.code && PRE_CONNECT_CODES.has(String(e.code))) return true;
+    // A refused connect on a multi-address host arrives as an AggregateError.
+    if (Array.isArray(e.errors) && e.errors.length && e.errors.every(isPreConnectError)) return true;
+  }
+  return false;
+}
 const providerCooldown = new Map();
 
 async function fetchUpstream(url, opts, signal, tries = 2) {
@@ -64,7 +82,7 @@ async function fetchUpstream(url, opts, signal, tries = 2) {
     } catch (err) {
       last = err;
       const aborted = withTimeout.aborted || /abort/i.test(String((err && err.name) || '') + String((err && err.message) || ''));
-      if (aborted || i === tries - 1) throw err;
+      if (aborted || !isPreConnectError(err) || i === tries - 1) throw err;
       await new Promise(r => setTimeout(r, 250 * (i + 1)));
     }
   }
@@ -851,7 +869,7 @@ async function listModels(prov) {
 }
 
 module.exports = {
-  callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream,
+  callUpstream, listModels, openaiBase, upHeaders, withQueryKey, fetchUpstream, isPreConnectError,
   providerCooldown,
   buildOpenAIBody, buildResponsesInput, buildGeminiBody, splitThink, reasoningParam, replaysReasoning, sanitizeSchema, thoughtSignatures,
   responsesToOpenAI, geminiToOpenAI, syntheticSse, DONE, responsesChunks, geminiChunks,

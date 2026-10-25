@@ -144,6 +144,30 @@ export function renderSettings() {
   ofMaxRow.appendChild(ofMax);
   c3b.appendChild(ofMaxRow);
   c3b.appendChild(el('div', 'hint', 'The card in the chat still shows the full output — only what the model reads is compacted, so long build logs cost fewer tokens. The budget is how many characters of a command’s output the model may see. Applies to new chats.'));
+  const idleRow = el('label', 'fld');
+  idleRow.appendChild(el('span', '', 'seconds of silence before a stalled reply is stopped'));
+  const idle = el('input');
+  idle.type = 'number';
+  idle.id = 'opt-stream-idle';
+  idle.min = '30';
+  idle.max = '1800';
+  idle.step = '30';
+  idle.value = String(s.streamIdleSeconds || 180);
+  idle.style.width = '160px';
+  idle.style.background = 'var(--bg2)';
+  idle.style.color = 'var(--text)';
+  idle.style.border = '1px solid var(--border)';
+  idle.style.borderRadius = '8px';
+  idle.style.padding = '8px 10px';
+  idle.style.fontSize = '13px';
+  idle.addEventListener('change', () => {
+    const n = Math.max(30, Math.min(1800, Number(idle.value) || 180));
+    idle.value = String(n);
+    saveSettings({ streamIdleSeconds: n });
+  });
+  idleRow.appendChild(idle);
+  c3b.appendChild(idleRow);
+  c3b.appendChild(el('div', 'hint', 'A reply that is still being thought through keeps the connection alive on its own. Raise this for a slow local model that goes quiet for minutes between words. Applies to new chats.'));
   body.appendChild(c3b);
 
   // sandbox

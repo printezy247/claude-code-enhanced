@@ -51,7 +51,7 @@ let proxyPort = null;
 const ChatManager = require('./chats');
 const { modelContext } = require('./modelcontext');
 const { WindowRegistry, route } = require('./windows');
-const { clampMaxChars } = require('./toolfilter');
+const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
 
 const store = new Store();
 const auth = new AuthStore();
@@ -2440,6 +2440,9 @@ function registerIpc() {
     // an unbounded budget. #F1
     if ('outputFilterMaxChars' in incoming) {
       incoming.outputFilterMaxChars = clampMaxChars(incoming.outputFilterMaxChars);
+    }
+    if ('streamIdleSeconds' in incoming) {
+      incoming.streamIdleSeconds = clampIdleSeconds(incoming.streamIdleSeconds);
     }
     store.settings = { ...store.settings, ...incoming };
     // loginEnv is derived, never persisted.
