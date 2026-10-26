@@ -335,6 +335,8 @@ function handleMessage(chat, msg) {
     case 'result': {
       chat.lastResult = msg;
       endTurnCleanup(chat);
+      // The transcript is on disk now — pick up the new/updated conversation.
+      if (typeof window.scheduleConvoRefresh === 'function') window.scheduleConvoRefresh(true);
       if (!msg.is_error && msg.subtype === 'success') chat.switchedFrom = null;   // the new provider works
       if (window.refreshOverview) window.refreshOverview(chat.id);
       // Local-only observability: token-per-turn log for later analysis. #obs
@@ -407,8 +409,19 @@ function handleMessage(chat, msg) {
           chat.msgs.appendChild(m);
           scrollDownSoft(chat);
         } else {
-          appendError(chat, (explainTerminal(msg.terminal_reason) || 'Turn failed (' + msg.subtype + ')')
-            + (text ? ': ' + text.slice(0, 300) : ''));
+          const why = explainTerminal(msg.terminal_reason) || 'Turn failed (' + msg.subtype + ')';
+          // The raw failure is usually already on screen as an error banner
+          // ("server_error: API Error: 502 …") — the terminal frame carries the
+          // same detail, so skip it rather than showing the identical text twice.
+          const raw = String(chat.lastErrorText || '');
+          const fresh = Date.now() - (chat.lastErrorAt || 0) < 30_000;
+          const dup = !!text && fresh && !!raw
+            && (raw.includes(text.slice(0, 100)) || text.includes(raw.slice(0, 100)));
+          if (!dup) {
+            // WHY strings end in a full stop; joining with ": " used to read
+            // "The provider failed mid-turn.: API Error …".
+            appendError(chat, why + (text ? (why.endsWith('.') ? ' ' : ': ') + text.slice(0, 300) : ''));
+          }
         }
       }
       break;

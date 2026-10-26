@@ -159,9 +159,19 @@ async function add(claudePath, { preset, scope = 'user', header = '' }) {
 
 // User-defined connectors — e.g. a second GitHub account: same HTTP server URL,
 // different server name + PAT header, so both accounts can be connected at once.
+function safeUrl(s) { try { return new URL(String(s)); } catch { return null; } }
+
 async function addCustom(claudePath, { name, url, header = '', scope = 'user' }) {
   if (!/^[a-zA-Z0-9_-]{1,40}$/.test(name)) throw new Error('Name must be letters, digits, - or _ (max 40)');
-  if (!/^https:\/\//.test(url)) throw new Error('URL must start with https://');
+  // https everywhere, but plain http on this machine: local MCP servers
+  // (localhost / 127.0.0.1 / [::1]) are a normal dev setup and `claude mcp add
+  // --transport http` accepts them, so rejecting the whole http:// scheme made
+  // them impossible to add from this panel.
+  const u = safeUrl(url);
+  const local = !!u && ['localhost', '127.0.0.1', '::1', '[::1]'].includes(u.hostname);
+  if (!u || (u.protocol !== 'https:' && !(u.protocol === 'http:' && local))) {
+    throw new Error('URL must start with https:// (http:// is allowed for localhost only)');
+  }
   const hdr = normalizeHeader(header);
   const args = ['mcp', 'add', '--scope', scope, '--transport', 'http', name, url];
   if (hdr) args.push('--header', hdr);

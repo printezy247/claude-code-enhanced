@@ -593,3 +593,24 @@ describe('steer mode and web / PC tools access', () => {
     expect(perm.toolName).toBe('Read');
   });
 });
+
+describe('engine watchdog', () => {
+  it('stays quiet while a new chat is only idle, and arms on the first prompt', async () => {
+    // With streaming input the engine says nothing until a message arrives, so
+    // timing from creation painted a false "engine did not start" error on
+    // every tab that sat idle for 20s.
+    const { id } = await openChat();
+    expect(mgr.chats.get(id).watchdog).toBeFalsy();
+    expect(events.filter(e => e.kind === 'error')).toHaveLength(0);
+
+    mgr.send(id, 'hello');
+    expect(mgr.chats.get(id).watchdog).toBeTruthy();
+
+    // A frame clears it, exactly as before.
+    const chat = mgr.chats.get(id);
+    chat.gotFirstFrame = true;
+    clearTimeout(chat.watchdog);
+    chat.watchdog = null;
+    mgr.close(id);
+  });
+});

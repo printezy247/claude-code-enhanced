@@ -140,15 +140,21 @@ export function renderConversationList() {  // Async data can land after the win
   else items.sort((a, b) => String(a.preview || '').localeCompare(String(b.preview || '')));
 
   root.innerHTML = '';
+  // Every stored conversation is already open in the list above: showing
+  // "No conversations yet" under it (with a "0 of 3" counter) read as a bug.
+  const allOpen = convoSessions.length > 0 && !q && !folder
+    && view === 'all' && convoSessions.every((s) => openIds.has(s.sessionId));
   if (foot) {
-    foot.textContent = items.length === convoSessions.length
+    foot.textContent = items.length === convoSessions.length || allOpen
       ? convoSessions.length + ' conversation' + (convoSessions.length === 1 ? '' : 's')
+        + (allOpen && items.length !== convoSessions.length ? ' — all open above' : '')
       : items.length + ' of ' + convoSessions.length + ' conversations';
   }
   if (!items.length) {
     const empty = { pinned: 'Nothing pinned — use ▾ → Pin on a conversation you come back to.',
       open: 'No open conversations.', archived: 'Nothing archived.' }[view];
-    root.appendChild(el('div', 'convo-empty hint', q || folder ? 'Nothing matches.' : (empty || 'No conversations yet.')));
+    root.appendChild(el('div', 'convo-empty hint', q || folder ? 'Nothing matches.'
+      : (allOpen ? 'Every conversation is open in the list above.' : (empty || 'No conversations yet.'))));
     // The list only knows the previews. When a search finds nothing there,
     // the stored transcripts are searched too — on a worker thread in the
     // main process, so a big history does not freeze the window. #t0-workers
@@ -513,6 +519,26 @@ export async function loadConversationList() {
   renderConversationList();
 }
 
+let convoRenderTimer = null;
+let convoDiskTimer = null;
+/**
+ * Keep the sidebar honest while the session runs. `fromDisk` asks for a reload
+ * of the stored transcripts (a chat was opened or a turn finished); without it
+ * the list kept its boot-time contents and said "No conversations yet" until
+ * the user pressed Reload.
+ */
+export function scheduleConvoRefresh(fromDisk = false) {
+  if (!convoRenderTimer) {
+    convoRenderTimer = setTimeout(() => { convoRenderTimer = null; renderConversationList(); }, 400);
+  }
+  if (!fromDisk || convoDiskTimer) return;
+  convoDiskTimer = setTimeout(() => { convoDiskTimer = null; loadConversationList().catch(() => {}); }, 1500);
+}
+
+// Reaching it from the chat modules without importing them (they import this
+// file): the codebase already crosses module boundaries through window.
+window.scheduleConvoRefresh = scheduleConvoRefresh;
+
 /**
  * The conversation list lives in the left sidebar for good, so there is nothing
  * to open or close. This (Ctrl+B) reveals the sidebar, reloads the list from
@@ -602,6 +628,8 @@ window.onTabsChanged = renderOpenTabs;
 function paintOpenTabs() {
   const box = document.querySelector('#sb-open');
   if (!box) return;
+  // Open tabs changed, so the All/Open counters next to them are stale too.
+  scheduleConvoRefresh(false);
   const entries = [...tabRegistry.entries()].filter(([, m]) => m.tabEl);
   box.innerHTML = '';
   box.classList.toggle('hidden', !entries.length);

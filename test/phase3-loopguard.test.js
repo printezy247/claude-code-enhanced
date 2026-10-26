@@ -146,6 +146,17 @@ describe('redirect, then stop', () => {
     const b = bash('x');
     expect(g.record(b)).toBe(g.record(b));
   });
+  it('a tool_use id reused AFTER its result counts as a new call', () => {
+    // Some upstreams (local servers, translating proxies) hand back the same
+    // tool_call id every call — call_1, toolu_0. Judging repeats by id alone
+    // made the cached verdict return forever, so the guard never fired: one
+    // such upstream ran 1,586 identical Bash calls in a single turn.
+    const g = createLoopGuard();
+    const same = () => ({ id: 'call_1', name: 'Bash', input: { command: 'echo hi' } });
+    const trips = [0, 1, 2].map(() => run(g, same(), 'hi'));
+    expect(trips.map((t) => t.tripped)).toEqual([false, false, true]);
+    expect(trips[2].reason).toMatch(/Bash call 3 times/);
+  });
   it('reset forgets everything', () => {
     const g = createLoopGuard();
     loop(g);

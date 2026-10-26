@@ -255,3 +255,21 @@ describe('sidebar list behaviour', () => {
     h.window.close();
   });
 });
+
+describe('every conversation is open above', () => {
+  it('says so instead of "No conversations yet" and counts them in the footer', async () => {
+    const h = await boot();
+    const win = h.window;
+    // All stored sessions are open tabs, so their rows live under OPEN and the
+    // All list is empty by design — it must not read as "nothing here".
+    for (const s of SESSIONS) {
+      win.tabRegistry.set('t-' + s.sessionId, { kind: 'chat', sessionId: s.sessionId, tabEl: win.document.createElement('div') });
+    }
+    win.toggleConversations(true);
+    await flush(10);
+    expect(list(win).textContent).toContain('Every conversation is open in the list above.');
+    expect(win.document.querySelector('#convo-foot').textContent).toContain('5 conversations — all open above');
+    expect(rows(win).length).toBe(0);
+    h.window.close();
+  });
+});

@@ -2183,10 +2183,11 @@ function registerIpc() {
     const run = (args) => new Promise((resolve) => {
       execFile('git', args, { cwd: dir, timeout: 5000 }, (err, stdout) => resolve(err ? '' : String(stdout).trim()));
     });
-    const [remote, branch, dirty] = await Promise.all([
+    const [remote, branch, dirty, inside] = await Promise.all([
       run(['remote', 'get-url', 'origin']),
       run(['branch', '--show-current']),
       run(['status', '--porcelain']),
+      run(['rev-parse', '--is-inside-work-tree']),
     ]);
     let repo = null;
     const m = remote && remote.match(/github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?$/);
@@ -2197,7 +2198,10 @@ function registerIpc() {
     const files = dirty ? dirty.split('\n').filter(Boolean).slice(0, 60).map(l => l.slice(3)) : [];
     // `ok` matters: the right-hand panel drops the whole card when it is
     // missing, so the git rows and the changed-file list never appeared.
-    return { ok: true, remote, branch, repo, dirty: dirtyCount, files };
+    // `isRepo` separates "no repository here" from "a repository with no
+    // remote" — without it the Overview claimed "working tree clean" in a
+    // folder that is not under git at all.
+    return { ok: true, remote, branch, repo, dirty: dirtyCount, files, isRepo: inside === 'true' };
   });
 
   // ---- The git surface (the desktop's side panel) ------------------------

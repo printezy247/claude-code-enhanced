@@ -19,7 +19,7 @@ export async function renderUsage() {
   sum.innerHTML = '';
   const line = el('div', '',
     'sessions with activity: ' + (r.sessions || 0)
-    + '  ·  tokens (last ' + days.length + ' active days): ' + tok.toLocaleString()
+    + '  ·  tokens (last ' + days.length + ' active day' + (days.length === 1 ? '' : 's') + '): ' + tok.toLocaleString()
     + '  ·  cost reported by engine: $' + recent.toFixed(4)
     + '  (relay/local models often report no cost)');
   sum.appendChild(line);

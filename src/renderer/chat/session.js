@@ -495,6 +495,9 @@ export async function createSession(opts) {
       if (lr.ok && lr.sessionId) loadTranscript(chat, lr.sessionId);
     });
   }
+  // A new conversation exists now: the sidebar list must stop saying
+  // "No conversations yet".
+  if (typeof window.scheduleConvoRefresh === 'function') window.scheduleConvoRefresh(true);
   return id;
 }
 
