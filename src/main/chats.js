@@ -425,7 +425,8 @@ class ChatManager extends EventEmitter {
     const options = {
       cwd: dir,
       permissionMode: effMode,
-      allowDangerouslySkipPermissions: !!yolo || effMode === 'bypassPermissions',
+      // Always allowed: a chat switched to yolo later needs it. The mode itself still gates.
+      allowDangerouslySkipPermissions: true,
       // 'local' was missing, so .claude/settings.local.json was never loaded — that
       // is where the CLI stores its own "always allow" rules, so approving a
       // tool in a terminal tab had no effect on chat tabs. #12
@@ -502,7 +503,7 @@ class ChatManager extends EventEmitter {
         const callId = input && input.tool_use_id;
         if (!live || !live.guard || !callId) return {};
         // The hook can beat the stream frame that announces the call.
-        for (let i = 0; i < 10 && !live.guard.known(callId); i++) await new Promise((r) => setTimeout(r, 10));
+        for (let i = 0; i < 50 && !live.guard.known(callId); i++) await new Promise((r) => setTimeout(r, 10));
         const why = live.guard.denial(callId);
         if (!why) return {};
         return {
@@ -742,7 +743,10 @@ class ChatManager extends EventEmitter {
       if (toolName === hostmcp.HOST_LIST_TOOL) return { behavior: 'allow' };
       const connPol = toolPolicy.connectorPolicy(policyName, settings);
       const isConn = toolPolicy.isConnectorTool(policyName);
-      const bypass = effMode === 'bypassPermissions' || !!yolo;
+      // The mode can change mid-chat (setMode): judge by the current one, not
+      // the one the chat started with.
+      const liveChat = this.chats.get(id);
+      const bypass = liveChat ? liveChat.permissionMode === 'bypassPermissions' : (effMode === 'bypassPermissions' || !!yolo);
       // A destructive connector tool always needs a confirmation, unless the
       // session skips every prompt on purpose.
       const destructive = isConn && !bypass && toolPolicy.isDestructiveTool(policyName);
@@ -767,7 +771,7 @@ class ChatManager extends EventEmitter {
       }
 
       // 6. Auto-allow safe inspection / web tools and bypass modes
-      if (!alwaysAsk && (effMode === 'bypassPermissions' || !!yolo)) {
+      if (!alwaysAsk && bypass) {
         return { behavior: 'allow' };
       }
       // CCE's auto policy (non-Anthropic providers): approve what is plainly safe.
@@ -1314,6 +1318,13 @@ class ChatManager extends EventEmitter {
       if (!q || typeof q.mcpServerStatus !== 'function' || typeof q.toggleMcpServer !== 'function') return [];
       const servers = await q.mcpServerStatus();
       if (!Array.isArray(servers) || !servers.length) return [];
+      // A switched-off connector reports no tools. Remember them while it is up
+      // and lend them back, so it is still scored by what it can do.
+      chat.toolCache = chat.toolCache || new Map();
+      for (const s of servers) {
+        if (Array.isArray(s.tools) && s.tools.length) chat.toolCache.set(s.name, s.tools);
+        else if (s.status === 'disabled' && chat.toolCache.has(s.name)) s.tools = chat.toolCache.get(s.name);
+      }
       const ctx = typeof this.contextOf === 'function' ? Number(this.contextOf(chat.providerInstance, chat.model)) || 0 : 0;
       const pick = this._pickActive(chat);
       const recent = new Set([...chat.usedByTurn.flatMap((s) => [...s]), ...chat.turnUses]);

@@ -43,6 +43,16 @@ function words(text) {
   return out;
 }
 
+/** Words that mean a well-known connector, when the user does not say its name. */
+const TOPICS = {
+  github: ['git', 'ops', 'pull', 'request', 'merge', 'commit', 'push', 'branch', 'repo', 'repository', 'issue', 'issues', 'release', 'workflow', 'actions'],
+  gitlab: ['git', 'ops', 'merge', 'commit', 'push', 'branch', 'repo', 'repository', 'issue', 'issues', 'pipeline'],
+  linear: ['ticket', 'tickets', 'sprint', 'cycle', 'backlog'],
+  sentry: ['error', 'errors', 'crash', 'stacktrace', 'exception'],
+  slack: ['channel', 'message', 'thread'],
+  notion: ['page', 'pages', 'wiki', 'doc', 'docs'],
+};
+
 /**
  * How well one connector fits what the user just asked.
  *
@@ -54,6 +64,11 @@ function scoreServer(server, want, history = {}) {
   let score = 0;
   const nameWords = words(server.name);
   for (const w of nameWords) if (want.has(w)) score += 6;
+  // A switched-off connector has no tool list, so its name is all there is to
+  // go on. "git ops" never says "github": the topic words stand in for it.
+  const aliased = new Set();
+  for (const w of nameWords) for (const a of TOPICS[w] || []) aliased.add(a);
+  for (const a of aliased) if (want.has(a)) { score += 6; break; }
   let toolHits = 0;
   let descHits = 0;
   for (const t of server.tools || []) {
