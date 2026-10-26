@@ -90,6 +90,54 @@ const UNSAFE_ARGS = {
   hostname: (rest) => rest.some((t) => !/^(-f|-s|-d|-i|-I|-A|-a|-y|--fqdn|--short|--domain|--ip-address|--all-ip-addresses|--all-fqdns|--alias|--yp|--nis)$/.test(t)),
 };
 
+
+/* ---------------- medium tier: project-local work ---------------- */
+
+/** A path argument that stays inside the working folder: relative, no `..`, no `~`, not a flag. */
+function isLocalPath(tok, cwd) {
+  if (!tok || tok.startsWith('-') || tok.startsWith('~') || /["'*?]/.test(tok)) return false;
+  if (tok.split('/').includes('..')) return false;
+  if (tok.startsWith('/')) return !!cwd && (tok === cwd || tok.startsWith(cwd.replace(/\/$/, '') + '/'));
+  return true;
+}
+
+const SCRIPT_FILE = /\.(js|mjs|cjs|py)$/;
+
+/**
+ * Commands that change files or run project code, but only inside the working
+ * folder. Nothing here pushes, installs a named package, rewrites history or
+ * reads a secret. Returns true when the segment is a plain local step.
+ */
+function segmentIsLocal(segment, cwd) {
+  const tokens = segment.trim().split(/\s+/).filter(Boolean);
+  const cmd = tokens[0];
+  const rest = tokens.slice(1);
+  if (!cmd || SENSITIVE.test(segment)) return false;
+  if (cmd === 'mkdir') {
+    const paths = rest.filter((t) => t !== '-p');
+    return paths.length > 0 && paths.every((t) => isLocalPath(t, cwd));
+  }
+  if (cmd === 'touch') return rest.length > 0 && rest.every((t) => isLocalPath(t, cwd));
+  if (cmd === 'cp' || cmd === 'mv') return rest.length === 2 && rest.every((t) => isLocalPath(t, cwd));
+  if (cmd === 'npm') return rest.length === 1 && (rest[0] === 'ci' || rest[0] === 'install');
+  if (cmd === 'git') {
+    if (rest[0] === 'add') {
+      const paths = rest.slice(1);
+      // No -A, -u or "." : they would stage secrets or unrelated files unseen.
+      return paths.length > 0 && paths.every((t) => isLocalPath(t, cwd) && t !== '.' && t !== './');
+    }
+    if (rest[0] === 'commit') {
+      // `-m "msg"` only: no amend, no hook skipping. The quoted message splits on spaces, so check the flags.
+      return rest[1] === '-m' && !rest.some((t) => /^--(amend|no-verify|no-gpg-sign)/.test(t) || t === '-n' || t === '-a');
+    }
+    return false;
+  }
+  if (cmd === 'node' || cmd === 'python' || cmd === 'python3') {
+    return SCRIPT_FILE.test(rest[0] || '') && isLocalPath(rest[0], cwd) && !/^(-e|-c|--eval|--print)/.test(rest[0]);
+  }
+  return false;
+}
+
 function segmentIsSafe(segment) {
   const tokens = segment.trim().split(/\s+/).filter(Boolean);
   if (!tokens.length) return false;
@@ -129,23 +177,24 @@ function segmentIsSafe(segment) {
 }
 
 /** True when a whole shell command line is read-only / a plain project check. */
-function isSafeBash(command) {
+function isSafeBash(command, opts = {}) {
   const line = String(command || '').trim();
   if (!line || line.length > 400) return false;
   // `&&` chains are allowed (each part is checked); any other `&` is not.
   if (FORBIDDEN_SHELL.test(line.replace(/&&/g, ';'))) return false;
   // Split on the operators that chain commands; every part must be safe.
-  return line.split(/\|\||&&|;|\|/).every(segmentIsSafe);
+  const medium = !!(opts && opts.cwd);
+  return line.split(/\|\||&&|;|\|/).every((seg) => segmentIsSafe(seg) || (medium && segmentIsLocal(seg, opts.cwd)));
 }
 
 /** Should CCE's auto policy approve this tool call without asking? */
-function autoAllows(toolName, input) {
+function autoAllows(toolName, input, opts = {}) {
   if (SAFE_TOOLS.has(toolName)) {
     // A read tool pointed at a credential file is not plain inspection.
     const i = input || {};
     return !(isSensitivePath(i.file_path) || isSensitivePath(i.path) || isSensitivePath(i.pattern) || isSensitivePath(i.glob));
   }
-  if (toolName === 'Bash') return isSafeBash(input && input.command);
+  if (toolName === 'Bash') return isSafeBash(input && input.command, opts);
   return false;
 }
 

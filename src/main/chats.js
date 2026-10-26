@@ -14,7 +14,7 @@ const { promptAppend: bootstrapPrompt, syncedSkillsPlugin } = require('./bootstr
 const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { compactToolOutput, toolResultText, clampMaxChars, FILTERED_TOOLS, clampIdleSeconds } = require('./toolfilter');
 const managedconfig = require('./managedconfig');
-const { createLoopGuard } = require('./loopguard');
+const { createLoopGuard, createBudget } = require('./loopguard');
 const webdomains = require('./webdomains');
 const connectorauto = require('./connectorauto');
 const { absFor, shareablePath } = require('./fileshare');
@@ -777,7 +777,7 @@ class ChatManager extends EventEmitter {
       // CCE's auto policy (non-Anthropic providers): approve what is plainly safe.
       if (!alwaysAsk) {
         const live = this.chats.get(id);
-        if (live && live.autoPolicy && autopolicy.autoAllows(toolName, input)) return { behavior: 'allow' };
+        if (live && live.autoPolicy && autopolicy.autoAllows(toolName, input, { cwd: dir })) return { behavior: 'allow' };
       }
       if (!alwaysAsk && toolName === 'WebSearch') {
         if (!settings || !Array.isArray(settings.blockedTools) || !settings.blockedTools.includes(toolName)) {
@@ -886,6 +886,9 @@ class ChatManager extends EventEmitter {
       push: stream.push, close: stream.close, lastResult: null, outputCharsTrimmed: 0,
       checkpoints: [],   // user-message uuids -> rewind anchors (file checkpointing)
       guard: createLoopGuard(),   // stops an agent that repeats itself
+      // yolo never asks, so it gets a hard stop: N calls with no file change ends the turn (0 = off)
+      budget: createBudget(Number.isFinite(Number(settings && settings.yoloBudget)) ? Number(settings.yoloBudget) : 80),
+      budgetTripped: false,
       written: new Set(),         // files the agent wrote: the only ones the UI may share
       settings: settings || {},
       // Connectors: use this chat has made of each, which ones CCE switched off for it, and
@@ -958,6 +961,11 @@ class ChatManager extends EventEmitter {
                 chat.turnUses.add(server);
                 try { this.connectorMemory.note(dir, server); } catch { /* memory is best effort */ }
               }
+              if (chat.permissionMode === 'bypassPermissions' && !scope && chat.budget.note(b) && !chat.budgetTripped) {
+                chat.budgetTripped = true;
+                this.emit('event', id, { kind: 'turn-budget', limit: Number(settings && settings.yoloBudget) || 80 });
+                this.interrupt(id).catch(() => {});
+              }
               const trip = chat.guard.record(b, scope);
               if (!trip.tripped) continue;
               if (trip.strike < 2) {
@@ -974,7 +982,10 @@ class ChatManager extends EventEmitter {
           }
           if (msg.type === 'result') {
             if (chat.turnUses.size) { chat.usedByTurn.push(chat.turnUses); chat.usedByTurn = chat.usedByTurn.slice(-3); chat.turnUses = new Set(); }
-            chat.guard.reset();
+            // The loop guard keeps its history across a result: a loop that spans turns
+            // is still a loop. A new user message (send) is what clears it.
+            chat.budget.reset();
+            chat.budgetTripped = false;
             chat.guardTripped = false;
             chat.lastResult = msg;
             // Two prompts sent back to back: the first result is not the end.
@@ -1038,12 +1049,34 @@ class ChatManager extends EventEmitter {
       }
     })();
 
+    // Claude's own auto mode needs a model that supports it; find out in the background.
+    if (effMode === 'auto') this._checkAutoSupport(id).catch(() => {});
     return {
       id, cwd: dir, model: chat.model, permissionMode: effMode, autoPolicy: chat.autoPolicy,
       provider: chat.provider, sandbox: !!(settings && settings.sandbox && settings.sandbox.enabled),
       resumedFrom: (options.resume || null),
       isLean,
     };
+  }
+
+  /**
+   * A model without auto-mode support would ask about every call. Fall back to
+   * accept-edits plus CCE's own policy, and tell the user, instead of failing silently.
+   */
+  async _checkAutoSupport(id) {
+    const chat = this.chats.get(id);
+    if (!chat || !chat.q || typeof chat.q.supportedModels !== 'function') return;
+    const models = await chat.q.supportedModels();
+    if (!Array.isArray(models) || !models.length) return;
+    const want = chat.model || '';
+    const row = models.find((m) => want && (m.value === want || m.resolvedModel === want))
+      || (want ? null : models.find((m) => m.isDefault));
+    if (!row || row.supportsAutoMode !== false) return;
+    if (chat.permissionMode !== 'auto') return;   // the user already moved on
+    await chat.q.setPermissionMode('acceptEdits');
+    chat.permissionMode = 'acceptEdits';
+    chat.autoPolicy = true;
+    this.emit('event', id, { kind: 'auto-unsupported', model: want });
   }
 
   _makeInputStream() {

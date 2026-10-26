@@ -50,7 +50,7 @@ function isShellEdit(block) {
   return block.name === 'Bash' && block.input && SHELL_EDIT.test(String(block.input.command || ''));
 }
 
-function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 } = {}) {
+function createLoopGuard({ window = 24, repeat = 3, noopRun = 5, errorRepeat = 3 } = {}) {
   const scopes = new Map();   // scope key -> history
   const calls = new Map();    // tool_use id -> { state, entry, progress, trip }
 
@@ -58,7 +58,7 @@ function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 
     const k = key || '';
     let s = scopes.get(k);
     if (!s) {
-      s = { recent: [], noops: 0, strikes: 0, errHash: '', errStreak: 0, armed: null };
+      s = { recent: [], noops: 0, strikes: 0, errHash: '', errStreak: 0, armed: null, edits: new Map(), shellEdits: new Map() };
       scopes.set(k, s);
     }
     return s;
@@ -66,7 +66,7 @@ function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 
 
   function trip(s, reason) {
     s.strikes += 1;
-    s.recent = []; s.noops = 0; s.errHash = ''; s.errStreak = 0; s.armed = null;
+    s.recent = []; s.noops = 0; s.errHash = ''; s.errStreak = 0; s.armed = null; s.edits.clear(); s.shellEdits.clear();
     return { tripped: true, reason, strike: s.strikes };
   }
 
@@ -75,7 +75,26 @@ function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 
     if (POLL_TOOLS.has(block.name)) return none;
     // Three identical errors in a row: whatever comes next is stopped, an edit included.
     if (s.armed) return { trip: trip(s, s.armed), tracked: true };
-    if (WRITE_TOOLS.has(block.name) || isShellEdit(block)) {
+    if (WRITE_TOOLS.has(block.name)) {
+      // An edit is progress, unless it is the very same edit again: edit, test,
+      // the same edit, the same failing test is a loop, not a fix cycle.
+      let text;
+      try { text = JSON.stringify(block.input || {}); } catch { text = ''; }
+      const key = block.name + ':' + hashOf(text);
+      const seen = (s.edits.get(key) || 0) + 1;
+      if (s.edits.size >= 200) s.edits.delete(s.edits.keys().next().value);
+      s.edits.set(key, seen);
+      if (seen >= repeat) return { trip: trip(s, 'the same ' + block.name + ' edit ' + seen + ' times'), tracked: true };
+      s.recent = []; s.noops = 0; s.shellEdits.clear();
+      return { trip: { tripped: false }, progress: true, tracked: true };
+    }
+    if (isShellEdit(block)) {
+      // The same shell edit again with no file edit in between changes nothing.
+      const key = hashOf(String(block.input.command || ''));
+      const seen = (s.shellEdits.get(key) || 0) + 1;
+      if (s.shellEdits.size >= 200) s.shellEdits.delete(s.shellEdits.keys().next().value);
+      s.shellEdits.set(key, seen);
+      if (seen >= repeat) return { trip: trip(s, 'the same shell edit ' + seen + ' times with no file change'), tracked: true };
       s.recent = []; s.noops = 0;
       return { trip: { tripped: false }, progress: true, tracked: true };
     }
@@ -162,4 +181,26 @@ function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 
   };
 }
 
-module.exports = { createLoopGuard };
+/** Does this call change a file (a write tool, or a shell redirect / tee / sed -i)? */
+function isEditCall(block) {
+  return !!block && (WRITE_TOOLS.has(block.name) || isShellEdit(block));
+}
+
+/**
+ * A hard stop for modes that never ask: N tool calls in a row without a file
+ * change ends the turn. limit 0 turns it off. note() returns true once over.
+ */
+function createBudget(limit) {
+  let count = 0;
+  return {
+    note(block) {
+      if (!limit || !block || POLL_TOOLS.has(block.name)) return false;
+      if (isEditCall(block)) { count = 0; return false; }
+      count += 1;
+      return count >= limit;
+    },
+    reset() { count = 0; },
+  };
+}
+
+module.exports = { createLoopGuard, isEditCall, createBudget };
