@@ -191,6 +191,15 @@ export function handleEvent(evt) {
       scrollDownSoft(chat);
     }
   }
+  else if (kind === 'turn-budget') {
+    chat.msgs.appendChild(el('div', 'sys-note', 'Stopped: ' + evt.limit + ' tool calls in a row with no file change (yolo mode). Send a new instruction to continue.'));
+    toast('Yolo turn budget reached', 'err');
+  }
+  else if (kind === 'auto-unsupported') {
+    chat.autoPolicy = true;
+    chat.msgs.appendChild(el('div', 'sys-note', 'This model does not support auto mode. Using accept-edits plus CCE\'s own safe-command policy instead.'));
+    toast('Auto mode not supported on this model', 'err');
+  }
   else if (kind === 'loop-guard') {
     const why = String(evt.reason || 'same step again');
     if (evt.action === 'redirect') {
