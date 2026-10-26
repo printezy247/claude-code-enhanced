@@ -134,10 +134,12 @@ function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 
       const text = textOf(content);
       const h = hashOf(text);
       if (rec.entry) rec.entry.hash = h;
+      // Errors that differ only in numbers (pids, times, line counts) are the same error.
+      const eh = hashOf(text.replace(/\d+/g, '#'));
       if (!rec.tracked) return;
       const s = rec.state;
       if (isError || /^\s*ERROR:/.test(text)) {
-        if (h === s.errHash) s.errStreak += 1; else { s.errHash = h; s.errStreak = 1; }
+        if (eh === s.errHash) s.errStreak += 1; else { s.errHash = eh; s.errStreak = 1; }
         if (s.errStreak >= errorRepeat) {
           s.armed = 'the same error ' + s.errStreak + ' times (' + text.trim().replace(/\s+/g, ' ').slice(0, 80) + ')';
         }

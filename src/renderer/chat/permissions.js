@@ -103,6 +103,7 @@ export function showPermission(chat, evt) {
     }
   };
   const finish = () => {
+    endPermCountdown(card);   // an answered card must not time out later
     card.remove();
     chat.permCount = Math.max(0, (chat.permCount || 1) - 1);
     updatePermBadge(chat);
