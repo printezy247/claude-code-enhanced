@@ -901,17 +901,14 @@ class ChatManager extends EventEmitter {
 
     // Watchdog: if the engine never emits anything, tell the user instead of
     // leaving the tab silently dead (e.g. spawn failures inside the SDK).
+    //
+    // It arms on the FIRST PROMPT, not here. With streaming input the engine
+    // says nothing until a message arrives, so a chat that sits idle for 20s
+    // (every new tab does) used to paint a scary "engine did not start" error
+    // that was simply false — the tab answered fine on the first send. See
+    // _armWatchdog.
     chat.gotFirstFrame = false;
-    chat.watchdog = setTimeout(() => {
-      if (!chat.gotFirstFrame && this.chats.has(id)) {
-        this.emit('event', id, {
-          kind: 'error',
-          error: 'Chat engine did not start (no frames from the claude engine within 20s). '
-            + 'Check the terminal output for [claude]/[cce] diagnostics — common causes: '
-            + 'claude CLI path wrong in Settings, or auth expired (run /login in a terminal tab).',
-        });
-      }
-    }, 20_000);
+    chat.watchdog = null;
 
     (async () => {
       try {
@@ -1104,6 +1101,24 @@ class ChatManager extends EventEmitter {
     } catch { return null; }
   }
 
+  /**
+   * Start the "engine did not start" clock for a chat that has just been
+   * prompted. Called from send(): before the first message the engine is
+   * legitimately silent, so there is nothing to time yet.
+   */
+  _armWatchdog(id, chat) {
+    if (chat.gotFirstFrame || chat.watchdog) return;
+    chat.watchdog = setTimeout(() => {
+      if (!chat.gotFirstFrame && this.chats.has(id)) {
+        this.emit('event', id, {
+          kind: 'error',
+          error: 'The chat engine did not answer the first message (no frames from the claude engine within 20s). '
+            + 'Common causes: claude CLI path wrong in Settings, or auth expired (run /login in a terminal tab).',
+        });
+      }
+    }, 20_000);
+  }
+
   send(id, text, blocks, opts = {}) {
     const chat = this.chats.get(id);
     if (!chat || (!text && !(blocks && blocks.length))) return { ok: false };
@@ -1121,6 +1136,7 @@ class ChatManager extends EventEmitter {
     const frame = { type: 'user', message: { role: 'user', content }, parent_tool_use_id: null, session_id: chat.sessionId || '' };
     // Connectors are chosen for this message first, so the model is shown the right
     // ones on this turn. Bounded: a slow engine must not hold the message back.
+    this._armWatchdog(id, chat);
     if (this._connectorPolicyActive(chat)) {
       chat.busy = true;
       this.emit('event', id, { kind: 'status', busy: true });

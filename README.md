@@ -171,7 +171,7 @@ The footer picker has the four modes of the Claude Code desktop app:
 
 Claude Code's "manual" mode (ask before every edit) is not offered; it maps to **accept edits**, the closest safe choice.
 
-**auto only works with Anthropic's own API.** Its classifier runs on whatever model answers the chat, so behind a third-party provider (Qwen, GLM, a local model, any translating proxy) the reviews fail to parse and Claude Code silently denies actions, then stops the turn after ten no-verdict replies. cce therefore greys out **auto** for those providers and falls back to **accept edits**.
+**auto runs on two different engines.** On Anthropic's own API a second model (the *classifier*) reviews each action. Behind a third-party provider (Qwen, GLM, a local model, any translating proxy) that classifier cannot be trusted — its answers do not parse and Claude Code silently denies actions, then stops the turn after ten no-verdict replies — so cce keeps **auto** available but runs it with its own safe-action policy instead: the engine is set to *accept edits* and CCE approves plainly safe actions itself (`echo` runs, `sudo rm -rf …` still asks).
 
 **Auto-continue.** Some models end a turn on "Let me …" without making the tool call, so the chat goes quiet. cce sends one automatic reminder per prompt (Settings → Chat behaviour); the **▶ continue** button is always there.
 

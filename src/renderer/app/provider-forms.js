@@ -8,6 +8,10 @@ import { ProvidersUI } from '../providers/ui.js';
 /* ================= new-session modal ================= */
 
 export function openNewSessionModal() {
+  // A double-click must not stack two identical dialogs (each needs its own
+  // Cancel/Escape). If one is already up, bring it forward instead.
+  const open = document.querySelector('.modal-overlay');
+  if (open) { open.remove(); open.style.animation = 'none'; document.body.appendChild(open); return; }
   const overlay = el('div', 'modal-overlay');
   // A dialog must say so: role + aria-modal, or a screen reader treats the
   // backdrop as ordinary content and keeps reading the page behind it. #53

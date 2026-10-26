@@ -108,7 +108,15 @@ function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 
      */
     record(block, scopeKey) {
       if (!block || !block.name) return { tripped: false };
-      if (block.id && calls.has(block.id)) return calls.get(block.id).trip;
+      if (block.id && calls.has(block.id)) {
+        const seen = calls.get(block.id);
+        // The cached verdict is for one occurrence of that id. Once its result
+        // has been fed back the call is finished, so seeing the id again means
+        // the upstream REUSED it (some proxies and local servers emit call_1 /
+        // toolu_0 every time) — that is a new call and must be judged, or a
+        // single repeated id would hide the loop forever.
+        if (!seen.done) return seen.trip;
+      }
       const s = scopeOf(scopeKey);
       const d = decide(block, s);
       if (block.id) {
@@ -122,6 +130,7 @@ function createLoopGuard({ window = 6, repeat = 3, noopRun = 5, errorRepeat = 3 
     result(id, content, isError) {
       const rec = id && calls.get(id);
       if (!rec) return;
+      rec.done = true;
       const text = textOf(content);
       const h = hashOf(text);
       if (rec.entry) rec.entry.hash = h;

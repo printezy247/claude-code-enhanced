@@ -224,21 +224,46 @@ export function renderSplit() {
     frame.className = 'preview-frame';
     frame.setAttribute('sandbox', 'allow-scripts allow-forms allow-same-origin');
     try { const saved = localStorage.getItem('cce.previewUrl'); if (saved) url.value = saved; } catch { /* private mode */ }
+    // A dead URL or one the CSP blocks used to leave a blank white rectangle
+    // with no hint whether the dev server was down or the app had refused it.
+    const note = el('div', 'preview-note hint hidden');
+    const say = (msg) => { note.textContent = msg || ''; note.classList.toggle('hidden', !msg); };
+    const previewHost = (u) => {
+      try {
+        const p = new URL(u);
+        if (p.protocol === 'file:') return true;
+        return ['localhost', '127.0.0.1', '::1', '[::1]'].includes(p.hostname);
+      } catch { return false; }
+    };
     const nav = () => {
       let u = (url.value || '').trim();
       if (!u) return;
       if (!/^(https?|file):\/\//.test(u)) u = 'http://' + u;
       url.value = u;
-      frame.src = u;
       try { localStorage.setItem('cce.previewUrl', u); } catch { /* private mode */ }
+      if (!previewHost(u)) {
+        frame.removeAttribute('src');
+        say('Only localhost previews load here (the frame is restricted to this machine) — use ↗ open for ' + u + '.');
+        return;
+      }
+      frame.src = u;   // let the browser try straight away
+      if (u.startsWith('file:') || typeof fetch !== 'function') { say(''); return; }
+      say('loading ' + u + '…');
+      const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+      const timer = setTimeout(() => { try { ctrl && ctrl.abort(); } catch { /* ignore */ } }, 4000);
+      fetch(u, { method: 'GET', mode: 'no-cors', cache: 'no-store', signal: ctrl && ctrl.signal })
+        .then(() => say(''))
+        .catch(() => say('Nothing answered at ' + u + ' — is it running? Start it, then press load again.'))
+        .finally(() => clearTimeout(timer));
     };
     go.addEventListener('click', nav);
     url.addEventListener('keydown', (e) => { if (e.key === 'Enter') nav(); });
     ext.addEventListener('click', () => { if (/^https?:\/\//.test(url.value)) ccx.invoke('shell:openExternal', { url: url.value }); });
     bar.appendChild(url); bar.appendChild(go); bar.appendChild(ext);
     body.appendChild(bar);
+    body.appendChild(note);
     body.appendChild(frame);
-    if (url.value) frame.src = url.value;
+    if (url.value) nav();
     return;
   }
   const chat = Chat.chats.get(state.activeId);
@@ -535,6 +560,16 @@ function renderTasks(target, cwd, only) {
   let ch, chList;   // created after Connectors so the cards read in the desktop order
   pending.push(ccx.invoke('git:info', { cwd }).then((r) => {
     if (!r || !r.ok) return;
+    // Not under git at all: claiming "working tree clean" / "no branch · clean"
+    // here was simply untrue (and contradicted the tool panel next to it).
+    if (r.isRepo === false) {
+      env.inner.appendChild(el('div', 'task-row hint', 'not a git repository'));
+      env.badge.textContent = '';
+      ch.badge.textContent = '—';
+      ch.badge.classList.remove('warn');
+      chList.appendChild(el('div', 'task-row hint', 'not a git repository'));
+      return;
+    }
     env.inner.appendChild(el('div', 'task-row hint',
       (r.branch ? '⎇ ' + r.branch : 'no branch') + (r.repo ? ' · ' + r.repo : '')
       + (r.dirty ? ' · ' + r.dirty + ' changed' : ' · clean')));

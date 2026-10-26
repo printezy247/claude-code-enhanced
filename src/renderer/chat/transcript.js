@@ -353,6 +353,11 @@ export function updateLatestBtn(chat) {
 
 export function appendError(chat, text) {
   const m = String(text || '');
+  // Remember what was just shown so a second frame for the same failure (the
+  // turn's terminal_reason carries the same detail) can be recognised instead
+  // of printing the identical error twice.
+  chat.lastErrorText = m;
+  chat.lastErrorAt = Date.now();
   const ctx = m.match(/exceeds the available context size \((\d+)\s*tokens\)/i);
   const need = m.match(/request \((\d+)\s*tokens\)/i);
   const e = el('div', 'msg error-msg');

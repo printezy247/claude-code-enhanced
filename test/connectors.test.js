@@ -118,6 +118,15 @@ describe('adding connectors', () => {
     await expect(connectors.addCustom('/nonexistent', { name: 'bad name', url: github.url })).rejects.toThrow(/Name must be/);
     await expect(connectors.addCustom('/nonexistent', { name: 'ok', url: 'http://x' })).rejects.toThrow(/https/);
   });
+
+  it('accepts plain http for a localhost MCP server (a normal dev setup)', async () => {
+    const out = path.join(os.tmpdir(), 'cce-local-args-' + process.pid);
+    const claude = fakeClaude(`printf '%s\\n' \"$@\" > '${out}'`);
+    await connectors.addCustom(claude, { name: 'localbox', url: 'http://127.0.0.1:8080/mcp' });
+    const args = fs.readFileSync(out, 'utf8').split('\n');
+    expect(args).toContain('http://127.0.0.1:8080/mcp');
+    fs.rmSync(out, { force: true });
+  });
 });
 
 describe('slow-but-connected servers', () => {

@@ -155,7 +155,14 @@ describe('amazon bedrock', () => {
   });
 
   it('probe: unreachable host is a network error, not a key error', async () => {
-    const r = await bedrock.probe('http://127.0.0.1:54321', 'ABSK-test', 'm', 3000);
+    // Bind an ephemeral port and release it, instead of assuming a fixed port
+    // (54321) is free: on machines where something listens there the probe
+    // rightly reports that service's HTTP answer, not a connection failure.
+    const srv = http.createServer(() => {});
+    await listen(srv);
+    const port = srv.address().port;
+    await close(srv);
+    const r = await bedrock.probe(`http://127.0.0.1:${port}`, 'ABSK-test', 'm', 3000);
     expect(r.ok).toBe(false);
     expect(r.error).toMatch(/refused|timed out|resolve/i);
   });
