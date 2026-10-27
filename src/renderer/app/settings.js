@@ -243,6 +243,11 @@ export function renderSettings() {
   m1.appendChild(m1c);
   m1.appendChild(el('span', '', '1M-token context window (models that support it)'));
   c5.appendChild(m1);
+  const st = el('label', 'check');
+  const stc = el('input'); stc.type = 'checkbox'; stc.checked = s.showThinking !== false;
+  st.appendChild(stc);
+  st.appendChild(el('span', '', 'Show thinking (ask Claude models for thinking summaries)'));
+  c5.appendChild(st);
   body.appendChild(c5);
 
   // updates (release ping)
@@ -396,6 +401,7 @@ export function renderSettings() {
       thinkingBudget: parseInt(tbInput.value, 10) || 0,
       effort: efInput.value.trim(),
       context1m: m1c.checked,
+      showThinking: stc.checked,
       localNumCtx: Number(localCtxSel.value) || 73728,
       forceCtx: parseForceCtx(forceInput.value),
       theme: themeSel.value,

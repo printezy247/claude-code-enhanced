@@ -2,6 +2,10 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.78
+- Fixed: attaching a file (e.g. a `.pine` script) failed with "totalBytes is not defined".
+- Fixed: Claude's thinking is visible again. Newer Claude models omit the thinking text unless the app asks for summaries; CCE now asks. Settings > Session caps & model > "Show thinking" turns it off.
+
 ## 0.9.74
 - Changed: connectors switch on and off by themselves. Every connector stays connected; what changes per chat is which ones the model is shown. The per-chat switch on the Overview card and the enable/disable buttons in the live MCP panel are gone, because that change applied to one session and was lost in the next chat.
 - Added: tool search for every provider that supports it (the default login, Anthropic's API and translated providers), so the model sees connector tool names and loads a definition only when it asks. A third-party gateway that speaks the Anthropic format is left as it was.

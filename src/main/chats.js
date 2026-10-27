@@ -134,6 +134,15 @@ function pluginOverrides({ provider, settings = {} } = {}) {
   return { enabledPlugins: Object.fromEntries(OUTPUT_HIDING_PLUGINS.map((p) => [p, false])) };
 }
 
+/**
+ * Newer Claude models send thinking blocks with the text omitted unless the
+ * client asks for summaries, so the chat showed no reasoning at all. On by
+ * default; Settings > "Show thinking" turns it off.
+ */
+function thinkingSettings(settings) {
+  return { showThinkingSummaries: !(settings && settings.showThinking === false) };
+}
+
 // Session files are uuid-v4 jsonl names; also the path-traversal guard.
 function isSessionId(id) {
   return /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(String(id || ''));
@@ -587,6 +596,7 @@ class ChatManager extends EventEmitter {
       if (settings.context1m) options.betas = ['context-1m-2025-08-07'];
       if (Number(settings.thinkingBudget) > 0) {
         options.thinking = { type: 'enabled', budgetTokens: Number(settings.thinkingBudget) };
+        if (settings.showThinking !== false) options.thinking.display = 'summarized';
       }
       if (['low', 'medium', 'high', 'xhigh', 'max'].includes(String(settings.effort || '').trim())) {
         options.effort = String(settings.effort).trim();
@@ -697,7 +707,7 @@ class ChatManager extends EventEmitter {
     }
 
     const plug = pluginOverrides({ provider: providerInstance, settings: settings || {} });
-    if (plug) options.settings = plug;
+    options.settings = { ...(plug || {}), ...thinkingSettings(settings) };
 
     // Each request keeps its own entry; several tools can be pending at once
     // (parallel tool calls, subagents). The old single-slot UI dropped all but
@@ -2070,3 +2080,4 @@ module.exports.WRITE_TOOLS = WRITE_TOOLS;
 module.exports.isVmPath = isVmPath;
 module.exports.targetFilePath = targetFilePath;
 module.exports.isOutsideDirs = isOutsideDirs;
+module.exports.thinkingSettings = thinkingSettings;
