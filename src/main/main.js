@@ -2367,6 +2367,9 @@ function registerIpc() {
   // as inline content; the size caps match the renderer's own limits. #32
   const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
   const MAX_TEXT_BYTES = 400 * 1024;
+  // All inline content of one pick together; past it, files go as path refs so
+  // the turn stays under chat:send's IPC cap (24 MB, base64 adds a third).
+  const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
   const IMAGE_TYPES = /^image\/(png|jpeg|gif|webp)$/;
   handle('dialog:pickFiles', async (_payload, e) => {
     const res = await dialog.showOpenDialog(senderWin(e), {
@@ -2375,6 +2378,7 @@ function registerIpc() {
     });
     if (res.canceled) return { files: [] };
     const files = [];
+    let totalBytes = 0;
     for (const p of res.filePaths.slice(0, 10)) {
       const name = path.basename(p);
       try {
@@ -2389,6 +2393,7 @@ function registerIpc() {
         } else if (/\.(md|txt|json|ya?ml|toml|ini|cfg|conf|log|sql|py|js|mjs|cjs|ts|tsx|jsx|sh|bash|zsh|c|h|cpp|hpp|rs|go|rb|java|kt|swift|html|css|scss|vue|svelte|xml|csv|env|gitignore|dockerfile|makefile)$/i.test(ext) || st.size <= MAX_TEXT_BYTES) {
           if (st.size > MAX_TEXT_BYTES) { files.push({ name, path: p, size: st.size, ref: true }); continue; }
           const t = fs.readFileSync(p, 'utf8'); totalBytes += t.length;
+          if (totalBytes > MAX_TOTAL_BYTES) { files.push({ name, path: p, size: st.size, ref: true }); continue; }
           files.push({ name, text: t.slice(0, 40000) });
         } else {
           // PDFs, archives, binaries: hand the agent the path; its Read tool takes it from there.
