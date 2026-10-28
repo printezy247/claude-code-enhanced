@@ -35,6 +35,11 @@ const INVOKE_CHANNELS = new Set([
   'webremote:status', 'webremote:start', 'webremote:stop',
   'sshhosts:list', 'sshhosts:save', 'sshhosts:delete',
   'agents:models', 'agents:set-model',
+  // Phase 4 (items 15-20): codebase index, skills sync, auto-learn, marketplace
+  'codeindex:build', 'codeindex:status', 'codeindex:search',
+  'skills:sync',
+  'skills:autolearn-prompt', 'skills:autolearn-propose', 'skills:autolearn-pending', 'skills:autolearn-resolve',
+  'marketplace:list', 'marketplace:install',
   'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
   'file:read', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
   'git:status', 'git:cache-invalidate', 'project:files', 'project:scripts', 'skill:import',

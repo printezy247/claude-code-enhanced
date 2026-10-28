@@ -18,10 +18,12 @@ function storePath() { return path.join(homeDir(), '.claude', 'cce-disabled.json
 
 function readStore() {
   const j = readJsonSafe(storePath());
-  if (!j || typeof j !== 'object') return { skills: [], agents: [] };
+  if (!j || typeof j !== 'object') return { skills: [], agents: [], snapshot: [] };
   return {
     skills: Array.isArray(j.skills) ? j.skills : [],
     agents: Array.isArray(j.agents) ? j.agents : [],
+    // Last skills:sync snapshot (item 18) — which names were on disk then.
+    snapshot: Array.isArray(j.snapshot) ? j.snapshot : [],
   };
 }
 
@@ -252,6 +254,22 @@ function scanSkills(opts = {}) {
   return listSkills(opts).map(s => ({ ...s, enabled: !disabled.has(String(s.name)) }));
 }
 
+// Skills sync (item 18): diff what is on disk against the snapshot of the
+// last sync, and drop toggles for skills that no longer exist (a deleted
+// skill must not linger in cce-disabled.json forever). Pure — the handler
+// does the reading and writing around it.
+function syncState({ onDisk = [], snapshot = [], disabled = [] } = {}) {
+  const disk = [...new Set(onDisk.map(String))].sort();
+  const prev = new Set(snapshot.map(String));
+  const dis = new Set(disabled.map(String));
+  const onDiskSet = new Set(disk);
+  const added = disk.filter((n) => !prev.has(n));
+  const removed = [...prev].filter((n) => !onDiskSet.has(n)).sort();
+  const pruned = [...dis].filter((n) => !onDiskSet.has(n)).sort();
+  const disabledAfter = [...dis].filter((n) => onDiskSet.has(n)).sort();
+  return { added, removed, pruned, disabledAfter, snapshot: disk };
+}
+
 module.exports = {
   storePath,
   readStore,
@@ -270,6 +288,7 @@ module.exports = {
   readSkill,
   setSkillEnabled,
   scanSkills,
+  syncState,
   skillRoots,
   findSkillDirs,
   splitFrontmatter,

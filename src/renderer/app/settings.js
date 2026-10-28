@@ -435,6 +435,7 @@ export function renderSettings() {
   });
   body.appendChild(saveBtn);
   renderRemoteCards(body);
+  renderIndexGuardCards(body);
 }
 
 /**
@@ -559,6 +560,65 @@ function renderRemoteCards(body) {
     mobBtn.disabled = false;
     if (st.ok) mobPaint(st); else toast(st.error, 'err');
   });
+}
+
+// Index + spend ceiling (items 15 and 17): the two gates that keep a chat
+// from reading files it does not need and from running up a bill.
+function renderIndexGuardCards(body) {
+  const cIdx = el('div', 'settings-card');
+  cIdx.appendChild(el('h4', '', 'Codebase index'));
+  cIdx.appendChild(el('div', 'hint',
+    'Gives every chat a search_codebase tool: symbol lookup from a stored index instead of reading files. The index is plain JSON on this machine.'));
+  const idxRow = el('div', 'inline');
+  const idxCb = el('input');
+  idxCb.type = 'checkbox';
+  idxCb.checked = !!(state.settings && state.settings.codebaseIndex);
+  idxCb.addEventListener('change', () => saveSettings({ codebaseIndex: idxCb.checked }));
+  idxRow.appendChild(idxCb);
+  idxRow.appendChild(el('span', '', ' Offer search_codebase to chats'));
+  const idxBtn = el('button', 'btn small', 'Build index now');
+  const idxStat = el('span', 'hint', '');
+  const cwd = () => (state.settings && state.settings.defaultCwd) || '';
+  const paintIdx = async () => {
+    const st = await ccx.invoke('codeindex:status', { cwd: cwd() });
+    idxStat.textContent = st && st.ok && st.built
+      ? st.files + ' files · ' + st.symbols + ' symbols'
+      : 'not built yet';
+  };
+  idxBtn.addEventListener('click', async () => {
+    idxBtn.disabled = true;
+    idxBtn.textContent = 'Indexing…';
+    const r = await ccx.invoke('codeindex:build', { cwd: cwd() });
+    idxBtn.disabled = false;
+    idxBtn.textContent = 'Build index now';
+    if (r && r.ok) { toast('Indexed ' + r.files + ' files (' + r.symbols + ' symbols)', 'ok'); paintIdx(); }
+    else toast((r && r.error) || 'Index failed', 'err');
+  });
+  idxRow.append(idxBtn, idxStat);
+  cIdx.appendChild(idxRow);
+  paintIdx();
+  body.appendChild(cIdx);
+
+  const cSpend = el('div', 'settings-card');
+  cSpend.appendChild(el('h4', '', 'Spend ceiling'));
+  cSpend.appendChild(el('div', 'hint',
+    'Hard stop per chat: when the engine-reported cost crosses the ceiling, CCE interrupts the chat. 0 or blank = off.'));
+  const spRow = el('div', 'inline');
+  const spIn = el('input');
+  spIn.type = 'number';
+  spIn.min = '0';
+  spIn.step = '0.5';
+  spIn.placeholder = 'USD per chat';
+  spIn.style.width = '130px';
+  spIn.value = String((state.settings && state.settings.spendCeilingUsd) || '');
+  const spSave = el('button', 'btn small', 'Save ceiling');
+  spSave.addEventListener('click', async () => {
+    const v = Number(spIn.value);
+    await saveSettings({ spendCeilingUsd: Number.isFinite(v) && v > 0 ? v : 0 });
+  });
+  spRow.append(spIn, spSave);
+  cSpend.appendChild(spRow);
+  body.appendChild(cSpend);
 }
 
 async function saveSettings(patch) {

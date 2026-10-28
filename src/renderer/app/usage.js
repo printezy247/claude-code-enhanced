@@ -23,6 +23,31 @@ export async function renderUsage() {
     + '  ·  cost reported by engine: $' + recent.toFixed(4)
     + '  (relay/local models often report no cost)');
   sum.appendChild(line);
+  // Per-model split (item 16): where the tokens actually went.
+  const mbox = $('#usage-models');
+  if (mbox) {
+    mbox.textContent = '';
+    const models = r.models || {};
+    const names = Object.keys(models);
+    if (names.length) {
+      const maxM = Math.max(...names.map((n) => models[n].tokens), 1);
+      mbox.appendChild(el('div', 'hint', 'By model:'));
+      for (const name of names) {
+        const m = models[name];
+        const row = el('div', 'usage-row');
+        row.appendChild(el('span', 'usage-day', name));
+        const bar = el('span', 'usage-bar');
+        const fill = el('i');
+        fill.style.width = ((m.tokens / maxM) * 100).toFixed(1) + '%';
+        bar.appendChild(fill);
+        row.appendChild(bar);
+        row.appendChild(el('span', 'usage-val', fmtTokShort(m.tokens)));
+        row.appendChild(el('span', 'usage-meta', '$' + m.cost.toFixed(4)));
+        row.title = name + '\ntokens ' + m.tokens.toLocaleString() + '\nengine-reported cost $' + m.cost.toFixed(4);
+        mbox.appendChild(row);
+      }
+    }
+  }
   if (!days.length) { box.appendChild(el('div', 'hint', 'No sessions found on this machine.')); return; }
   for (const d of days) {
     const row = el('div', 'usage-row');

@@ -2,6 +2,14 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.88
+- Added: codebase index — Settings → Codebase index builds a per-project symbol index (plain JSON on this machine, junk dirs skipped) and offers chats a `search_codebase` tool so the model finds definitions without reading files.
+- Added: usage by model — the Usage view now breaks tokens and engine-reported cost down per model, next to the daily bars.
+- Added: spend ceiling — Settings → Spend ceiling is a hard USD cap per chat that CCE enforces itself: when reported cost crosses it, the chat is interrupted once with a clear note.
+- Added: skills sync — the skills manager diffs disk against the last sync snapshot and drops enable/disable toggles for skills that no longer exist.
+- Added: auto-learn skills — opt-in probe (same approve-each-one flow as auto memory) that proposes a SKILL.md draft after a repeated workflow; nothing is written until you accept it.
+- Added: marketplace — Connectors → Marketplace lists a curated catalog: MCP entries install through the same connector path as the cards above (nothing downloaded), plugin entries just open their HTTPS page.
+
 ## 0.9.87
 - Added: engine tabs — Codex, Gemini CLI and OpenCode open as real terminal tabs (Board → Engine tabs, or Settings → Engine tabs to see what is installed). Detection is a PATH scan of the login shell; nothing is spawned until you open a tab.
 - Added: per-agent models — Settings → Agent models picks which model each subagent in `~/.claude/agents` runs; blank keeps the agent file's own default.

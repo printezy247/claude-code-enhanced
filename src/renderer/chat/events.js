@@ -3,7 +3,7 @@ import { elIcon, toast } from '../app/core.js';
 import { uiMode } from '../app/modes.js';
 import { autosize } from './composer.js';
 import { Chat } from './index.js';
-import { collectMemoryProbe, maybeProbeMemory, showPendingChip } from './panels.js';
+import { collectMemoryProbe, collectSkillProbe, maybeProbeMemory, maybeProbeSkill, showPendingChip } from './panels.js';
 import { clearElicitation, clearPermission, dropElicCard, showElicitation, showPermission } from './permissions.js';
 import { createSession, maybeNudge, pollContext, publishTabState } from './session.js';
 import { setBusy, setStatusLine } from './status.js';
@@ -195,6 +195,11 @@ export function handleEvent(evt) {
     chat.msgs.appendChild(el('div', 'sys-note', 'Stopped: ' + evt.limit + ' tool calls in a row with no file change (yolo mode). Send a new instruction to continue.'));
     toast('Yolo turn budget reached', 'err');
   }
+  else if (kind === 'cost-guard') {
+    chat.msgs.appendChild(el('div', 'sys-note', 'Stopped: this chat crossed its $' + Number(evt.limit).toFixed(2)
+      + ' spend ceiling (spent $' + Number(evt.spent).toFixed(2) + '). Raise the ceiling in Settings to continue.'));
+    toast('Spend ceiling reached', 'err');
+  }
   else if (kind === 'auto-unsupported') {
     chat.autoPolicy = true;
     chat.msgs.appendChild(el('div', 'sys-note', 'This model does not support auto mode. Using accept-edits plus CCE\'s own safe-command policy instead.'));
@@ -375,6 +380,9 @@ function handleMessage(chat, msg) {
       if (chat.memProbe) {
         chat.memProbe = false;
         collectMemoryProbe(chat, msg);
+      } else if (chat.skillProbe) {
+        chat.skillProbe = false;
+        collectSkillProbe(chat, msg);
       } else if (chat.compacting) {
         chat.compacting = false;
         const brief = String(msg.result || '').trim();
@@ -395,6 +403,7 @@ function handleMessage(chat, msg) {
         }
       } else if (msg.subtype === 'success' && !msg.is_error && (chat.results = (chat.results || 0) + 1) >= 3 && !chat.memProbed) {
         setTimeout(() => maybeProbeMemory(chat), 1500);   // auto-memory, opt-in, once per chat
+        setTimeout(() => maybeProbeSkill(chat), 2500);    // auto-learn skills, opt-in, once per chat
       } else if (msg.subtype === 'success' && !msg.is_error && maybeNudge(chat, msg)) {
         // nudged: the next turn starts by itself
       } else if (msg.subtype !== 'success' || msg.is_error) {

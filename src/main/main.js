@@ -55,6 +55,10 @@ const engines = require('./engines');
 const webremote = require('./webremote');
 const sshhosts = require('./sshhosts');
 const sdkoptions = require('./sdkoptions');
+const usageparse = require('./usageparse');
+const codeindex = require('./codeindex');
+const autolearn = require('./autolearn');
+const marketplace = require('./marketplace');
 const { startProxy, clearLastGoodModel } = require('./proxy');
 const { effortLevels, modelCaps } = require('./modelcontext');
 // Per-launch secret the translator proxy requires on every request. The proxy
@@ -1853,6 +1857,36 @@ function registerIpc() {
     const res = skilltoggle.setSkillEnabled(name, !!enabled);
     return { ok: true, ...res };
   });
+  // Skills sync (item 18): diff what is on disk against the last sync
+  // snapshot, and drop toggles for skills that were deleted — cce-disabled.json
+  // must not remember names that no longer exist.
+  handle('skills:sync', async () => {
+    const disk = skilltoggle.scanSkills().map((s) => String((s && s.name) || s));
+    const st = skilltoggle.readStore();
+    const r = skilltoggle.syncState({
+      onDisk: disk,
+      snapshot: Array.isArray(st.snapshot) ? st.snapshot : [],
+      disabled: st.skills,
+    });
+    skilltoggle.writeStore({ skills: r.disabledAfter, agents: st.agents, snapshot: r.snapshot });
+    return { ok: true, ...r };
+  });
+  // Auto-learn skills (item 19): probe prompt, proposals from the model, and
+  // the pending queue. A skill file is only written when you accept it.
+  const autoLearn = autolearn.createAutoLearn({
+    skillsDir: path.join(process.env.HOME || os.homedir(), '.claude', 'skills'),
+    storeFile: path.join(app.getPath('userData'), 'autolearn-pending.json'),
+  });
+  handle('skills:autolearn-prompt', async () => ({ ok: true, prompt: autolearn.PROBE_PROMPT }));
+  handle('skills:autolearn-propose', async ({ text }) => ({
+    ok: true,
+    queued: autoLearn.addPending(autolearn.parseProposals(String(text || ''))),
+  }));
+  handle('skills:autolearn-pending', async () => ({ ok: true, pending: autoLearn.listPending() }));
+  handle('skills:autolearn-resolve', async ({ name, accept }) => ({
+    ok: true,
+    ...(await autoLearn.resolve(String(name || ''), !!accept)),
+  }));
   // The plugin manager: a DXT/MCPB archive is verified (manifest, then
   // signature) before anything is installed or registered. #p7-plugins
   const plugins = require('./plugins');
@@ -2417,6 +2451,33 @@ function registerIpc() {
     return { ok: true };
   });
   // Background jobs: queue, list, cancel. Done/failed jobs notify. #feat-jobs
+  // Codebase index (item 15): build/search/status for the current project.
+  // The stored index is JSON per cwd; nothing leaves the machine.
+  const projIndex = codeindex.shared();
+  const idxDir = (cwd) => String(cwd || store.settings.defaultCwd || os.homedir());
+  handle('codeindex:build', async ({ cwd }) => ({ ok: true, ...(await projIndex.build(idxDir(cwd))) }));
+  handle('codeindex:status', async ({ cwd }) => ({ ok: true, ...projIndex.status(idxDir(cwd)) }));
+  handle('codeindex:search', async ({ cwd, query }) => ({
+    ok: true,
+    hits: projIndex.search(idxDir(cwd), String(query || '')),
+  }));
+
+  // Marketplace (item 20): a curated catalog. MCP entries install through the
+  // exact connector path the Connectors view uses (nothing downloaded); plugin
+  // entries open their HTTPS page — unpacking stays local-file-only in plugins.js.
+  handle('marketplace:list', async () => ({ ok: true, entries: marketplace.list() }));
+  handle('marketplace:install', async ({ id }) => marketplace.install(String(id || ''), {
+    addConnector: async (cfg) => {
+      if (cfg.preset) {
+        const preset = connectors.PRESETS.find((p) => p.id === cfg.preset);
+        if (!preset) throw new Error('unknown preset: ' + cfg.preset);
+        return connectors.add(claudePath(), { preset, scope: 'user' });
+      }
+      return connectors.addCustom(claudePath(), { name: cfg.name, url: cfg.url, scope: 'user' });
+    },
+    openExternal: (url) => shell.openExternal(String(url)),
+  }));
+
   jobQueue.on('update', (job) => {
     if (job.state === 'done' || job.state === 'failed') {
       notify('Background job ' + (job.state === 'done' ? 'finished' : 'failed'),
@@ -2536,6 +2597,7 @@ function registerIpc() {
     files.sort((a, b) => b.mtime - a.mtime);
 
     const days = new Map();
+    const models = new Map();
     let total = 0, counted = 0;
     const slice = files.slice(0, 500);
     for (let i = 0; i < slice.length; i++) {
@@ -2552,31 +2614,24 @@ function registerIpc() {
           text = buf.toString('utf8');
         } finally { fs.closeSync(fd); }
       } catch { continue; }
-      let inTok = 0, outTok = 0, msgs = 0, cost = 0;
-      for (const line of text.split('\n')) {
-        if (line.includes('"type":"assistant"')) {
-          try {
-            const j = JSON.parse(line);
-            const u = (j.message && j.message.usage) || {};
-            inTok += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-            outTok += u.output_tokens || 0;
-            msgs++;
-          } catch { /* partial line */ }
-        } else if (line.includes('total_cost_usd')) {
-          const m = line.match(/"total_cost_usd":\s*([\d.eE+-]+)/);
-          if (m) cost += Number(m[1]) || 0;
-        }
-      }
-      if (!msgs) continue;
+      // Line parsing lives in usageparse.js so the per-model split is unit-tested.
+      const r = usageparse.parseTranscript(text);
+      if (!r.msgs) continue;
       const day = new Date(f.mtime).toISOString().slice(0, 10);
       const d = days.get(day) || { day, cost: 0, sessions: 0, turns: 0, tokens: 0 };
-      d.cost += cost; d.sessions += 1; d.turns += msgs; d.tokens += inTok + outTok;
+      d.cost += r.cost; d.sessions += 1; d.turns += r.msgs; d.tokens += r.inTok + r.outTok;
       days.set(day, d);
-      total += cost;
+      total += r.cost;
+      for (const [name, m] of Object.entries(r.models)) {
+        const acc = models.get(name) || { tokens: 0, cost: 0 };
+        acc.tokens += m.tokens; acc.cost += m.cost;
+        models.set(name, acc);
+      }
       counted++;
     }
     const list = [...days.values()].sort((a, b) => (a.day < b.day ? 1 : -1)).slice(0, 45);
-    return { days: list, total, sessions: counted };
+    const modelsOut = Object.fromEntries([...models].sort((a, b) => b[1].tokens - a[1].tokens));
+    return { days: list, total, sessions: counted, models: modelsOut };
   });
 
 

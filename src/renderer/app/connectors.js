@@ -284,6 +284,44 @@ export async function renderConnectors() {
   crow.appendChild(cadd);
   custom.appendChild(crow);
   grid.appendChild(custom);
+
+  await renderMarketplace();
+}
+
+// Marketplace (item 20): the curated catalog. MCP entries install through the
+// same connector path as the cards above; plugin entries open their HTTPS page
+// (main process does the opening — the renderer never fetches anything).
+async function renderMarketplace() {
+  const box = $('#marketplace-grid');
+  if (!box) return;
+  box.textContent = 'loading…';
+  const r = await ccx.invoke('marketplace:list');
+  box.textContent = '';
+  if (!r || !r.ok) { box.appendChild(el('div', 'hint', 'Catalog unavailable: ' + ((r && r.error) || 'unknown error'))); return; }
+  for (const entry of (r.entries || [])) {
+    const card = el('div', 'card');
+    const head = el('h4');
+    head.appendChild(el('span', '', entry.name));
+    head.appendChild(el('span', 'chip ' + (entry.kind === 'mcp' ? 'kind-stdio' : 'kind-oauth'), entry.kind));
+    card.appendChild(head);
+    card.appendChild(el('div', 'blurb', entry.blurb));
+    if (entry.mcp && entry.mcp.url) card.appendChild(el('div', 'meta', entry.mcp.url));
+    if (entry.kind === 'plugin') card.appendChild(el('div', 'meta', entry.url));
+    const row = el('div', 'row');
+    const btn = el('button', 'btn small', entry.kind === 'mcp' ? 'Add connector' : 'Open page');
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      const ir = await ccx.invoke('marketplace:install', { id: entry.id });
+      btn.disabled = false;
+      if (ir && ir.ok) {
+        toast(entry.kind === 'mcp' ? 'Added ' + entry.name : 'Opened ' + entry.url, 'ok');
+        if (entry.kind === 'mcp') refreshMcpList();
+      } else toast((ir && ir.error) || 'Install failed', 'err');
+    });
+    row.appendChild(btn);
+    card.appendChild(row);
+    box.appendChild(card);
+  }
 }
 
 export async function refreshMcpList() {
