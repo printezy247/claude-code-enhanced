@@ -2093,7 +2093,8 @@ function appendPromptFor(tools, disallowed) {
   const parts = [];
   const todo = ['TodoWrite', 'TaskCreate'].filter(has);
   if (todo.length) {
-    const names = !Array.isArray(tools) ? 'TodoWrite (or TaskCreate/TaskUpdate)' : todo.join(' or ');
+    // Default tool set: newer engines only offer TaskCreate/TaskUpdate, older ones only TodoWrite.
+    const names = !Array.isArray(tools) ? 'TaskCreate/TaskUpdate, or TodoWrite if that is the tool you have (if one says "No such tool", use the other)' : todo.join(' or ');
     parts.push('For multi-step requests, keep a todo list with ' + names + ', update it when the user steers, and mark items completed as soon as they are done.');
   }
   parts.push('When the task is to change something, read the directly relevant code, then make the change and verify it; do not keep exploring. '
