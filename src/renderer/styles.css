@@ -1810,3 +1810,9 @@ body.ov-resizing { user-select: none; cursor: col-resize; }
 .home-folder-path { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .home-none { color: var(--muted); font-size: 13px; text-align: center; }
 .think-hidden .think-pill { font-style: italic; }
+
+/* ===== Conversations list, first run (#phase2) ===== */
+.convo-empty-illus { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 22px 10px; text-align: center; }
+.convo-empty-icon { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: var(--bg3); border: 1px solid var(--border); color: var(--accent); }
+.convo-empty-title { font-weight: 600; color: var(--text); }
+.convo-empty-illus .btn { margin-top: 6px; }
