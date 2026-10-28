@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.83
+- Added: the home page offers "Reopen N chats from last time": the chats open when the app last stopped (quit or crash), resumed by session id.
+- Changed: a failed send says the cause and what to do (sign-in failed, out of credit or quota, rate limit, provider overloaded, model not available, request too large), with the engine's code and the provider's words after it. It used to show only the code.
+- Added: regression tests that the loop guard does not stop an ordinary edit-and-test cycle (it still stops the same run repeated with nothing changed), and that closing or switching a chat's provider aborts its engine process.
+
 ## 0.9.82
 - Changed: Monaco (the 4.6 MB diff editor and code-colour bundle) is no longer parsed on every start. It loads the first time a diff or code block needs it; a diff shows "loading diff…" for that moment, and falls back to the text diff when the bundle is missing.
 - Changed: the Overview's connector status is cached for 30 s (was 10 s). Refresh and a reconnect still clear it at once.
