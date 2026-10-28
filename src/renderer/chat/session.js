@@ -2,7 +2,7 @@
 import { $, paintDeclaredIcons, state, toast } from '../app/core.js';
 import { fillModeSelect, uiMode } from '../app/modes.js';
 import { switchView } from '../app/tabs.js';
-import { addFileRef, applyAt, applyAttachedFiles, attachFiles, autosize, clearImages, maybeAt, persistPending, readImageFile, renderImageChips, renderQueued, restoreUnsent } from './composer.js';
+import { addFileRef, applyAt, applyAttachedFiles, attachFiles, autosize, clearImages, maybeAt, restoreDraftImages, persistPending, readImageFile, renderImageChips, renderQueued, restoreUnsent } from './composer.js';
 import { Chat } from './index.js';
 import { enhanceMarkdown, wireRunMenu } from './markdown.js';
 import { renderProjectInfo, wireHeaderMenu } from './panels.js';
@@ -165,6 +165,7 @@ export async function createSession(opts) {
       .map((m) => (typeof m === 'string' ? m : (m && m.text) || '')).filter(Boolean);
     if (p.length) { chat.pendingMsgs = p; renderQueued(chat); }
   } catch { /* ignore */ }
+  restoreDraftImages(chat);
   // The nav badge counts every open tab, chat tabs included.
   if (typeof window.updateTabCount === 'function') window.updateTabCount();
 

@@ -148,6 +148,32 @@ export function renderImageChips(chat) {
     chip.appendChild(x);
     chat.imgs.appendChild(chip);
   });
+  persistImages(chat);
+}
+
+/**
+ * Keep the pasted images of an unsent message across a crash. They go to the
+ * main process (0600 files), never to localStorage. Coalesced so a paste of
+ * several screenshots is one write.
+ */
+function persistImages(chat) {
+  if (chat.restoringImages) return;
+  clearTimeout(chat.imgSaveTimer);
+  chat.imgSaveTimer = setTimeout(() => {
+    ccx.invoke('draft:images', { op: 'save', key: chat.cwd || '', images: chat.pendingImages || [] }).catch(() => {});
+  }, 300);
+}
+
+/** Put back the images an unsent message had when the app last stopped. */
+export async function restoreDraftImages(chat) {
+  try {
+    const r = await ccx.invoke('draft:images', { op: 'load', key: chat.cwd || '' });
+    const imgs = (r && r.images) || [];
+    if (!imgs.length || chat.pendingImages.length) return;
+    chat.restoringImages = true;
+    chat.pendingImages.push(...imgs);
+    renderImageChips(chat);
+  } catch { /* nothing to restore */ } finally { chat.restoringImages = false; }
 }
 
 export function clearImages(chat) { chat.pendingImages = []; renderImageChips(chat); }

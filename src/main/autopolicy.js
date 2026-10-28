@@ -65,8 +65,86 @@ const SENSITIVE = new RegExp([
 function isSensitivePath(text) {
   return SENSITIVE.test(String(text || ''));
 }
-/** Anything that redirects, substitutes, backgrounds (a lone &) or spans lines. */
-const FORBIDDEN_SHELL = /[`<>&\n\r]|\$\(|\$\{|\$[A-Za-z_]/;
+/**
+ * Read a command line the way the shell would, far enough to judge it: split
+ * into segments on `;`, `|`, `||` and `&&` outside quotes, and each segment
+ * into words with the quotes and escapes removed. A text split let quoting
+ * hide what the shell sees (`sed '-i'` is `sed -i`; `".e""nv"` is `.env`).
+ * Anything that redirects, substitutes, expands a variable, backgrounds (a
+ * lone &), opens a subshell, spans lines or leaves a quote open is refused
+ * (ok: false): auto mode then asks instead.
+ * @returns {{ok: boolean, segments?: string[][], globs?: string[]}}
+ */
+function splitShell(line) {
+  const no = { ok: false };
+  const segments = [];
+  const globs = [];
+  let words = [];
+  let word = '';
+  let inWord = false;
+  let glob = false;
+  const endWord = () => {
+    if (inWord) { words.push(word); if (glob) globs.push(word); }
+    word = ''; inWord = false; glob = false;
+  };
+  const endSeg = () => { endWord(); if (!words.length) return false; segments.push(words); words = []; return true; };
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    const n = line[i + 1];
+    if (c === "'") {
+      const j = line.indexOf("'", i + 1);
+      if (j < 0) return no;
+      word += line.slice(i + 1, j); inWord = true; i = j;
+    } else if (c === '"') {
+      let j = i + 1;
+      for (; j < line.length && line[j] !== '"'; j++) {
+        const d = line[j];
+        if (d === '`' || d === '\n' || d === '\r') return no;
+        if (d === '$' && j + 1 < line.length && /[A-Za-z_({0-9@*#?!$-]/.test(line[j + 1])) return no;
+        if (d === '\\' && j + 1 < line.length) {
+          const e = line[j + 1];
+          if ('$`"\\'.includes(e)) { word += e; j++; continue; }
+        }
+        word += d;
+      }
+      if (j >= line.length) return no;
+      inWord = true; i = j;
+    } else if (c === '\\') {
+      if (n === undefined || n === '\n' || n === '\r') return no;
+      word += n; inWord = true; i++;
+    } else if (c === ' ' || c === '\t') {
+      endWord();
+    } else if (c === ';') {
+      if (!endSeg()) return no;
+    } else if (c === '|') {
+      if (!endSeg()) return no;
+      if (n === '|') i++;
+    } else if (c === '&') {
+      if (n !== '&' || !endSeg()) return no;
+      i++;
+    } else if ('<>`()\n\r{}'.includes(c)) {
+      return no;
+    } else if (c === '$') {
+      if (n !== undefined && n !== ' ' && n !== '\t') return no;
+      word += c; inWord = true;
+    } else {
+      if (c === '*' || c === '?' || c === '[') glob = true;
+      word += c; inWord = true;
+    }
+  }
+  if (!endSeg()) return no;
+  return { ok: true, segments, globs };
+}
+
+/**
+ * A glob is fine inside the working folder (`src/*.js`); one that can reach
+ * a hidden file, the home folder, an absolute path or the parent is not:
+ * `.e*` matches `.env` without ever spelling it.
+ */
+function globIsLocal(word) {
+  if (word.startsWith('~') || word.startsWith('/')) return false;
+  return word.split('/').every((part) => part !== '..' && !part.startsWith('.'));
+}
 
 /** Short-flag clusters: does `-aLo` carry the letter? (`--long` options never match.) */
 const hasShort = (tok, letters) => new RegExp('^-(?!-)[A-Za-z]*[' + letters + ']').test(tok);
@@ -180,11 +258,16 @@ function segmentIsSafe(segment) {
 function isSafeBash(command, opts = {}) {
   const line = String(command || '').trim();
   if (!line || line.length > 400) return false;
-  // `&&` chains are allowed (each part is checked); any other `&` is not.
-  if (FORBIDDEN_SHELL.test(line.replace(/&&/g, ';'))) return false;
-  // Split on the operators that chain commands; every part must be safe.
+  const parsed = splitShell(line);
+  if (!parsed.ok) return false;
+  if (!parsed.globs.every(globIsLocal)) return false;
+  // Every chained part must be safe, judged on the words the shell will see.
   const medium = !!(opts && opts.cwd);
-  return line.split(/\|\||&&|;|\|/).every((seg) => segmentIsSafe(seg) || (medium && segmentIsLocal(seg, opts.cwd)));
+  return parsed.segments.every((words) => {
+    const seg = words.join(' ');
+    if (words.some((w) => SENSITIVE.test(w)) || SENSITIVE.test(seg)) return false;
+    return segmentIsSafe(seg) || (medium && segmentIsLocal(seg, opts.cwd));
+  });
 }
 
 /** Should CCE's auto policy approve this tool call without asking? */
@@ -198,4 +281,4 @@ function autoAllows(toolName, input, opts = {}) {
   return false;
 }
 
-module.exports = { autoAllows, isSafeBash, isSensitivePath, SAFE_TOOLS };
+module.exports = { autoAllows, isSafeBash, isSensitivePath, splitShell, SAFE_TOOLS };
