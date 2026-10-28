@@ -2,6 +2,12 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.80
+- Fixed: a connector tool whose schema points into its own definitions (`$ref` to `$defs`/`definitions`) was sent with the pointer but without the definitions, which vLLM's guided decoding and Gemini reject. Local references are now filled in; a recursive or unknown one becomes an open schema.
+- Fixed: an image over 5 MB (a large screenshot a tool returned) made the provider refuse the whole request. It is now sent as a short note, on every API format.
+- Changed: the translator proxy refuses a request over 96 MB with a 413 instead of buffering it without limit.
+- Added: regression tests for interleaved parallel tool calls from Qwen, GLM and Kimi, and for Mistral's 9-character tool ids round-tripping.
+
 ## 0.9.79
 - Fixed: a thought that streamed in was replaced by the finished message's empty copy, leaving only a "Thought for Xs" pill. The streamed text now stays, and a thought the provider kept to itself says "reasoning not shared by the provider" instead of showing an empty block.
 - Fixed: reasoning sent by OpenAI-format providers in `reasoning_text`, `thinking` or OpenRouter's `reasoning_details` was dropped. The proxy now reads every known field, streamed and not streamed.
