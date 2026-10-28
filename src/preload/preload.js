@@ -26,9 +26,21 @@ const INVOKE_CHANNELS = new Set([
   'chat:set-model', 'chat:set-provider', 'chat:set-mode', 'chat:effort', 'chat:effort-levels', 'chat:model-info', 'chat:context', 'chat:flags',
   'chat:mcp', 'chat:agents', 'chat:skills', 'chat:commands', 'chat:checkpoints',
   'chat:rewind', 'chat:export', 'chat:permission-answer', 'chat:elicit-answer', 'chat:stopTask',
-  'chat:supported-models', 'chats:index', 'chats:search',
+  'chat:supported-models', 'chats:index', 'chats:search', 'chats:board',
+  'jobs:list', 'jobs:add', 'jobs:cancel', 'pipeline:start',
+  'runs:interrupted', 'runs:ack',
   'session:create', 'session:list', 'session:resize', 'session:kill',
   'session:fork', 'session:rename', 'session:tag', 'session:subagents',
+  'engines:list',
+  'webremote:status', 'webremote:start', 'webremote:stop',
+  'sshhosts:list', 'sshhosts:save', 'sshhosts:delete',
+  'agents:models', 'agents:set-model',
+  // Phase 4 (items 15-20): codebase index, skills sync, auto-learn, marketplace
+  'codeindex:build', 'codeindex:status', 'codeindex:search',
+  'skills:sync',
+  'skills:autolearn-prompt', 'skills:autolearn-propose', 'skills:autolearn-pending', 'skills:autolearn-resolve',
+  'marketplace:list', 'marketplace:install',
+  'deeplink:pending', 'file:saveText',
   'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
   'file:read', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
   'git:status', 'git:cache-invalidate', 'project:files', 'project:scripts', 'skill:import',
@@ -83,5 +95,17 @@ contextBridge.exposeInMainWorld('ccx', {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('claude:detected', listener);
     return () => ipcRenderer.removeListener('claude:detected', listener);
+  },
+  // A cce:// link arrived: pull the pending one with deeplink:pending. #item-24
+  onDeepLink: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('deeplink', listener);
+    return () => ipcRenderer.removeListener('deeplink', listener);
+  },
+  // The machine came back from sleep: stale checks get re-run. #fix-resume
+  onAppResumed: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('app:resumed', listener);
+    return () => ipcRenderer.removeListener('app:resumed', listener);
   },
 });

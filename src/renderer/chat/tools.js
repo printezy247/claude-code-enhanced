@@ -5,7 +5,7 @@ import { openPlanViewer, updatePlanViewer } from './panels.js';
 import { noteToolOutcome } from './picker.js';
 import { hiddenThoughtNode, thoughtNode } from './stream.js';
 import { scrollDownSoft } from './transcript.js';
-import { el, md, splitThink, stripAnsi } from './util.js';
+import { el, md, splitThink, stripAnsi, thinkingText } from './util.js';
 
 /* ---------------- tool metadata ---------------- */
 
@@ -145,8 +145,10 @@ export function renderBlock(chat, block, parentId) {
     host.appendChild(w);
   } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
     // The text that streamed live wins over a final copy that left it out.
+    // A block that carries its summary in a `summary` field is not a thought
+    // the provider kept to itself. #feat-reasoning-summaries
     const streamed = chat.streamedThoughts?.get(parentId || 'main')?.shift();
-    const text = block.thinking || streamed || '';
+    const text = block.thinking || streamed || thinkingText(block) || '';
     host.appendChild(text ? thoughtNode(text) : hiddenThoughtNode());
   } else if (block.type === 'tool_use') {
     // Group long runs of read-only lookups into one collapsible row, the way

@@ -1,6 +1,7 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
-import { $, applyTheme, el, state, toast } from './core.js';
+import { $, applyTheme, applyThinkingDisplay, el, state, toast } from './core.js';
 import { updateStatusbar } from './tabs.js';
+import { LOCALES, applyLang, getLang, setLang, t } from '../i18n.js';
 
 /* ================= settings view ================= */
 
@@ -253,7 +254,7 @@ export function renderSettings() {
   const st = el('label', 'check');
   const stc = el('input'); stc.type = 'checkbox'; stc.checked = s.showThinking !== false;
   st.appendChild(stc);
-  st.appendChild(el('span', '', 'Show thinking (ask Claude models for thinking summaries)'));
+  st.appendChild(el('span', '', 'Show thinking (reasoning summaries in chat; Claude models are asked for their summaries when on)'));
   c5.appendChild(st);
   body.appendChild(c5);
 
@@ -269,7 +270,9 @@ export function renderSettings() {
     upBtn.disabled = false;
     if (!r.ok) { upState.textContent = r.error; return; }
     if (!r.latest) { upState.textContent = 'v' + r.current + ' · ' + r.note; return; }
-    const newer = r.latest !== r.current;
+    // Numeric compare from the main process (item 25) — string order would
+    // call 0.9.10 older than 0.9.9.
+    const newer = typeof r.updateAvailable === 'boolean' ? r.updateAvailable : r.latest !== r.current;
     upState.textContent = newer
       ? 'v' + r.current + ' → v' + r.latest + ' available'
       : 'v' + r.current + ' is the latest release';
@@ -434,12 +437,225 @@ export function renderSettings() {
     }
   });
   body.appendChild(saveBtn);
+  renderRemoteCards(body);
+  renderIndexGuardCards(body);
+  renderLangCard(body);
+}
+
+// Translations (item 26): pick the interface language; nav labels carry
+// data-i18n and re-translate the moment this changes.
+function renderLangCard(body) {
+  const card = el('div', 'settings-card');
+  card.appendChild(el('h4', '', t('set.language')));
+  card.appendChild(el('div', 'hint', t('set.hint.language')));
+  const row = el('div', 'inline');
+  const sel = el('select');
+  const NAMES = { en: 'English', es: 'Español', de: 'Deutsch' };
+  for (const code of LOCALES) {
+    const o = el('option', '', NAMES[code] || code);
+    o.value = code;
+    sel.appendChild(o);
+  }
+  sel.value = getLang();
+  sel.setAttribute('aria-label', t('set.language'));
+  sel.addEventListener('change', async () => {
+    setLang(sel.value);
+    await saveSettings({ lang: sel.value });
+    applyLang();
+  });
+  row.appendChild(sel);
+  card.appendChild(row);
+  body.appendChild(card);
+}
+
+/**
+ * Phase 3 cards (items 11-14): engine tabs, SSH hosts, per-agent models and
+ * the mobile/web remote with its pairing QR.
+ */
+function renderRemoteCards(body) {
+  // Engine tabs
+  const cEng = el('div', 'settings-card');
+  cEng.appendChild(el('h4', '', 'Engine tabs'));
+  cEng.appendChild(el('div', 'hint', 'Codex, Gemini CLI and OpenCode open as terminal tabs from the Board when installed.'));
+  const engList = el('div');
+  cEng.appendChild(engList);
+  body.appendChild(cEng);
+  ccx.invoke('engines:list').then((r) => {
+    const list = (r && r.ok && r.engines) || [];
+    engList.textContent = '';
+    for (const e of list) {
+      const row = el('div', 'inline');
+      row.appendChild(el('span', 'chip ' + (e.found ? 'mcp-ok' : 'mcp-off'), e.found ? 'installed' : 'missing'));
+      row.appendChild(el('b', '', e.label));
+      row.appendChild(el('span', 'hint', e.found ? (e.version || e.path) : (e.hint || '')));
+      engList.appendChild(row);
+    }
+  });
+
+  // SSH hosts
+  const cSsh = el('div', 'settings-card');
+  cSsh.appendChild(el('h4', '', 'SSH hosts'));
+  cSsh.appendChild(el('div', 'hint', 'Remember a machine and open a real ssh terminal tab. Keys/agent only — passwords are never stored.'));
+  const sshList = el('div');
+  cSsh.appendChild(sshList);
+  const sshForm = el('div', 'inline');
+  const mk = (ph, w) => { const i = el('input'); i.type = 'text'; i.placeholder = ph; if (w) i.style.width = w; return i; };
+  const sshLabel = mk('label', '90px'); const sshHost = mk('host', '140px');
+  const sshUser = mk('user', '80px'); const sshPort = mk('port', '50px'); const sshIdent = mk('identity file (optional)');
+  const sshAdd = el('button', 'btn small', 'Add');
+  sshForm.append(sshLabel, sshHost, sshUser, sshPort, sshIdent, sshAdd);
+  cSsh.appendChild(sshForm);
+  body.appendChild(cSsh);
+  const refreshSsh = async () => {
+    const r = await ccx.invoke('sshhosts:list');
+    const hosts = (r && r.ok && r.hosts) || [];
+    sshList.textContent = '';
+    for (const h of hosts) {
+      const row = el('div', 'inline');
+      row.appendChild(el('b', '', h.label));
+      row.appendChild(el('span', 'hint', (h.user ? h.user + '@' : '') + h.host + (h.port && h.port !== 22 ? ':' + h.port : '')));
+      const open = el('button', 'btn small', 'Terminal');
+      open.addEventListener('click', () => window.createSession({ type: 'ssh', hostId: h.id }).catch((e) => toast(String(e && e.message || e), 'err')));
+      const del = el('button', 'btn small danger', 'Remove');
+      del.addEventListener('click', async () => { await ccx.invoke('sshhosts:delete', { id: h.id }); refreshSsh(); });
+      row.append(open, del);
+      sshList.appendChild(row);
+    }
+    if (!hosts.length) sshList.appendChild(el('div', 'hint', 'No hosts yet.'));
+  };
+  refreshSsh();
+  sshAdd.addEventListener('click', async () => {
+    const r = await ccx.invoke('sshhosts:save', { host: {
+      label: sshLabel.value.trim(), host: sshHost.value.trim(), user: sshUser.value.trim(),
+      port: sshPort.value.trim(), identity: sshIdent.value.trim(),
+    } });
+    if (r.ok) { sshLabel.value = sshHost.value = sshUser.value = sshPort.value = sshIdent.value = ''; refreshSsh(); toast('Host saved', 'ok'); }
+    else toast(r.error, 'err');
+  });
+
+  // Agent models
+  const cAg = el('div', 'settings-card');
+  cAg.appendChild(el('h4', '', 'Agent models'));
+  cAg.appendChild(el('div', 'hint', 'Which model each subagent runs. Blank = the agent file’s own default.'));
+  const agList = el('div');
+  cAg.appendChild(agList);
+  body.appendChild(cAg);
+  ccx.invoke('agents:models').then(async (r) => {
+    const agents = (r && r.ok && r.agents) || [];
+    const overrides = (r && r.ok && r.overrides) || {};
+    agList.textContent = '';
+    if (!agents.length) agList.appendChild(el('div', 'hint', 'No custom agents found in ~/.claude/agents or the project.'));
+    for (const name of agents) {
+      const row = el('div', 'inline');
+      row.appendChild(el('b', '', name));
+      const inp = el('input'); inp.type = 'text'; inp.placeholder = 'model id'; inp.style.width = '200px';
+      inp.value = overrides[name] || '';
+      const save = el('button', 'btn small', 'Save');
+      save.addEventListener('click', async () => {
+        const res = await ccx.invoke('agents:set-model', { name, model: inp.value.trim() });
+        if (res.ok) toast('Agent model saved', 'ok'); else toast(res.error, 'err');
+      });
+      row.append(inp, save);
+      agList.appendChild(row);
+    }
+  });
+
+  // Mobile access
+  const cMob = el('div', 'settings-card');
+  cMob.appendChild(el('h4', '', 'Mobile access'));
+  cMob.appendChild(el('div', 'hint', 'A local web remote: scan the QR (or open the URL) to watch chats, answer permission prompts and send messages. Loopback only.'));
+  const mobRow = el('div', 'inline');
+  const mobBtn = el('button', 'btn small', 'Start');
+  const mobUrl = el('span', 'hint mono');
+  const mobQr = el('div');
+  mobQr.style.marginTop = '8px';
+  mobRow.append(mobBtn, mobUrl);
+  cMob.append(mobRow, mobQr);
+  body.appendChild(cMob);
+  const mobPaint = (st) => {
+    mobBtn.textContent = st.running ? 'Stop' : 'Start';
+    mobUrl.textContent = st.running ? st.url : '';
+    mobQr.textContent = '';
+    if (st.running && st.qr) {
+      const box = el('div');
+      box.innerHTML = st.qr;   // qrcode's own SVG, generated in main
+      const svg = box.querySelector('svg');
+      if (svg) { svg.setAttribute('width', '160'); svg.setAttribute('height', '160'); mobQr.appendChild(svg); }
+    }
+  };
+  ccx.invoke('webremote:status').then((st) => mobPaint(st && st.ok ? st : { running: false }));
+  mobBtn.addEventListener('click', async () => {
+    mobBtn.disabled = true;
+    const st = await ccx.invoke(mobBtn.textContent === 'Start' ? 'webremote:start' : 'webremote:stop');
+    mobBtn.disabled = false;
+    if (st.ok) mobPaint(st); else toast(st.error, 'err');
+  });
+}
+
+// Index + spend ceiling (items 15 and 17): the two gates that keep a chat
+// from reading files it does not need and from running up a bill.
+function renderIndexGuardCards(body) {
+  const cIdx = el('div', 'settings-card');
+  cIdx.appendChild(el('h4', '', 'Codebase index'));
+  cIdx.appendChild(el('div', 'hint',
+    'Gives every chat a search_codebase tool: symbol lookup from a stored index instead of reading files. The index is plain JSON on this machine.'));
+  const idxRow = el('div', 'inline');
+  const idxCb = el('input');
+  idxCb.type = 'checkbox';
+  idxCb.checked = !!(state.settings && state.settings.codebaseIndex);
+  idxCb.addEventListener('change', () => saveSettings({ codebaseIndex: idxCb.checked }));
+  idxRow.appendChild(idxCb);
+  idxRow.appendChild(el('span', '', ' Offer search_codebase to chats'));
+  const idxBtn = el('button', 'btn small', 'Build index now');
+  const idxStat = el('span', 'hint', '');
+  const cwd = () => (state.settings && state.settings.defaultCwd) || '';
+  const paintIdx = async () => {
+    const st = await ccx.invoke('codeindex:status', { cwd: cwd() });
+    idxStat.textContent = st && st.ok && st.built
+      ? st.files + ' files · ' + st.symbols + ' symbols'
+      : 'not built yet';
+  };
+  idxBtn.addEventListener('click', async () => {
+    idxBtn.disabled = true;
+    idxBtn.textContent = 'Indexing…';
+    const r = await ccx.invoke('codeindex:build', { cwd: cwd() });
+    idxBtn.disabled = false;
+    idxBtn.textContent = 'Build index now';
+    if (r && r.ok) { toast('Indexed ' + r.files + ' files (' + r.symbols + ' symbols)', 'ok'); paintIdx(); }
+    else toast((r && r.error) || 'Index failed', 'err');
+  });
+  idxRow.append(idxBtn, idxStat);
+  cIdx.appendChild(idxRow);
+  paintIdx();
+  body.appendChild(cIdx);
+
+  const cSpend = el('div', 'settings-card');
+  cSpend.appendChild(el('h4', '', 'Spend ceiling'));
+  cSpend.appendChild(el('div', 'hint',
+    'Hard stop per chat: when the engine-reported cost crosses the ceiling, CCE interrupts the chat. 0 or blank = off.'));
+  const spRow = el('div', 'inline');
+  const spIn = el('input');
+  spIn.type = 'number';
+  spIn.min = '0';
+  spIn.step = '0.5';
+  spIn.placeholder = 'USD per chat';
+  spIn.style.width = '130px';
+  spIn.value = String((state.settings && state.settings.spendCeilingUsd) || '');
+  const spSave = el('button', 'btn small', 'Save ceiling');
+  spSave.addEventListener('click', async () => {
+    const v = Number(spIn.value);
+    await saveSettings({ spendCeilingUsd: Number.isFinite(v) && v > 0 ? v : 0 });
+  });
+  spRow.append(spIn, spSave);
+  cSpend.appendChild(spRow);
+  body.appendChild(cSpend);
 }
 
 async function saveSettings(patch) {
   const r = await ccx.invoke('settings:set', { settings: patch });
   if (r.ok) {
     state.settings = r.settings;
+    applyThinkingDisplay();
     state.info = { ...state.info, claude: r.claude };
     renderClaudeBanner();
     updateStatusbar(state.sessions.get(state.activeId) || { provider: null, alive: true, cwd: '' });

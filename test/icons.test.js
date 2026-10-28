@@ -115,7 +115,7 @@ describe('declared icons are actually painted (#54)', () => {
   it('every nav icon becomes an inline SVG at boot', async () => {
     const h = await boot();
     const navIcons = [...h.window.document.querySelectorAll('.nav-btn .ico')];
-    expect(navIcons.length).toBe(5);
+    expect(navIcons.length).toBe(6);   // conversations, board, usage, providers, connectors, settings
     for (const span of navIcons) {
       const svg = span.querySelector('svg');
       expect(svg, 'unpainted icon in the nav').toBeTruthy();

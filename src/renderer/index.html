@@ -40,11 +40,12 @@
         <button class="icon-btn" id="qa-reopen" title="Reopen the last closed tab" aria-label="Reopen the last closed tab" disabled><span data-icon="undo"></span></button>
       </div>
       <nav id="nav" aria-label="Sections">
-        <button class="nav-btn active" data-view="conversations" aria-current="page"><span class="ico" data-icon="layers"></span><span>Conversations</span><span id="sess-count" class="badge" role="status" aria-live="polite" aria-label="open conversations">0</span></button>
-        <button class="nav-btn" data-view="usage"><span class="ico" data-icon="chart"></span><span>Usage</span></button>
-        <button class="nav-btn" data-view="providers"><span class="ico" data-icon="hex"></span><span>Providers</span></button>
-        <button class="nav-btn" data-view="connectors"><span class="ico" data-icon="plug2"></span><span>Connectors</span></button>
-        <button class="nav-btn" data-view="settings"><span class="ico" data-icon="gear"></span><span>Settings</span></button>
+        <button class="nav-btn active" data-view="conversations" aria-current="page"><span class="ico" data-icon="layers"></span><span data-i18n="nav.conversations">Conversations</span><span id="sess-count" class="badge" role="status" aria-live="polite" aria-label="open conversations">0</span></button>
+        <button class="nav-btn" data-view="board"><span class="ico" data-icon="flow"></span><span data-i18n="nav.board">Board</span></button>
+        <button class="nav-btn" data-view="usage"><span class="ico" data-icon="chart"></span><span data-i18n="nav.usage">Usage</span></button>
+        <button class="nav-btn" data-view="providers"><span class="ico" data-icon="hex"></span><span data-i18n="nav.providers">Providers</span></button>
+        <button class="nav-btn" data-view="connectors"><span class="ico" data-icon="plug2"></span><span data-i18n="nav.connectors">Connectors</span></button>
+        <button class="nav-btn" data-view="settings"><span class="ico" data-icon="gear"></span><span data-i18n="nav.settings">Settings</span></button>
       </nav>
       <!-- Open chats and terminals (what the tab bar used to be), then every past conversation. -->
       <div id="sb-open" class="sb-open hidden" role="list" aria-label="Open chats"></div>
@@ -88,7 +89,29 @@
           <code>total_cost_usd</code> — relay and local models usually report $0.
         </div>
         <div id="usage-summary" class="banner"></div>
+        <div id="usage-models"></div>
         <div id="usage-days"></div>
+      </section>
+
+      <section id="view-board" class="view">
+        <div class="panel-head">
+          <button class="btn ghost small back-home" data-back="conversations" aria-label="Back to Conversations" title="Back to Conversations">← Conversations</button>
+          <h2><span data-icon="flow"></span> Board</h2>
+          <button id="btn-board-refresh" class="btn"><span data-icon="refresh"></span> Refresh</button>
+        </div>
+        <div class="banner">
+          Every live chat with what it is doing, the background jobs, and any run that was cut short when CCE last stopped.
+        </div>
+        <h3>Live chats</h3>
+        <div id="board-chats"></div>
+        <h3>Engine tabs</h3>
+        <div id="board-engines"></div>
+        <h3>Background jobs</h3>
+        <div id="board-jobs"></div>
+        <div id="board-runs-wrap">
+          <h3>Interrupted runs</h3>
+          <div id="board-runs"></div>
+        </div>
       </section>
 
       <section id="view-providers" class="view">
@@ -122,6 +145,8 @@
           choose <b>Authenticate</b> — the browser flow is handled by claude itself.
         </div>
         <div id="connector-grid" class="card-grid"></div>
+        <div class="panel-head sub"><h3>Marketplace</h3></div>
+        <div id="marketplace-grid" class="card-grid"></div>
         <div class="panel-head sub"><h3>Your connectors</h3><button id="btn-mcp-refresh" class="btn">↻ Refresh</button></div>
         <div id="mcp-list" class="mcp-rows">Checking your connectors…</div>
       </section>
@@ -144,6 +169,7 @@
           <button class="split-tab" role="tab" data-kind="files" title="Project files"><span data-icon="folder"></span><span>Files</span></button>
           <button class="split-tab" role="tab" data-kind="terminal" title="Terminal in this folder"><span data-icon="terminal"></span><span>Terminal</span></button>
           <button class="split-tab" role="tab" data-kind="diff" title="Last edit diff"><span data-icon="pencil"></span><span>Diff</span></button>
+          <button class="split-tab" role="tab" data-kind="review" title="Review the working-tree diff"><span data-icon="branch"></span><span>Review</span></button>
           <button class="split-tab" role="tab" data-kind="preview" title="Preview a dev server"><span data-icon="globe"></span><span>Preview</span></button>
         </div>
         <span class="spacer"></span>
@@ -154,6 +180,7 @@
           <option value="files">Files</option>
           <option value="terminal">Terminal</option>
           <option value="diff">Last edit diff</option>
+          <option value="review">Review</option>
           <option value="preview">Preview</option>
         </select>
         <button class="icon-btn" id="btn-split-close" title="Close the tool panel (Alt+V)" aria-label="Close the tool panel"><span data-icon="close"></span></button>

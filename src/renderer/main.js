@@ -8,16 +8,18 @@
 // anything here runs.
 import { Chat } from './chat/index.js';
 import { ProvidersUI } from './providers/ui.js';
-import { refreshMcpList, renderConnectors } from './app/connectors.js';
+import { invalidateConnectorStatus, refreshMcpList, renderConnectors } from './app/connectors.js';
 import { ensureConvoDrop, loadConversationList, renderConversationList, renderOpenTabs, toggleConversations } from './app/conversations.js';
-import { $, applyTheme, elIcon, loadMonaco, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
+import { $, applyTheme, applyThinkingDisplay, elIcon, loadMonaco, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
 import { initSplitTabMenu, renderOverview, renderSplit, setAllOverviewCards, splitTerm, toggleOverview, toggleSplit } from './app/overview.js';
 import { openNewSessionModal, openProviderEditor } from './app/provider-forms.js';
 import { parseForceCtx, renderClaudeBanner, renderSettings } from './app/settings.js';
 import { activateSession, createSession, killSession, paintReopenButton, recentlyClosedCount, reopenLastClosed, resumeLatest, switchView, tabRegistry, toggleSidebar } from './app/tabs.js';
 import { initHome } from './app/home.js';
+import { renderBoard } from './app/board.js';
 import { renderUsage } from './app/usage.js';
 import { openNewWindow } from './app/window.js';
+import { applyLang, setLang } from './i18n.js';
 
 // What other scripts, the tests and the console reach for.
 Object.assign(window, {
@@ -48,10 +50,35 @@ function wireChrome() {
   $('#qa-reopen').addEventListener('click', reopenLastClosed);
   paintReopenButton();
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
+  $('#btn-board-refresh')?.addEventListener('click', () => renderBoard());
   $('#btn-add-provider').addEventListener('click', () => (window.ProvidersUI ? ProvidersUI.openConnect() : openProviderEditor(null)));
   $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);
   // (The per-dropdown wiring — search/sort/filter/refresh/close — lives in
   // ensureConvoDrop, which builds that markup. Nothing to wire here.)
+  // cce:// deep links (item 24): main pings, we pull the pending link. The
+  // boot pull catches a link that arrived before this listener existed.
+  const pullDeepLink = async () => {
+    try {
+      const r = await ccx.invoke('deeplink:pending');
+      const d = r && r.ok && r.link;
+      if (!d) return;
+      if (d.action === 'view') switchView(d.view);
+      else if (d.action === 'open') {
+        Chat.createSession({ cwd: d.path, providerUid: state.providers && state.providers.defaultUid })
+          .catch((e) => toast(String(e && e.message || e), 'err'));
+      } else if (d.action === 'chat') {
+        const idx = await ccx.invoke('chats:index');
+        const row = ((idx && idx.sessions) || []).find((s) => s && s.sessionId === d.id);
+        if (row) {
+          Chat.createSession({ cwd: row.cwd || undefined, resume: row.sessionId, providerUid: state.providers && state.providers.defaultUid })
+            .catch((e) => toast(String(e && e.message || e), 'err'));
+        } else toast('No conversation with id ' + d.id, 'err');
+      }
+    } catch { /* deep links are best effort */ }
+  };
+  if (typeof ccx.onDeepLink === 'function') ccx.onDeepLink(pullDeepLink);
+  pullDeepLink();
+
   $('#btn-split-close').addEventListener('click', () => toggleSplit(false));
   $('#split-kind')?.addEventListener('change', () => {
     renderSplit();
@@ -270,6 +297,9 @@ function wireChrome() {
   state.leanAllTools = (provAll.leanAllTools || settingsRes.leanAllTools || []);
   state.settings = settingsRes.settings;
   applyTheme(state.settings.theme);   // #47
+  applyThinkingDisplay();
+  setLang(state.settings.lang || 'en');   // item 26: stored language wins over en
+  applyLang();
   state.connectorPresets = connPresets.presets;
   state.booting = false;
 
@@ -286,6 +316,12 @@ function wireChrome() {
       ? `claude ${c.version}\nCCE v${state.info.appVersion} · Electron ${state.info.electron}`
       : `CCE v${state.info.appVersion} · Electron ${state.info.electron}`;
     renderClaudeBanner();
+  });
+  // Sleep made the last connector health check a guess: forget it and, if the
+  // connectors view is what the user is looking at, re-run the check. #fix-resume
+  if (ccx.onAppResumed) ccx.onAppResumed(() => {
+    invalidateConnectorStatus();
+    if (state.view === 'connectors') refreshMcpList();
   });
   if (window.__CCE_SMOKE) {
     setTimeout(() => console.log('[monaco]', !!(window.monaco && window.monaco.editor)), 3000);

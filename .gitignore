@@ -11,3 +11,6 @@ claude-code-enhanced/
 
 # Built from src/renderer/main.js by scripts/build-renderer.js
 src/renderer/app.bundle.js
+
+# Local playtest screenshots (evidence, not source)
+playtest/

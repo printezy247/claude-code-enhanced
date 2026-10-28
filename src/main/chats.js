@@ -5,6 +5,7 @@
 // and result frames with cost/usage.
 'use strict';
 const { classifyUserText } = require('../shared/usertext.js');
+const { thinkingText } = require('../shared/think.js');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -15,6 +16,7 @@ const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { compactToolOutput, toolResultText, clampMaxChars, FILTERED_TOOLS, clampIdleSeconds } = require('./toolfilter');
 const managedconfig = require('./managedconfig');
 const { createLoopGuard, createBudget } = require('./loopguard');
+const spendguard = require('./spendguard');
 const webdomains = require('./webdomains');
 const connectorauto = require('./connectorauto');
 const { absFor, shareablePath } = require('./fileshare');
@@ -224,7 +226,7 @@ function transcriptItems(records) {
     } else {
       for (const b of msg.content || []) {
         if (b.type === 'text' && b.text && b.text.trim()) items.push({ t: 'assistant', text: b.text });
-        else if (b.type === 'thinking' && b.thinking) items.push({ t: 'thinking', text: b.thinking });
+        else if (b.type === 'thinking' && thinkingText(b)) items.push({ t: 'thinking', text: thinkingText(b) });
         else if (b.type === 'tool_use') {
           const it = { t: 'tool', name: b.name, input: b.input || {} };
           items.push(it);
@@ -348,6 +350,29 @@ class ChatManager extends EventEmitter {
         tool('call_connector_tool', 'Call a tool of a connector. The host holds the connection details.',
           { server: z.string(), tool: z.string(), args: z.record(z.string(), z.unknown()).optional() },
           async ({ server, tool: name, args }) => this.hostMcp.callTool(chatId, server, name, args)),
+      ],
+    });
+  }
+
+  // The codebase index as an in-process MCP server: search_codebase returns
+  // symbol+path hits from the stored index (main process does the work, the
+  // model only ever sees the compact result).
+  async _codeIndexServer(dir) {
+    const { tool, createSdkMcpServer } = await loadSdk();
+    const { z } = require('zod');
+    const codeindex = require('./codeindex');
+    const idx = codeindex.shared();
+    const text = (t, isError) => ({ content: [{ type: 'text', text: t }], isError: !!isError });
+    return createSdkMcpServer({
+      name: 'cce_index',
+      version: '1.0.0',
+      tools: [
+        tool('search_codebase', 'Search this project\'s symbol index: returns files and line numbers where a symbol or path matches. Read the file afterwards only for the hits you need.',
+          { query: z.string() },
+          async ({ query }) => {
+            try { return text(JSON.stringify(idx.search(dir, String(query)))); }
+            catch (err) { return text(String((err && err.message) || err), true); }
+          }),
       ],
     });
   }
@@ -644,6 +669,11 @@ class ChatManager extends EventEmitter {
     if (this.hostMcp && settings && settings.hostConnectors) {
       options.mcpServers = { ...(options.mcpServers || {}), [hostmcp.HOST_SERVER]: await this._hostMcpServer(id) };
     }
+    // Codebase index (item 15): one in-process tool that answers "where is X"
+    // from the stored symbol index — no file reads, no ripgrep call needed.
+    if (settings && settings.codebaseIndex) {
+      options.mcpServers = { ...(options.mcpServers || {}), cce_index: await this._codeIndexServer(dir) };
+    }
     // Every CCE chat starts with the caveman (lite) voice, rtk command
     // compression and the superpowers skill set (brainstorming first) baked
     // into the engine's system prompt, so connector tools stay available. #feat-cce-bootstrap
@@ -898,6 +928,9 @@ class ChatManager extends EventEmitter {
       guard: createLoopGuard(),   // stops an agent that repeats itself
       // yolo never asks, so it gets a hard stop: N calls with no file change ends the turn (0 = off)
       budget: createBudget(Number.isFinite(Number(settings && settings.yoloBudget)) ? Number(settings.yoloBudget) : 80),
+      // Spend ceiling (item 17): CCE's own hard stop, fed by the cost each
+      // result frame reports. Off until a ceiling is set in Settings.
+      spend: spendguard.createSpendGuard({ limitUsd: Number(settings && settings.spendCeilingUsd) || 0 }),
       budgetTripped: false,
       written: new Set(),         // files the agent wrote: the only ones the UI may share
       settings: settings || {},
@@ -998,6 +1031,15 @@ class ChatManager extends EventEmitter {
             chat.budgetTripped = false;
             chat.guardTripped = false;
             chat.lastResult = msg;
+            // Spend ceiling: sum this result's cost, stop the chat once the
+            // whole session crosses it (trips once — no interrupt storms).
+            if (chat.spend && Number(msg.total_cost_usd) > 0) {
+              const g = chat.spend.add(Number(msg.total_cost_usd));
+              if (g.tripped) {
+                this.emit('event', id, { kind: 'cost-guard', spent: g.spent, limit: chat.spend.limit });
+                this.interrupt(id).catch(() => {});
+              }
+            }
             // Two prompts sent back to back: the first result is not the end.
             // Stay busy (Stop stays visible) until the queue drains.
             if (!(Number(msg.queued_turn_count) > 0)) {

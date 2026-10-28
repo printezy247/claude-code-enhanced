@@ -111,6 +111,19 @@ function agentDirs(dir) {
   return dirs;
 }
 
+/**
+ * Per-agent model overrides (item 12): { agentName: modelId }. Only named
+ * agents that exist get a model; blank values clear; the input is not mutated.
+ */
+function applyAgentModelOverrides(agents, overrides) {
+  const out = { ...agents };
+  for (const [name, model] of Object.entries(overrides || {})) {
+    const m = String(model || '').trim();
+    if (m && out[name] && typeof out[name] === 'object') out[name] = { ...out[name], model: m };
+  }
+  return out;
+}
+
 // ---- Option builders ---------------------------------------------------------
 
 function str(v) {
@@ -155,9 +168,11 @@ function buildSdkOptions({ settings = {}, dir = '', managed = null, mcpServers =
     out.strictMcpConfig = true;
   }
 
-  // Subagents, handed to the engine as definitions.
+  // Subagents, handed to the engine as definitions. Per-agent model overrides
+  // from settings decide which model each one runs (item 12).
   if (settings.sdkAgents === true) {
-    const agents = agentDefinitions(agentDirs(dir));
+    let agents = agentDefinitions(agentDirs(dir));
+    agents = applyAgentModelOverrides(agents, settings.agentModels);
     if (Object.keys(agents).length) out.agents = agents;
   }
   const mainAgent = str(settings.mainAgent);
@@ -303,6 +318,7 @@ module.exports = {
   agentDefinition,
   agentDefinitions,
   agentDirs,
+  applyAgentModelOverrides,
   buildSdkOptions,
   createFileSessionStore,
 };

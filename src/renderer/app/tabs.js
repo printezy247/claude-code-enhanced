@@ -1,4 +1,5 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
+import { renderBoard } from './board.js';
 import { connectorCheckedAt, connectorChecking, refreshMcpList, renderConnectors } from './connectors.js';
 import { renderOpenTabs } from './conversations.js';
 import { $, FitCtor, LinksCtor, TERM_THEME, TermCtor, el, elIcon, state, toast } from './core.js';
@@ -24,6 +25,7 @@ export function switchView(view) {
     const s = state.sessions.get(state.activeId);
     if (s) { s.fit && s.fit.fit(); s.term && s.term.focus(); }
   }
+  if (view === 'board') renderBoard();
   if (view === 'usage') renderUsage();
   if (view === 'providers') renderProviders();
   if (view === 'connectors') {

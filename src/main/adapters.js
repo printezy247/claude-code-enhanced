@@ -557,11 +557,26 @@ function buildResponsesInput(body, prov) {
   const topP = body.top_p != null ? body.top_p : samp.top_p;
   if (temp != null && caps.temperature !== false) req.temperature = temp;
   if (topP != null && caps.temperature !== false) req.top_p = topP;
-  if (caps.reasoning !== false && effortLevel(body)) req.reasoning = { effort: effortLevel(body) };
+  // Reasoning models return their reasoning as *summary* items — only when the
+  // request asks for them (`reasoning.summary`). Without it a GPT-5 / o-series
+  // turn shows "reasoning not shared by the provider" while the provider had
+  // summaries to give. #feat-reasoning-summaries
+  const effort = effortLevel(body);
+  if (caps.reasoning !== false && (effort || (body.thinking && body.thinking.budget_tokens > 0))) {
+    req.reasoning = { ...(effort ? { effort } : {}), summary: 'auto' };
+  }
   if (offersTools(body, caps)) {
     req.tools = body.tools.map(t => ({ type: 'function', name: t.name, description: t.description || '', parameters: sanitizeSchema(t.input_schema, 'openai') }));
   }
   return req;
+}
+
+/** The readable text of a Responses reasoning item's summary (or content). */
+function reasoningItemText(item) {
+  let out = '';
+  for (const s of (item && item.summary) || []) if (s && typeof s.text === 'string') out += s.text;
+  if (!out) for (const c of (item && item.content) || []) if (c && typeof c.text === 'string') out += c.text;
+  return out;
 }
 
 /** Translate a /responses SSE stream into OpenAI chat.completions chunks. */
@@ -570,6 +585,9 @@ async function* responsesChunks(upstream, model) {
   // that falls back to call #0 glued two calls' arguments together.
   const slot = new Map();
   const argsSeen = new Set();
+  // Items whose summary text already went out (streamed or whole): each
+  // summary is emitted exactly once. #feat-reasoning-summaries
+  const summarized = new Set();
   let n = 0;
   const chunk = (delta, extra = {}) => ({ id: nowId('resp'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta, ...extra }] });
   const slotOf = (ev) => {
@@ -587,6 +605,24 @@ async function* responsesChunks(upstream, model) {
     const type = ev.type || '';
     if (type === 'response.output_text.delta' && ev.delta) {
       yield chunk({ content: ev.delta });
+    } else if (type === 'response.reasoning_summary_text.delta' && ev.delta) {
+      // The reasoning summary OpenAI streams for o-series / GPT-5: the
+      // model's own summary of its thinking. #feat-reasoning-summaries
+      summarized.add(String(ev.item_id != null ? ev.item_id : ''));
+      yield chunk({ reasoning: ev.delta });
+    } else if (type === 'response.reasoning_summary_part.done' && ev.part && ev.part.text
+        && !summarized.has(String(ev.item_id != null ? ev.item_id : ''))) {
+      // A server that sends the summary only as a finished part.
+      summarized.add(String(ev.item_id != null ? ev.item_id : ''));
+      yield chunk({ reasoning: ev.part.text });
+    } else if (type === 'response.output_item.done' && ev.item && ev.item.type === 'reasoning') {
+      // Or only on the finished item. Never both: one summary, one emission.
+      const key = String(ev.item.id != null ? ev.item.id : '');
+      const summary = reasoningItemText(ev.item);
+      if (summary && !summarized.has(key)) {
+        summarized.add(key);
+        yield chunk({ reasoning: summary });
+      }
     } else if (type === 'response.output_item.added' && ev.item && ev.item.type === 'function_call') {
       const idx = open(ev.item, ev.output_index);
       yield chunk({ tool_calls: [{ index: idx, id: ev.item.call_id || ev.item.id, type: 'function', function: { name: ev.item.name, arguments: '' } }] });
@@ -643,15 +679,20 @@ function responsesToOpenAI(j, model) {
     return { error: { status: 502, message: String(e.message || e.code || 'the provider reported a failed response') } };
   }
   let text = '';
+  let reasoning = '';
   const toolCalls = [];
   for (const item of j.output || []) {
     if (item.type === 'message') {
       for (const c of item.content || []) if (c.type === 'output_text') text += c.text;
+    } else if (item.type === 'reasoning') {
+      // The summary the request asked for. #feat-reasoning-summaries
+      reasoning += reasoningItemText(item);
     } else if (item.type === 'function_call') {
       toolCalls.push({ id: item.call_id || item.id, type: 'function', function: { name: item.name, arguments: item.arguments || '{}' } });
     }
   }
   const msg = { role: 'assistant', content: text || null };
+  if (reasoning.trim()) msg.reasoning = reasoning.trim();
   if (toolCalls.length) msg.tool_calls = toolCalls;
   return {
     id: j.id || nowId('resp'), object: 'chat.completion', model,
@@ -743,10 +784,12 @@ function buildGeminiBody(body, prov) {
     const b = body.thinking && body.thinking.budget_tokens;
     const lvl = googleEffort({ ...body, thinking: undefined });
     if (caps.reasoning === false) { /* the model has no thinking to configure */ }
-    else if (b > 0) gen.thinkingConfig = { thinkingBudget: Math.min(b, 24576) };
-    else if (b == null && lvl && lvl !== 'none') gen.thinkingConfig = { thinkingLevel: lvl };
+    // includeThoughts asks for the thought summaries; without it Gemini
+    // thinks silently and the chat shows no reasoning. #feat-reasoning-summaries
+    else if (b > 0) gen.thinkingConfig = { thinkingBudget: Math.min(b, 24576), includeThoughts: true };
+    else if (b == null && lvl && lvl !== 'none') gen.thinkingConfig = { thinkingLevel: lvl, includeThoughts: true };
   } else if (caps.reasoning !== false && body.thinking && body.thinking.budget_tokens != null) {
-    gen.thinkingConfig = { thinkingBudget: body.thinking.budget_tokens };
+    gen.thinkingConfig = { thinkingBudget: body.thinking.budget_tokens, includeThoughts: true };
   }
   if (Array.isArray(body.stop_sequences) && body.stop_sequences.length) gen.stopSequences = body.stop_sequences;
   if (Object.keys(gen).length) req.generationConfig = gen;
@@ -793,7 +836,12 @@ async function* geminiChunks(upstream, model) {
     }
     const parts = (cand.content && cand.content.parts) || [];
     for (const p of parts) {
-      if (p.text) yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta: { content: p.text } }] };
+      if (p.text) {
+        // A thought part is Gemini's summary of its own reasoning: show it as
+        // thinking, not as the answer. #feat-reasoning-summaries
+        const delta = p.thought ? { reasoning: p.text } : { content: p.text };
+        yield { id: nowId('gem'), object: 'chat.completion.chunk', model, choices: [{ index: 0, delta }] };
+      }
       if (p.functionCall) {
         const idx = n++;
         const callId = 'call_' + idx + '_' + Date.now();
@@ -831,9 +879,11 @@ function geminiToOpenAI(j, model) {
   const cand = (j.candidates || [])[0] || {};
   const parts = (cand.content && cand.content.parts) || [];
   let text = '';
+  let reasoning = '';
   const toolCalls = [];
   for (const p of parts) {
-    if (p.text) text += p.text;
+    // Thought parts are reasoning summaries, not the answer. #feat-reasoning-summaries
+    if (p.text) { if (p.thought) reasoning += p.text; else text += p.text; }
     if (p.functionCall) {
       const id = 'call_' + toolCalls.length + '_' + Date.now();
       rememberSignature(id, p.thoughtSignature);
@@ -846,6 +896,7 @@ function geminiToOpenAI(j, model) {
   if (end.note) text += end.note;
   if (blocked) text += blocked;
   const msg = { role: 'assistant', content: text || null };
+  if (reasoning.trim()) msg.reasoning = reasoning.trim();
   if (toolCalls.length) msg.tool_calls = toolCalls;
   return {
     id: nowId('gem'), object: 'chat.completion', model,

@@ -181,6 +181,33 @@ export async function collectMemoryProbe(chat, msg) {
   showPendingChip(chat);
 }
 
+/** Auto-learn (item 19): ask the same model, once per chat, whether the
+ *  workflow here deserves a skill draft. Opt-in via settings.autoLearnSkills. */
+export async function maybeProbeSkill(chat) {
+  if (!chat.alive || chat.busy || chat.skillProbed || chat.compacting || chat.skillProbe) return;
+  if (chat.memProbe) { setTimeout(() => maybeProbeSkill(chat), 2000); return; }   // one probe at a time
+  const s = await ccx.invoke('settings:get');
+  if (!s || !s.ok || !s.settings || !s.settings.autoLearnSkills) return;
+  const p = await ccx.invoke('skills:autolearn-prompt');
+  if (!p || !p.ok) return;
+  chat.skillProbed = true;
+  chat.skillProbe = true;
+  chat.msgs.appendChild(el('div', 'sys-note', '[Auto-learn] checking this chat for a workflow worth turning into a skill…'));
+  scrollDownSoft(chat);
+  const r = await ccx.invoke('chat:send', { id: chat.id, text: p.prompt });
+  if (!r || !r.ok) chat.skillProbe = false;
+}
+
+export async function collectSkillProbe(chat, msg) {
+  const text = msg.subtype === 'success' ? String(msg.result || '') : '';
+  const r = text ? await ccx.invoke('skills:autolearn-propose', { text }) : null;
+  const n = r && r.ok ? r.queued : 0;
+  chat.msgs.appendChild(el('div', 'sys-note', n
+    ? 'skill: ' + n + ' draft' + (n > 1 ? 's' : '') + ' to review: open Memory & rules, then accept or reject each'
+    : 'skill: nothing new worth learning'));
+  scrollDownSoft(chat);
+}
+
 /** A chip on the project bar while notes wait for review; click opens the Memory panel. */
 export async function showPendingChip(chat) {
   const r = await ccx.invoke('memory:pending', { cwd: chat.cwd });
@@ -235,6 +262,15 @@ async function toggleMemoryPanel(chat) {
   toggle.appendChild(cb);
   toggle.appendChild(el('span', '', ' Propose lasting notes from my chats (same model; I approve each one)'));
   panel.appendChild(toggle);
+  // Auto-learn skills (item 19): the same opt-in switch for skill drafts.
+  const skillToggle = el('label', 'mem-auto');
+  const scb = el('input');
+  scb.type = 'checkbox';
+  ccx.invoke('settings:get').then((st) => { scb.checked = !!(st && st.settings && st.settings.autoLearnSkills); });
+  scb.addEventListener('change', () => ccx.invoke('settings:set', { settings: { autoLearnSkills: scb.checked } }));
+  skillToggle.appendChild(scb);
+  skillToggle.appendChild(el('span', '', ' Propose new skills from my chats (same model; I approve each one)'));
+  panel.appendChild(skillToggle);
   const proposals = el('div', 'mem-proposals');
   panel.appendChild(proposals);
   const loadProposals = async () => {
@@ -262,6 +298,33 @@ async function toggleMemoryPanel(chat) {
     }
   };
   loadProposals();
+  // Skill drafts waiting for review (item 19) — same accept/reject cards.
+  const skillBox = el('div', 'mem-proposals');
+  panel.appendChild(skillBox);
+  const loadSkills = async () => {
+    const pr = await ccx.invoke('skills:autolearn-pending');
+    skillBox.innerHTML = '';
+    for (const p of ((pr && pr.pending) || [])) {
+      const card = el('div', 'mem-proposal');
+      card.appendChild(el('div', 'mem-proposal-head', 'skill · ' + p.name));
+      card.appendChild(el('div', 'hint', p.description));
+      card.appendChild(el('pre', 'mem-proposal-body', p.body));
+      const act = el('div', 'perm-actions');
+      for (const [label, accept, cls] of [['Accept', true, 'btn small primary'], ['Reject', false, 'btn small']]) {
+        const b = el('button', cls, label);
+        b.addEventListener('click', async () => {
+          b.disabled = true;
+          const rr = await ccx.invoke('skills:autolearn-resolve', { name: p.name, accept });
+          if (rr && rr.ok && rr.saved) toast('Skill saved: ' + p.name, 'ok');
+          await loadSkills();
+        });
+        act.appendChild(b);
+      }
+      card.appendChild(act);
+      skillBox.appendChild(card);
+    }
+  };
+  loadSkills();
   panel.appendChild(pick);
   panel.appendChild(editor);
   panel.appendChild(row);

@@ -3,6 +3,7 @@ import { convoSessions, renderConversationList } from './conversations.js';
 import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, state } from './core.js';
 import { tabRegistry, updateStatusbar } from './tabs.js';
 import { Chat } from '../chat/index.js';
+import { openMdEditor } from './mdedit.js';
 
 /* ================= split view (#44) ================= */
 
@@ -169,6 +170,22 @@ export function renderSplit() {
             chat.composer.focus();
           } else ccx.invoke('shell:reveal', { path: cwd2 + '/' + f });
         });
+        // Markdown files also open in the visual editor (item 21). The affordance
+        // is a role=button span so no button nests inside the row button.
+        if (/\.(md|markdown)$/i.test(f)) {
+          const edit = el('span', 'fr-edit', 'edit');
+          edit.setAttribute('role', 'button');
+          edit.setAttribute('tabindex', '0');
+          edit.title = 'Open in the markdown editor (preview, tasks, diagrams)';
+          const open = (e2) => {
+            e2.preventDefault();
+            e2.stopPropagation();
+            openMdEditor(cwd2 + '/' + f);
+          };
+          edit.addEventListener('click', open);
+          edit.addEventListener('keydown', (e2) => { if (e2.key === 'Enter' || e2.key === ' ') open(e2); });
+          row.appendChild(edit);
+        }
         list.appendChild(row);
       }
     };
@@ -210,6 +227,55 @@ export function renderSplit() {
         body.appendChild(acts);
       }
     });
+    return;
+  }
+  if (kind === 'review') {
+    // Code review pane (item 23): the working tree as real hunks, not just
+    // the file names the Changes tab lists. Stats first, click a file for
+    // its patch, and one button that drops a review prompt into the chat.
+    const head = el('div', 'rail-sub hint', 'loading…');
+    body.appendChild(head);
+    const files = el('div', 'task-rows');
+    body.appendChild(files);
+    const patchBox = el('pre', 'review-patch mono');
+    body.appendChild(patchBox);
+    const acts = el('div', 'rail-actions');
+    const rev = el('button', 'btn small', 'Ask Claude to review these changes');
+    rev.addEventListener('click', () => {
+      const chat = Chat.chats.get(state.activeId);
+      if (chat && chat.composer) {
+        chat.composer.value = 'Review my uncommitted changes (git diff): correctness, tests, naming. Severity-ranked, file:line, concrete fixes.';
+        chat.send();
+      }
+    });
+    acts.appendChild(rev);
+    body.appendChild(acts);
+    const load = async () => {
+      const st = await ccx.invoke('git:diff-stats', { cwd: cwd2 });
+      if (!body.contains(head)) return;
+      if (!st || !st.ok) { head.textContent = (st && st.error) || 'not a git repository'; files.textContent = ''; return; }
+      const list = st.files || [];
+      head.textContent = list.length
+        ? list.length + ' changed file(s) · +' + (st.insertions || 0) + ' / -' + (st.deletions || 0)
+        : 'working tree is clean';
+      files.textContent = '';
+      for (const f of list.slice(0, 80)) {
+        const name = String(f.file || f.path || f.name || '');
+        const row = el('button', 'task-row mono file-row');
+        row.appendChild(el('span', 'fr-name', name));
+        row.appendChild(el('span', 'hint', ' +' + (f.add ?? f.insertions ?? 0) + ' -' + (f.del ?? f.deletions ?? 0)));
+        row.addEventListener('click', async () => {
+          patchBox.textContent = 'loading ' + name + '…';
+          const d = await ccx.invoke('git:diff', { cwd: cwd2, paths: [name] });
+          if (!body.contains(patchBox)) return;
+          patchBox.textContent = (d && d.ok) ? (d.patch || '(no hunks)') : ((d && d.error) || 'diff failed');
+          if (d && d.truncated) patchBox.textContent += '\n\n(diff truncated)';
+        });
+        files.appendChild(row);
+      }
+      if (list.length) files.querySelector('button')?.click();
+    };
+    load();
     return;
   }
   if (kind === 'preview') {
@@ -290,7 +356,7 @@ export function renderSplit() {
  * is never offered here, it is always on.
  */
 const HIDEABLE_TABS = [
-  ['changes', 'Changes'], ['files', 'Files'], ['terminal', 'Terminal'], ['diff', 'Diff'], ['preview', 'Preview'],
+  ['changes', 'Changes'], ['files', 'Files'], ['terminal', 'Terminal'], ['diff', 'Diff'], ['review', 'Review'], ['preview', 'Preview'],
 ];
 
 function hiddenTabs() {

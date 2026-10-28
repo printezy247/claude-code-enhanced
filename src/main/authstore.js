@@ -41,8 +41,21 @@ class AuthStore {
     this.data.providers ??= {};
   }
 
+  /**
+   * True only when Electron picked a real keyring. `isEncryptionAvailable()`
+   * still says true on a machine with no keyring, because Electron then
+   * falls back to `basic_text` — an XOR with a fixed key that stops nobody
+   * with the file. Reporting that as "encrypted" would be a lie the UI then
+   * repeats, so the backend name is checked too. #fix-basic-text
+   */
   get encryptionAvailable() {
-    try { return !!(this.safeStorage && this.safeStorage.isEncryptionAvailable()); } catch { return false; }
+    try {
+      if (!this.safeStorage || typeof this.safeStorage.isEncryptionAvailable !== 'function') return false;
+      if (!this.safeStorage.isEncryptionAvailable()) return false;
+      const backend = typeof this.safeStorage.getSelectedStorageBackend === 'function'
+        ? this.safeStorage.getSelectedStorageBackend() : null;
+      return backend !== 'basic_text';
+    } catch { return false; }
   }
 
   save() {

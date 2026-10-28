@@ -391,6 +391,9 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 /* A thought is a one-line aside between tool calls, not a card: a run of them
    used to fill the screen with identical boxes. */
 .thinking-block { margin: 2px 0; max-width: 860px; }
+/* Settings > "Show thinking" off: every reasoning summary, live or replayed,
+   is out of the transcript at once. */
+.hide-reasoning .thinking-block { display: none; }
 .thinking-block summary {
   cursor: pointer; padding: 3px 4px; color: var(--muted); font-size: 12px; user-select: none;
   list-style: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -1816,3 +1819,32 @@ body.ov-resizing { user-select: none; cursor: col-resize; }
 .convo-empty-icon { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; background: var(--bg3); border: 1px solid var(--border); color: var(--accent); }
 .convo-empty-title { font-weight: 600; color: var(--text); }
 .convo-empty-illus .btn { margin-top: 6px; }
+
+/* ===== Phase 5 (items 21-23): markdown editor, review pane, md rows ===== */
+.md-editor-modal { width: min(1040px, 94vw); }
+.md-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; min-height: 320px; }
+.md-src {
+  min-height: 320px; resize: vertical; font-family: var(--mono); font-size: 12.5px;
+  background: var(--bg2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px;
+}
+.md-prev {
+  min-height: 320px; overflow: auto; border: 1px solid var(--border); border-radius: 8px;
+  padding: 10px 12px; background: var(--bg3); color: var(--text); font-size: 13px;
+}
+.md-prev pre { overflow: auto; background: var(--bg2); padding: 8px; border-radius: 6px; }
+.md-prev code { font-family: var(--mono); font-size: 12px; }
+.md-flow svg { max-width: 100%; color: var(--accent); }
+.md-tasks { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+.md-task { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text); }
+.md-task input:checked ~ span { text-decoration: line-through; color: var(--muted); }
+.review-patch {
+  max-height: 46vh; overflow: auto; white-space: pre; font-family: var(--mono);
+  font-size: 11.5px; background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px; margin-top: 8px; color: var(--text);
+}
+.file-row .fr-edit {
+  margin-left: auto; font-size: 11px; color: var(--muted); padding: 1px 7px;
+  border: 1px solid var(--border); border-radius: 999px;
+}
+.file-row .fr-edit:hover, .file-row .fr-edit:focus-visible { color: var(--text); border-color: var(--accent); }

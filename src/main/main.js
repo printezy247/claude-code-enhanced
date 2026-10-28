@@ -1,6 +1,6 @@
 // Claude Code Enhanced — main process.
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard, nativeImage, crashReporter } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -14,6 +14,13 @@ const rendererDir = path.resolve(__dirname, '..', 'renderer');
 
 app.setName('claude-code-enhanced');
 if (process.env.CCE_NO_SANDBOX) app.commandLine.appendSwitch('no-sandbox');
+
+// Native crashes (node-pty, the GPU process) leave no trace otherwise: the
+// app just dies. The dump stays on this machine — uploadToServer is off —
+// so a bug report can include it without shipping anything anywhere. #fix-crash-dumps
+try {
+  crashReporter.start({ uploadToServer: false, compress: true, rateLimit: 60_000 });
+} catch { /* crash reporter unavailable in this environment */ }
 
 // Surface async failures with a real stack instead of an anonymous warning.
 process.on('unhandledRejection', (reason) => {
@@ -37,10 +44,23 @@ const tools = require('./tools');
 const automemory = require('./automemory');
 const localmodels = require('./localmodels');
 const worktrees = require('./worktrees');
+const { JobQueue } = require('./jobqueue');
+const { runToPR } = require('./pipeline');
+const { createInterruptedStore } = require('./interrupted');
 const gitsurface = require('./gitsurface');
 const workers = require('./workers');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
+const engines = require('./engines');
+const webremote = require('./webremote');
+const sshhosts = require('./sshhosts');
+const sdkoptions = require('./sdkoptions');
+const usageparse = require('./usageparse');
+const codeindex = require('./codeindex');
+const autolearn = require('./autolearn');
+const marketplace = require('./marketplace');
+const deeplink = require('./deeplink');
+const updatecheck = require('./updatecheck');
 const { startProxy, clearLastGoodModel } = require('./proxy');
 const { effortLevels, modelCaps } = require('./modelcontext');
 // Per-launch secret the translator proxy requires on every request. The proxy
@@ -80,6 +100,12 @@ const chats = new ChatManager({ proxyToken, contextOf: modelContext, connectorMe
 // same ids and two windows would fight over one chat. This registry is what
 // keeps the windows apart. #feat-multi-window
 const windowRegistry = new WindowRegistry();
+// Background runs: one at a time by default, so two long jobs never fight
+// over the machine or the provider's rate limit. #feat-jobs
+const jobQueue = new JobQueue({ concurrency: 1 });
+// What was running when the app last stopped, so the next start can offer
+// to pick it back up. #feat-run-resume
+const interrupted = createInterruptedStore(path.join(app.getPath('userData'), 'interrupted-runs.json'));
 
 providers.useAuth(auth);
 let win = null;
@@ -843,18 +869,36 @@ function registerIpc() {
     return { id: created.id, count: windowRegistry.size };
   });
 
-  // Release ping (#47): compares the packaged version with the GitHub release.
-  // 404 = repo has no releases yet (expected before the first push).
+  // Release ping (#47, item 25): the same GitHub release feed, but compared
+  // numerically per version segment (string order said 0.9.10 < 0.9.9) and
+  // with fetch failures reported as errors — never as "you are up to date".
+  // 404 still means "no releases yet" (expected before the first push).
   handle('update:check', async () => {
     const current = app.getVersion();
-    const res = await fetch('https://api.github.com/repos/printezy247/claude-code-enhanced/releases/latest', {
-      headers: { 'user-agent': 'claude-code-enhanced' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.status === 404) return { current, latest: null, note: 'no releases published yet' };
-    if (!res.ok) return { current, latest: null, note: 'release feed returned ' + res.status };
-    const j = await res.json();
-    return { current, latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url || '' };
+    const r = await updatecheck.check({ current });
+    if (r.error) {
+      if (/404/.test(r.error)) return { current, latest: null, note: 'no releases published yet' };
+      return { current, latest: null, note: r.error, error: r.error };
+    }
+    return { current: r.current, latest: r.latest, url: r.url, updateAvailable: r.updateAvailable };
+  });
+
+  // cce:// deep links (item 24): one parse, one pending slot, a ping to any
+  // open window; the renderer pulls the pending link (so a link that arrives
+  // before the renderer finishes loading is not lost in an event nobody heard).
+  let pendingDeepLink = null;
+  function routeDeepLink(url) {
+    const d = deeplink.parseCceUrl(String(url || ''));
+    if (!d || d.action === 'unknown') return;
+    pendingDeepLink = d;
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { w.webContents.send('deeplink'); } catch { /* window may be closing */ }
+    }
+  }
+  handle('deeplink:pending', async () => {
+    const link = pendingDeepLink;
+    pendingDeepLink = null;
+    return { ok: true, link };
   });
 
   // ----- providers -----
@@ -1366,7 +1410,7 @@ function registerIpc() {
   });
 
   // ----- sessions -----
-  handle('session:create', async ({ cwd, type = 'claude', providerUid, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '' }, e) => {
+  handle('session:create', async ({ cwd, type = 'claude', providerUid, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '', hostId = '' }, e) => {
     const dir = (cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
     if (!fs.existsSync(dir)) throw new Error(`directory not found: ${dir}`);
 
@@ -1374,6 +1418,21 @@ function registerIpc() {
     let command, args = [];
     if (type === 'shell') {
       command = process.env.SHELL || 'bash';
+    } else if (type === 'ssh') {
+      // A remembered host, opened as a real ssh tab (item 14). The argv is an
+      // array built by sshhosts.sshArgs — no shell ever sees these values.
+      const hostsList = Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : [];
+      const host = hostsList.find((h) => h && h.id === hostId);
+      if (!host) throw new Error('unknown ssh host: ' + (hostId || '(none given)'));
+      command = 'ssh';
+      args = sshhosts.sshArgs(host);
+    } else if (engines.REGISTRY.some((e) => e.id === type)) {
+      const resolved = await engines.commandFor(type, { PATH: (await loginEnvReady()).PATH || process.env.PATH });
+      if (resolved.error) throw new Error(resolved.error);
+      command = resolved.command;
+      args = resolved.args;
+    } else if (type !== 'claude') {
+      throw new Error(`unknown session type: ${type} (known: claude, shell, ssh, ${engines.REGISTRY.map((e) => e.id).join(', ')})`);
     } else {
       command = claudePath();
       if (continueLast) args.push('--continue');
@@ -1441,9 +1500,27 @@ function registerIpc() {
     }
     // Desktop notification for permission prompts — the card is easy to miss
     // behind a terminal window, and an unanswered one silently times out.
+    // The notification carries Allow/Deny buttons where the OS supports them
+    // (Windows/macOS; on Linux it stays click-to-focus).
     if (evt && evt.kind === 'permission') {
       notify('Claude needs permission: ' + (evt.toolName || 'tool'),
-        'Open Claude Code Enhanced to answer (auto-denies in 6 minutes).', owner);
+        'Allow or deny from the notification, or open Claude Code Enhanced (auto-denies in 6 minutes).', owner, {
+          actions: [{ type: 'button', text: 'Allow' }, { type: 'button', text: 'Deny' }],
+          onAction: (i) => {
+            try { chats.answer(id, evt.requestId, i === 0 ? 'allow' : 'deny'); }
+            catch { /* already answered or timed out */ }
+          },
+        });
+    }
+    // Interrupted-run memory: a turn that starts is written to disk, a turn
+    // that ends is forgotten. Whatever survives a restart is offered back.
+    if (evt && evt.kind === 'status') {
+      const live = chats.chats.get(id);
+      if (evt.busy === true && live) {
+        interrupted.record({ id, cwd: live.cwd || '', sessionId: live.sessionId || null, model: live.model || '' });
+      } else if (evt.busy === false) {
+        interrupted.forget(id);
+      }
     }
     // Finished turns, but only when the window is in the background: a
     // notification for work the user is already watching is noise. #36
@@ -1470,17 +1547,27 @@ function registerIpc() {
    *
    * `target` is the window that must come up when the notification is
    * clicked: the one that owns the chat, not the newest window. #F8
+   * `opts.actions` adds buttons (Windows/macOS); `opts.onAction(i)` receives
+   * the index of the button that was pressed. #feat-notify-actions
    */
-  function notify(title, body, target) {
+  function notify(title, body, target, opts) {
     if (process.env.CCE_QUIET_NOTIFY) return;
     try {
-      const n = new Notification({ title, body });
+      const nOpts = { title, body };
+      if (opts && opts.actions) nOpts.actions = opts.actions;
+      const n = new Notification(nOpts);
       n.on('click', () => {
         // The owning window may be gone by the time the notification is
         // clicked: fall back to the newest window rather than doing nothing. #N1
         const w = (target && !target.isDestroyed()) ? target : win;
         if (w && !w.isDestroyed()) w.show();
       });
+      if (opts && typeof opts.onAction === 'function') {
+        n.on('action', (details) => {
+          const i = details && typeof details.actionIndex === 'number' ? details.actionIndex : 0;
+          try { opts.onAction(i); } catch { /* caller's problem, not the notifier's */ }
+        });
+      }
       n.show();
     } catch { /* notifications unavailable */ }
   }
@@ -1672,6 +1759,8 @@ function registerIpc() {
   handle('chat:close', owned('chats', async ({ id }) => {
     chats.close(id);
     windowRegistry.release('chats', id);
+    // A deliberately closed chat is not an interrupted run. #feat-run-resume
+    interrupted.forget(id);
     return {};
   }));
   handle('chat:skills', async ({ cwd }) => ({ skills: chats.scanSkills(cwd) }));
@@ -1788,6 +1877,36 @@ function registerIpc() {
     const res = skilltoggle.setSkillEnabled(name, !!enabled);
     return { ok: true, ...res };
   });
+  // Skills sync (item 18): diff what is on disk against the last sync
+  // snapshot, and drop toggles for skills that were deleted — cce-disabled.json
+  // must not remember names that no longer exist.
+  handle('skills:sync', async () => {
+    const disk = skilltoggle.scanSkills().map((s) => String((s && s.name) || s));
+    const st = skilltoggle.readStore();
+    const r = skilltoggle.syncState({
+      onDisk: disk,
+      snapshot: Array.isArray(st.snapshot) ? st.snapshot : [],
+      disabled: st.skills,
+    });
+    skilltoggle.writeStore({ skills: r.disabledAfter, agents: st.agents, snapshot: r.snapshot });
+    return { ok: true, ...r };
+  });
+  // Auto-learn skills (item 19): probe prompt, proposals from the model, and
+  // the pending queue. A skill file is only written when you accept it.
+  const autoLearn = autolearn.createAutoLearn({
+    skillsDir: path.join(process.env.HOME || os.homedir(), '.claude', 'skills'),
+    storeFile: path.join(app.getPath('userData'), 'autolearn-pending.json'),
+  });
+  handle('skills:autolearn-prompt', async () => ({ ok: true, prompt: autolearn.PROBE_PROMPT }));
+  handle('skills:autolearn-propose', async ({ text }) => ({
+    ok: true,
+    queued: autoLearn.addPending(autolearn.parseProposals(String(text || ''))),
+  }));
+  handle('skills:autolearn-pending', async () => ({ ok: true, pending: autoLearn.listPending() }));
+  handle('skills:autolearn-resolve', async ({ name, accept }) => ({
+    ok: true,
+    ...(await autoLearn.resolve(String(name || ''), !!accept)),
+  }));
   // The plugin manager: a DXT/MCPB archive is verified (manifest, then
   // signature) before anything is installed or registered. #p7-plugins
   const plugins = require('./plugins');
@@ -2116,6 +2235,29 @@ function registerIpc() {
   // still read these itself through the claude CLI; this only blocks the host
   // bridge that the renderer uses for diffs and @-mentions.
   const SENSITIVE_RE = /\.env$|\.env\.|\.pem$|\.key$|id_(rsa|ed25519|ecdsa)|\.gnupg|google_credentials|service_account|credentials\.json$|secrets\./i;
+  // Guarded text save for the visual markdown editor (item 21). Same readable
+  // roots as file:read, never a sensitive file, only .md/.markdown/.txt, and
+  // the same size ceiling — the renderer cannot use this to rewrite config or
+  // credentials, only prose files inside an open project.
+  handle('file:saveText', async ({ path: p, content }) => {
+    if (!p) throw new Error('path required');
+    const home = process.env.HOME || os.homedir();
+    const real = path.resolve(String(p).replace(/^~(?=\/|$)/, home));
+    let target;
+    try { target = fs.realpathSync(real); } catch { target = real; }   // new file: parent must exist below
+    const roots = readableRoots();
+    if (!roots.some((r) => target === r || target.startsWith(r + path.sep))) {
+      throw new Error('path is outside any open project');
+    }
+    if (SENSITIVE_RE.test(target)) throw new Error('that file is not editable here');
+    if (!/\.(md|markdown|txt)$/i.test(target)) throw new Error('only .md/.markdown/.txt files can be saved here');
+    const text = String(content ?? '');
+    if (Buffer.byteLength(text, 'utf8') > 1024 * 1024) throw new Error('file too large (1 MB max)');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text);
+    return { ok: true, bytes: Buffer.byteLength(text, 'utf8'), path: target };
+  });
+
   handle('file:read', async ({ path: p, maxBytes }) => {
     if (!p) throw new Error('path required');
     const home = process.env.HOME || os.homedir();
@@ -2268,6 +2410,213 @@ function registerIpc() {
 
   // desktop-style history index: every session on disk, flat + recency-sorted
   handle('chats:index', async () => ({ sessions: await chats.index() }));
+  // The board: every live chat with what it is doing and whether it needs
+  // the user. #feat-board
+  handle('chats:board', async () => ({
+    rows: [...chats.chats.entries()].map(([id, c]) => ({
+      id,
+      cwd: c.cwd || '',
+      busy: !!c.busy,
+      needsYou: chats._permsOf(id).length,
+      model: c.model || '',
+      sessionId: c.sessionId || null,
+    })),
+  }));
+  // ---- Phase 3 (items 11-14) --------------------------------------------------
+  // Engine tabs: which Codex/Gemini/OpenCode binaries are on PATH. #feat-engines
+  handle('engines:list', async () => ({
+    engines: await engines.detect({ PATH: (await loginEnvReady()).PATH || process.env.PATH }),
+  }));
+  // Per-agent model overrides: which model each subagent runs. #feat-agent-models
+  handle('agents:models', async () => {
+    const defs = sdkoptions.agentDefinitions(sdkoptions.agentDirs(store.settings.defaultCwd));
+    return { agents: Object.keys(defs).sort(), overrides: { ...(store.settings.agentModels || {}) } };
+  });
+  handle('agents:set-model', async ({ name, model }) => {
+    const n = String(name || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(n)) throw new Error('invalid agent name');
+    const overrides = { ...(store.settings.agentModels || {}) };
+    const m = sanitizeModel(model || '');
+    if (m) overrides[n] = m; else delete overrides[n];
+    store.settings = { ...store.settings, agentModels: overrides };
+    return { overrides };
+  });
+  // Web/QR remote (item 13): loopback server, pairing token in the QR. #feat-webremote
+  const remote = webremote.createWebRemote({
+    boardRows: () => [...chats.chats.entries()].map(([id, c]) => ({
+      id, cwd: c.cwd || '', busy: !!c.busy, needsYou: chats._permsOf(id).length,
+    })),
+    pendingPerms: () => [...chats.pendingPerms.entries()].map(([requestId, p]) => ({
+      requestId, chatId: p.chatId, toolName: p.toolName,
+    })),
+    send: async (id, text) => {
+      if (!chats.chats.has(id)) return { ok: false, error: 'no such chat' };
+      await chats.send(id, text);
+      return { ok: true };
+    },
+    answer: (requestId, decision) => {
+      const p = chats.pendingPerms.get(requestId);
+      if (!p) return { ok: false, error: 'no such request' };
+      chats.answer(p.chatId, requestId, decision);
+      return { ok: true };
+    },
+  });
+  const remoteQrFor = async (url) => {
+    try {
+      const QRCode = require('qrcode');
+      return await QRCode.toString(url, { type: 'svg', margin: 1 });
+    } catch { return ''; }
+  };
+  handle('webremote:status', async () => ({ ...remote.status(), qr: '' }));
+  handle('webremote:start', async () => {
+    const status = await remote.start({ host: '127.0.0.1', port: 0 });
+    return { ...status, qr: await remoteQrFor(status.url) };
+  });
+  handle('webremote:stop', async () => { remote.stop(); return { running: false }; });
+  // SSH hosts (item 14): remembered machines, opened as terminal tabs. #feat-ssh
+  handle('sshhosts:list', async () => ({
+    hosts: (Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : []).map((h) => ({ ...h })),
+  }));
+  handle('sshhosts:save', async ({ host }) => {
+    const rec = sshhosts.normalize(host || {});
+    const list = Array.isArray(store.settings.sshHosts) ? [...store.settings.sshHosts] : [];
+    const id = rec.id || sshhosts.newId();
+    const saved = { ...rec, id };
+    const at = list.findIndex((h) => h && h.id === id);
+    if (at >= 0) list[at] = saved; else list.push(saved);
+    store.settings = { ...store.settings, sshHosts: list };
+    return { host: saved };
+  });
+  handle('sshhosts:delete', async ({ id }) => {
+    const list = (Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : [])
+      .filter((h) => !(h && h.id === id));
+    store.settings = { ...store.settings, sshHosts: list };
+    return { ok: true };
+  });
+  // Background jobs: queue, list, cancel. Done/failed jobs notify. #feat-jobs
+  // Codebase index (item 15): build/search/status for the current project.
+  // The stored index is JSON per cwd; nothing leaves the machine.
+  const projIndex = codeindex.shared();
+  const idxDir = (cwd) => String(cwd || store.settings.defaultCwd || os.homedir());
+  handle('codeindex:build', async ({ cwd }) => ({ ok: true, ...(await projIndex.build(idxDir(cwd))) }));
+  handle('codeindex:status', async ({ cwd }) => ({ ok: true, ...projIndex.status(idxDir(cwd)) }));
+  handle('codeindex:search', async ({ cwd, query }) => ({
+    ok: true,
+    hits: projIndex.search(idxDir(cwd), String(query || '')),
+  }));
+
+  // Marketplace (item 20): a curated catalog. MCP entries install through the
+  // exact connector path the Connectors view uses (nothing downloaded); plugin
+  // entries open their HTTPS page — unpacking stays local-file-only in plugins.js.
+  handle('marketplace:list', async () => ({ ok: true, entries: marketplace.list() }));
+  handle('marketplace:install', async ({ id }) => marketplace.install(String(id || ''), {
+    addConnector: async (cfg) => {
+      if (cfg.preset) {
+        const preset = connectors.PRESETS.find((p) => p.id === cfg.preset);
+        if (!preset) throw new Error('unknown preset: ' + cfg.preset);
+        return connectors.add(claudePath(), { preset, scope: 'user' });
+      }
+      return connectors.addCustom(claudePath(), { name: cfg.name, url: cfg.url, scope: 'user' });
+    },
+    openExternal: (url) => shell.openExternal(String(url)),
+  }));
+
+  jobQueue.on('update', (job) => {
+    if (job.state === 'done' || job.state === 'failed') {
+      notify('Background job ' + (job.state === 'done' ? 'finished' : 'failed'),
+        job.label + (job.error ? ' — ' + job.error : ''), win);
+    }
+  });
+  /** Resolves when the chat's current turn ends (or the chat is gone). */
+  const waitForIdle = (id, timeoutMs = 30 * 60 * 1000) => new Promise((resolve) => {
+    const onEvt = (eid, evt) => {
+      if (eid !== id || !evt) return;
+      if (evt.kind === 'status' && evt.busy === false) { cleanup(); resolve({ ok: true }); }
+      else if (evt.kind === 'exit' || evt.kind === 'error') { cleanup(); resolve({ ok: false, error: evt.error || 'exited' }); }
+    };
+    const timer = setTimeout(() => { cleanup(); resolve({ ok: false, error: 'turn timed out after 30 minutes' }); }, timeoutMs);
+    const cleanup = () => { clearTimeout(timer); chats.off('event', onEvt); };
+    chats.on('event', onEvt);
+  });
+  handle('jobs:list', async () => ({ jobs: jobQueue.list() }));
+  handle('jobs:cancel', async ({ id }) => ({ canceled: jobQueue.cancel(String(id || '')) }));
+  // A background chat run: created without a window, prompted, waited on,
+  // closed. Permission prompts still raise a notification (with Allow/Deny).
+  handle('jobs:add', async ({ cwd, prompt, label, providerUid, model }) => {
+    if (!prompt) return { ok: false, error: 'a prompt is required' };
+    let dir = null;
+    if (cwd) {
+      dir = path.resolve(String(cwd).replace(/^~(?=\/|$)/, os.homedir()));
+      try { if (!fs.statSync(dir).isDirectory()) return { ok: false, error: 'not a directory: ' + dir }; }
+      catch { return { ok: false, error: 'directory not found: ' + dir }; }
+    }
+    const provider = store.providers.find(p => p.uid === providerUid)
+      || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
+    const job = jobQueue.add({
+      kind: 'chat',
+      label: String(label || prompt).slice(0, 120),
+      cwd: dir || '',
+      run: async (j) => {
+        const created = await chats.create({
+          cwd: dir || store.settings.defaultCwd || os.homedir(),
+          providerInstance: provider,
+          settings: store.settings,
+          model: sanitizeModel(model || (provider && provider.model) || ''),
+          claudePath: (store.settings.claudePath || '').trim() || undefined,
+        });
+        j.log.push('chat ' + created.id);
+        try {
+          const sent = chats.send(created.id, String(prompt));
+          if (sent && sent.ok === false) throw new Error(sent.error || 'could not send the prompt');
+          const end = await waitForIdle(created.id);
+          if (!end.ok) throw new Error(end.error || 'the run failed');
+        } finally {
+          try { chats.close(created.id); } catch { /* already gone */ }
+        }
+        return { chatId: created.id };
+      },
+    });
+    return { job };
+  });
+  // Task → PR: worktree, run, commit, push, open the PR — as one queued job.
+  // #feat-pipeline
+  handle('pipeline:start', async ({ cwd, prompt, title, providerUid }) => {
+    if (!cwd || !prompt) return { ok: false, error: 'folder and prompt are required' };
+    const dir = path.resolve(String(cwd).replace(/^~(?=\/|$)/, os.homedir()));
+    try { if (!fs.statSync(dir).isDirectory()) return { ok: false, error: 'not a directory: ' + dir }; }
+    catch { return { ok: false, error: 'directory not found: ' + dir }; }
+    const provider = store.providers.find(p => p.uid === providerUid)
+      || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
+    const job = jobQueue.add({
+      kind: 'pipeline',
+      label: 'task → PR: ' + String(title || prompt).slice(0, 80),
+      cwd: dir,
+      run: () => runToPR({
+        worktree: async (d) => worktrees.add(d),
+        createChat: async ({ cwd: c }) => chats.create({
+          cwd: c, providerInstance: provider, settings: store.settings,
+          model: sanitizeModel((provider && provider.model) || ''),
+          claudePath: (store.settings.claudePath || '').trim() || undefined,
+        }),
+        send: async (id, text) => {
+          const r = chats.send(id, text);
+          if (r && r.ok === false) throw new Error(r.error || 'could not send the prompt');
+        },
+        waitIdle: (id) => waitForIdle(id),
+        git: async (args, cw) => execFileAsync('git', args, { cwd: cw, timeout: 120000, maxBuffer: 32 * 1024 * 1024 }).then(r => r.stdout),
+        hasGh: () => execFileAsync('gh', ['--version'], { timeout: 10000 }).then(() => true, () => false),
+        ghPr: async (args, cw) => execFileAsync('gh', args, { cwd: cw, timeout: 120000 }).then(r => r.stdout),
+        closeChat: async (id) => { try { chats.close(id); } catch { /* already gone */ } },
+      }, { cwd: dir, prompt: String(prompt), title: title ? String(title) : '' }),
+    });
+    return { job };
+  });
+  // Interrupted runs from the previous start. Anything still on disk whose
+  // chat is not live is a run that was cut short. #feat-run-resume
+  handle('runs:interrupted', async () => ({
+    runs: interrupted.list().filter(r => !chats.chats.has(r.id)),
+  }));
+  handle('runs:ack', async ({ id }) => { interrupted.forget(String(id || '')); return {}; });
 
   // Usage dashboard: sum total_cost_usd over result frames in stored transcripts.
   handle('usage:scan', async () => {
@@ -2291,6 +2640,7 @@ function registerIpc() {
     files.sort((a, b) => b.mtime - a.mtime);
 
     const days = new Map();
+    const models = new Map();
     let total = 0, counted = 0;
     const slice = files.slice(0, 500);
     for (let i = 0; i < slice.length; i++) {
@@ -2307,31 +2657,24 @@ function registerIpc() {
           text = buf.toString('utf8');
         } finally { fs.closeSync(fd); }
       } catch { continue; }
-      let inTok = 0, outTok = 0, msgs = 0, cost = 0;
-      for (const line of text.split('\n')) {
-        if (line.includes('"type":"assistant"')) {
-          try {
-            const j = JSON.parse(line);
-            const u = (j.message && j.message.usage) || {};
-            inTok += (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-            outTok += u.output_tokens || 0;
-            msgs++;
-          } catch { /* partial line */ }
-        } else if (line.includes('total_cost_usd')) {
-          const m = line.match(/"total_cost_usd":\s*([\d.eE+-]+)/);
-          if (m) cost += Number(m[1]) || 0;
-        }
-      }
-      if (!msgs) continue;
+      // Line parsing lives in usageparse.js so the per-model split is unit-tested.
+      const r = usageparse.parseTranscript(text);
+      if (!r.msgs) continue;
       const day = new Date(f.mtime).toISOString().slice(0, 10);
       const d = days.get(day) || { day, cost: 0, sessions: 0, turns: 0, tokens: 0 };
-      d.cost += cost; d.sessions += 1; d.turns += msgs; d.tokens += inTok + outTok;
+      d.cost += r.cost; d.sessions += 1; d.turns += r.msgs; d.tokens += r.inTok + r.outTok;
       days.set(day, d);
-      total += cost;
+      total += r.cost;
+      for (const [name, m] of Object.entries(r.models)) {
+        const acc = models.get(name) || { tokens: 0, cost: 0 };
+        acc.tokens += m.tokens; acc.cost += m.cost;
+        models.set(name, acc);
+      }
       counted++;
     }
     const list = [...days.values()].sort((a, b) => (a.day < b.day ? 1 : -1)).slice(0, 45);
-    return { days: list, total, sessions: counted };
+    const modelsOut = Object.fromEntries([...models].sort((a, b) => b[1].tokens - a[1].tokens));
+    return { days: list, total, sessions: counted, models: modelsOut };
   });
 
 
@@ -2503,13 +2846,27 @@ if (store.settings && store.settings.closeToTray) {
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_e, argv) => {
     // A second launch opens a second window in the running app. #feat-multi-window
     createWindow();
+    // ...and if it carried a cce:// link, route it into the running app. #item-24
+    const link = (argv || []).find((a) => /^cce:\/\//i.test(String(a)));
+    if (link) routeDeepLink(link);
+  });
+
+  // macOS delivers links to the running instance through open-url instead of argv.
+  app.on('open-url', (e, url) => {
+    e.preventDefault();
+    routeDeepLink(url);
   });
 
   app.whenReady().then(async () => {
     if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: app ready');
+    // cce:// links (item 24). Registration needs the packaged app; in dev the
+    // catch keeps startup clean and links simply arrive through argv.
+    try { app.setAsDefaultProtocolClient('cce'); } catch { /* not packaged */ }
+    const bootLink = (process.argv || []).find((a) => /^cce:\/\//i.test(String(a)));
+    if (bootLink) routeDeepLink(bootLink);
     loginEnvReady();   // probe the login shell in the background, never on the main thread
     // Bind an ephemeral port: a fixed one collides with any other listener and
     // leaks provider API keys to whoever grabs it.
@@ -2555,6 +2912,7 @@ if (!gotLock) {
     registerIpc();
     createWindow();
     if (store.settings.closeToTray) createTray();
+    wirePowerResume();
     // Global shortcut: bring the app to front when hidden in the tray.
     // Ctrl+Shift+C is mnemonic for "Claude". Only when close-to-tray is on.
     if (store.settings.closeToTray) {
@@ -2578,6 +2936,34 @@ if (!gotLock) {
   }).catch((err) => {
     console.error('[cce] startup failed:', (err && err.stack) || err);
   });
+}
+
+/**
+ * Sleep breaks things quietly: MCP health checks go stale, the claude CLI
+ * probe ages out, and a resumed stream may have been cut by the network
+ * stack. Tell every window the machine came back so they re-run the checks
+ * that are now lies. powerMonitor is only legal after app ready. #fix-resume
+ */
+function wirePowerResume() {
+  try {
+    const { powerMonitor } = require('electron');
+    const resume = () => {
+      lastClaudeProbe = 0;   // allow an immediate re-probe after wake
+      // Sleep is when claude self-updates: re-run the probe now instead of
+      // waiting for a focus event that may already have happened.
+      detectClaude().then((info) => {
+        claudeInfo = info;
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) w.webContents.send('claude:detected', info);
+        }
+      }).catch(() => { /* probe failed; the focus probe tries again */ });
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('app:resumed');
+      }
+    };
+    powerMonitor.on('resume', resume);
+    powerMonitor.on('unlock-screen', resume);
+  } catch { /* powerMonitor unavailable (tests / headless) */ }
 }
 
 app.on('window-all-closed', () => { if (!store.settings.closeToTray) app.quit(); });

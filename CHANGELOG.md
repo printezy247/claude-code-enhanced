@@ -2,7 +2,42 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.89
+- Added: markdown editor — the Files tab gets an **edit** button on every .md/.txt row: source on the left, live preview on the right, task checkboxes you can tick, and ```flow``` arrow chains drawn as SVG. Saving goes through the same guarded path as file reads (open projects only, never a secret file).
+- Added: review pane — a Review tab in the tool panel shows the working-tree diff with stats (+/− per file), one click to open a file's patch, and a button to ask Claude about the changes.
+- Added: cce:// links — CCE registers itself as the `cce://` handler: `cce://view/usage`, `cce://open/<path>`, `cce://chat/<session-id>` jump straight into the app (or queue for the next launch). Traversal and junk URLs are rejected.
+- Fixed: update check is honest and numeric — it talks to the GitHub releases API, compares versions segment-by-segment (0.9.10 is newer than 0.9.9, unlike a string compare), and when the fetch fails it says so instead of "up to date".
+- Added: translations — Settings → Language switches the UI between English, Español and Deutsch; strings live in one i18n dictionary and new locales fail the test suite until complete.
+- Locked in (already shipped, now regression-tested): the preview pane stays a sandboxed iframe that only follows localhost dev servers, with "open externally" for anything else.
+
+## 0.9.88
+- Added: codebase index — Settings → Codebase index builds a per-project symbol index (plain JSON on this machine, junk dirs skipped) and offers chats a `search_codebase` tool so the model finds definitions without reading files.
+- Added: usage by model — the Usage view now breaks tokens and engine-reported cost down per model, next to the daily bars.
+- Added: spend ceiling — Settings → Spend ceiling is a hard USD cap per chat that CCE enforces itself: when reported cost crosses it, the chat is interrupted once with a clear note.
+- Added: skills sync — the skills manager diffs disk against the last sync snapshot and drops enable/disable toggles for skills that no longer exist.
+- Added: auto-learn skills — opt-in probe (same approve-each-one flow as auto memory) that proposes a SKILL.md draft after a repeated workflow; nothing is written until you accept it.
+- Added: marketplace — Connectors → Marketplace lists a curated catalog: MCP entries install through the same connector path as the cards above (nothing downloaded), plugin entries just open their HTTPS page.
+
+## 0.9.87
+- Added: engine tabs — Codex, Gemini CLI and OpenCode open as real terminal tabs (Board → Engine tabs, or Settings → Engine tabs to see what is installed). Detection is a PATH scan of the login shell; nothing is spawned until you open a tab.
+- Added: per-agent models — Settings → Agent models picks which model each subagent in `~/.claude/agents` runs; blank keeps the agent file's own default.
+- Added: mobile/web remote with QR pairing — Settings → Mobile access starts a loopback-only web page (token in the URL, shown as a QR code) to watch chats, answer permission prompts and send messages. The token is compared in constant time and is regenerated on every start.
+- Added: SSH hosts — Settings → SSH hosts remembers machines (keys/agent only, never passwords) and opens a real `ssh` terminal tab. Host/user/port fields are validated and the argv is built as an array, so a saved host can never smuggle ssh options or shell syntax.
+
+## 0.9.86
+- Fixed: the auth store no longer calls Electron's `basic_text` fallback "encryption". When the desktop keyring is unavailable, Electron falls back to a fixed-XOR "encryption" that any process can undo; `isEncryptionAvailable()` still says yes there. The store now checks the selected backend and reports honestly, so a key saved without real protection is never presented as protected.
+- Added: the packaged binary ships with the RunAsNode, NODE_OPTIONS and `--inspect` escape hatches fused off (an afterPack hook flips them on the packed copy only; the dev electron is untouched).
+- Added: waking the machine re-checks what sleep broke: connector health is invalidated, the claude CLI is re-probed, and every window is told (`app:resumed`).
+- Added: native crashes (node-pty, the GPU process) leave a local, compressed dump instead of nothing. Upload stays off.
+- Added: the Board view (sidebar → Board) lists every live chat with what it is doing (working / needs you / idle), the background job queue, and any run that was cut short when the app last stopped — with a Resume button per interrupted run.
+- Added: background jobs with a queue: `pipeline:start` and `jobs:add` run long work one job at a time; the board can cancel them, and a finished or failed job raises a notification.
+- Added: task → PR pipeline: one prompt in a folder makes an isolated worktree, runs the chat, commits, pushes the branch and opens the PR (or hands back a compare URL when `gh` is not installed).
+- Added: permission notifications carry Allow / Deny buttons where the OS supports them (Windows/macOS); clicking the answer in the notification answers the pending request. On Linux the notification stays click-to-focus.
+- Added: a chat that is busy when the app stops is remembered on disk; the next start's board offers to resume it by session id.
+
 ## 0.9.85
+- Added: reasoning summaries now reach the chat from every provider protocol. GPT-5 / o-series through the OpenAI Responses API: the request asks for `reasoning.summary` and the streamed, part-only and item-only summary shapes are all captured (each summary once). Gemini: `includeThoughts` is requested and thought parts are shown as thinking instead of leaking into the answer. Engines that hand the summary back in a `summary` field on a thinking block are read too, instead of saying "reasoning not shared by the provider" over text that was right there.
+- Added: Settings > Session caps & model > "Show thinking" now also hides the reasoning summaries in the chat itself (live thoughts, finished thoughts and replayed transcripts alike) and brings them back when ticked again. It still controls whether Claude models are asked for their summaries.
 - Changed: the perf-budget test now renders a 2100-card session through the real chat view and checks that the DOM stays at the virtual window, that later cards cost about what earlier ones did, and that the newest card is shown. It used to split a string and never touch the renderer.
 - Checked, no change: E2E smoke already runs in CI under Xvfb; E1–E3 have tests (0.9.79). Mutation testing stays opt-in: the CI job runs Stryker only when it is installed, and this batch adds no dependencies.
 
