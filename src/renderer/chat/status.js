@@ -1,5 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
-import { persistPending, renderQueued } from './composer.js';
+import { queueRules, renderQueued, scheduleWake, setQueue } from './qpanel.js';
+import { HOLD_TEXT, nextAction } from './queue.js';
 import { pollContext, publishTabState, startContextPolling, stopContextPolling } from './session.js';
 import { basename, fmtTok, modeLabel } from './util.js';
 
@@ -54,21 +55,93 @@ export function setBusy(chat, busy) {
   else {
     if (chat.ctxTimer) { stopContextPolling(chat); pollContext(chat); }
     setStatusLine(chat);
-    // Auto-dispatch next queued message if any
-    if (chat.pendingMsgs && chat.pendingMsgs.length > 0) {
-      const next = chat.pendingMsgs.shift();
-      persistPending(chat);
-      renderQueued(chat);
-      const nextText = typeof next === 'string' ? next : (next && next.text) || '';
-      const nextBlocks = typeof next === 'object' && next ? next.blocks : null;
-      setTimeout(() => {
-        if (!chat.alive) return;
-        ccx.invoke('chat:send', { id: chat.id, text: nextText, blocks: nextBlocks })
-          .then((r) => { if (!r || !r.ok) setBusy(chat, false); })
-          .catch(() => setBusy(chat, false));
-      }, 50);
-    }
+    drainQueue(chat);
   }
+}
+
+/** Restore a mode, model or effort a queued item changed for its own turn. */
+async function restoreOverrides(chat) {
+  const r = chat.restoreAfterTurn;
+  if (!r) return;
+  chat.restoreAfterTurn = null;
+  try {
+    if (r.mode && r.mode !== chat.mode) { const x = await ccx.invoke('chat:set-mode', { id: chat.id, mode: r.mode }); if (x.ok) { chat.mode = r.mode; if (chat.modeSel) chat.modeSel.value = r.mode; } }
+    if (r.model !== undefined && r.model !== chat.model) { const x = await ccx.invoke('chat:set-model', { id: chat.id, model: r.model }); if (x.ok) chat.model = x.model || r.model; }
+    if (r.effort !== undefined && r.effort !== chat.effort) { chat.effort = r.effort; await ccx.invoke('chat:effort', { id: chat.id, effort: r.effort }); }
+  } catch { /* the chat keeps what it has */ }
+}
+
+/** A queued item's own mode, model or effort, remembered so they can be put back. */
+export async function applyOverrides(chat, item) {
+  const snap = {};
+  try {
+    if (item.mode && item.mode !== chat.mode) {
+      const x = await ccx.invoke('chat:set-mode', { id: chat.id, mode: item.mode });
+      if (x.ok) { snap.mode = chat.mode; chat.mode = item.mode; if (chat.modeSel) chat.modeSel.value = item.mode; }
+    }
+    if (item.model && item.model !== chat.model) {
+      const prev = chat.model;
+      const x = await ccx.invoke('chat:set-model', { id: chat.id, model: item.model });
+      if (x.ok) { snap.model = prev; chat.model = x.model || item.model; }
+    }
+    if (item.effort && item.effort !== chat.effort) {
+      snap.effort = chat.effort || '';
+      chat.effort = item.effort;
+      await ccx.invoke('chat:effort', { id: chat.id, effort: item.effort });
+    }
+  } catch { /* run it with what the chat has */ }
+  if (Object.keys(snap).length) chat.restoreAfterTurn = snap;
+}
+
+function notifyQueue(chat, text) {
+  try {
+    if (document.hasFocus()) return;
+    if (window.state && window.state.settings && window.state.settings.notifyOnDone === false) return;
+    if (typeof Notification !== 'undefined') new Notification('Claude Code Enhanced', { body: text, silent: false });
+  } catch { /* no notification support */ }
+}
+
+/**
+ * Run the next queued item when the chat is idle, unless a rule holds it.
+ * Safe to call at any time: it does nothing while the chat is busy.
+ */
+export async function drainQueue(chat) {
+  if (!chat.alive || chat.busy) return;
+  await restoreOverrides(chat);
+  const list = chat.pendingMsgs || [];
+  const act = nextAction(list, {
+    paused: chat.queuePaused,
+    lastTurnError: chat.lastTurnError && !chat.queueOverride,
+    permWaiting: chat.permCount > 0 && !chat.queueOverride,
+    spendWarn: chat.spendWarn && !chat.queueOverride,
+    rules: queueRules(),
+  });
+  if (!act) {
+    if (chat.queueRanAny) { chat.queueRanAny = false; notifyQueue(chat, 'The queue is done.'); }
+    chat.queueHeld = null;
+    return;
+  }
+  if (act.hold) {
+    const first = chat.queueHeld !== act.hold;
+    chat.queueHeld = act.hold === 'paused' ? null : act.hold;
+    renderQueued(chat);
+    if (act.hold === 'scheduled') scheduleWake(chat);
+    else if (first && act.hold !== 'paused') notifyQueue(chat, HOLD_TEXT[act.hold]);
+    return;
+  }
+  chat.queueHeld = null;
+  chat.queueOverride = false;
+  const next = act.run;
+  chat.queueRanAny = true;
+  setQueue(chat, list.slice(1));
+  await applyOverrides(chat, next);
+  setTimeout(() => {
+    if (!chat.alive) return;
+    chat.lastTurnError = false;
+    ccx.invoke('chat:send', { id: chat.id, text: next.text, blocks: next.blocks })
+      .then((r) => { if (!r || !r.ok) setBusy(chat, false); })
+      .catch(() => setBusy(chat, false));
+  }, 50);
 }
 
 export function setStatusLine(chat) {

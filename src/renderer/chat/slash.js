@@ -4,6 +4,8 @@ import { openCustomModel } from './picker.js';
 import { createSession } from './session.js';
 import { appendError, scrollDownSoft } from './transcript.js';
 import { el, fmtTok } from './util.js';
+import { applySlashToken, highlightParts, loadRecent, pushRecent, rankCommands, slashTokenAt, windowRange, SECTION_ORDER } from './cmdmatch.js';
+import { ensurePanes, LIST_H, ROW_H, setPreview } from './preview.js';
 
 /* ---------------- built-in slash commands ---------------- */
 
@@ -111,9 +113,17 @@ const OWN_SLASH = [
   { name: 'diff', description: 'Open the last edit diff' },
   { name: 'terminal', description: 'Open a terminal in this folder' },
   { name: 'preview', description: 'Open the Preview tab' },
-];
+].map((c) => ({ ...c, own: true }));
 
 const PANE_COMMANDS = { '/context': 'tasks', '/files': 'files', '/changes': 'changes', '/diff': 'diff', '/terminal': 'terminal', '/preview': 'preview' };
+
+const recentKey = (chat) => 'cce.slashRecent.' + (chat.cwd || '');
+
+/** Remember a command the user ran so it floats to the top next time. */
+export function noteSlashUsed(chat, text) {
+  const m = /^\/([^\s]+)/.exec(text || '');
+  if (m) pushRecent(localStorage, recentKey(chat), m[1]);
+}
 
 /**
  * Every command the session offers, with descriptions. The engine only lists
@@ -121,7 +131,8 @@ const PANE_COMMANDS = { '/context': 'tasks', '/files': 'files', '/changes': 'cha
  * session directly instead, once.
  */
 async function loadSlashCommands(chat) {
-  if (chat.slashCatalog) return chat.slashCatalog;
+  // Skills and plugins can appear mid-session: ask the engine again after a minute.
+  if (chat.slashCatalog && Date.now() - (chat.slashCatalogAt || 0) < 60000) return chat.slashCatalog;
   if (!chat.slashLoading) {
     chat.slashLoading = (async () => {
       let live = [];
@@ -132,6 +143,8 @@ async function loadSlashCommands(chat) {
       if (!live.length) live = (chat.commands || []).map(name => ({ name }));
       const seen = new Set();
       chat.slashCatalog = OWN_SLASH.concat(live).filter(c => c && c.name && !seen.has(c.name) && seen.add(c.name));
+      chat.slashCatalogAt = Date.now();
+      chat.cmdDetail = null;
       chat.slashLoading = null;
       return chat.slashCatalog;
     })();
@@ -140,43 +153,150 @@ async function loadSlashCommands(chat) {
 }
 
 export async function maybeSlash(chat) {
-  const v = chat.composer.value;
-  if (!(v.startsWith('/') && !v.includes(' '))) return hideSlash(chat);
+  const pos = chat.composer.selectionStart ?? chat.composer.value.length;
+  const tok = slashTokenAt(chat.composer.value, pos);
+  if (!tok) return hideSlash(chat);
   const all = await loadSlashCommands(chat);
   // The user may have typed on while the list loaded.
-  const now = chat.composer.value;
-  if (!(now.startsWith('/') && !now.includes(' '))) return hideSlash(chat);
-  const q = now.slice(1).toLowerCase();
-  const starts = all.filter(c => c.name.toLowerCase().startsWith(q));
-  const contains = q ? all.filter(c => !c.name.toLowerCase().startsWith(q) && c.name.toLowerCase().includes(q)) : [];
-  chat.slashItems = starts.concat(contains).slice(0, 24);
-  if (!chat.slashItems.length) return hideSlash(chat);
-  if (chat.slashIdx < 0 || chat.slashIdx >= chat.slashItems.length) chat.slashIdx = 0;
+  const now = slashTokenAt(chat.composer.value, chat.composer.selectionStart ?? chat.composer.value.length);
+  if (!now) return hideSlash(chat);
+  chat.slashToken = now;
+  const rows = rankCommands(all, now.query.toLowerCase(), loadRecent(localStorage, recentKey(chat)));
+  if (!rows.length) return hideSlash(chat);
+  // Flat list: a header row before each section, then its commands.
+  const flat = [];
+  const items = [];
+  let last = null;
+  for (const r of rows) {
+    if (!now.query && r.section !== last) { flat.push({ header: r.section }); last = r.section; }
+    flat.push({ row: r, index: items.length });
+    items.push(r.c);
+  }
+  chat.slashFlat = flat;
+  chat.slashRows = rows;
+  chat.slashItems = items;
+  if (chat.slashIdx < 0 || chat.slashIdx >= items.length) chat.slashIdx = 0;
   renderSlash(chat);
 }
 
+function flatIndexOf(chat, idx) {
+  return chat.slashFlat.findIndex((f) => f.row && f.index === idx);
+}
+
 function renderSlash(chat) {
-  chat.slash.innerHTML = '';
-  chat.slashItems.forEach((c, i) => {
-    const item = el('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''));
-    item.appendChild(el('span', 'slash-name', '/' + c.name + (c.argumentHint ? ' ' + c.argumentHint : '')));
-    if (c.description) item.appendChild(el('span', 'slash-desc', c.description));
-    item.addEventListener('mousedown', (e) => { e.preventDefault(); chat.slashIdx = i; applySlash(chat); });
-    chat.slash.appendChild(item);
-  });
+  ensurePanes(chat);
   chat.slash.classList.remove('hidden');
+  chat.slashList.style.maxHeight = LIST_H + 'px';
+  chat.slashSpacer.style.height = chat.slashFlat.length * ROW_H + 'px';
+  paintWindow(chat);
+  if (!chat.slashWired) {
+    chat.slashWired = true;
+    chat.slashList.addEventListener('scroll', () => paintWindow(chat), { passive: true });
+  }
+  showSelected(chat, true);
+}
+
+function paintWindow(chat) {
+  const list = chat.slashList;
+  for (const n of [...list.querySelectorAll('.slash-item, .slash-section')]) n.remove();
+  const { first, last } = windowRange(chat.slashFlat.length, ROW_H, list.scrollTop, LIST_H);
+  for (let i = first; i < last; i++) {
+    const f = chat.slashFlat[i];
+    let node;
+    if (f.header) {
+      node = el('div', 'slash-section', f.header);
+    } else {
+      const { c, badge, indices } = f.row;
+      node = el('div', 'slash-item' + (f.index === chat.slashIdx ? ' sel' : ''));
+      node.setAttribute('role', 'option');
+      node.dataset.idx = String(f.index);
+      node.id = 'slash-' + f.index;
+      const name = el('span', 'slash-name');
+      name.appendChild(document.createTextNode('/'));
+      for (const part of highlightParts(c.name, indices)) {
+        name.appendChild(part.hit ? el('mark', 'slash-hit', part.text) : document.createTextNode(part.text));
+      }
+      if (c.argumentHint) name.appendChild(el('span', 'slash-arg', ' ' + c.argumentHint));
+      node.appendChild(name);
+      if (c.description) node.appendChild(el('span', 'slash-desc', c.description));
+      node.appendChild(el('span', 'slash-badge', badge));
+      node.addEventListener('mousedown', (e) => { e.preventDefault(); chat.slashIdx = f.index; applySlash(chat); });
+      node.addEventListener('mouseenter', () => { if (chat.slashIdx !== f.index) { chat.slashIdx = f.index; showSelected(chat, false); } });
+    }
+    node.style.top = i * ROW_H + 'px';
+    list.appendChild(node);
+  }
+}
+
+/** Mark the selected row, scroll it into view, load its preview. */
+function showSelected(chat, scroll) {
+  const list = chat.slashList;
+  const fi = flatIndexOf(chat, chat.slashIdx);
+  if (fi >= 0 && scroll) {
+    const top = fi * ROW_H;
+    if (top < list.scrollTop) list.scrollTop = top;
+    else if (top + ROW_H > list.scrollTop + LIST_H) list.scrollTop = top + ROW_H - LIST_H;
+    paintWindow(chat);
+  }
+  for (const n of list.querySelectorAll('.slash-item')) n.classList.toggle('sel', n.dataset.idx === String(chat.slashIdx));
+  const sel = chat.slashItems[chat.slashIdx];
+  if (sel) chat.composer.setAttribute('aria-activedescendant', 'slash-' + chat.slashIdx);
+  clearTimeout(chat.slashPreviewTimer);
+  chat.slashPreviewTimer = setTimeout(() => loadPreview(chat, sel), 80);
+}
+
+async function loadPreview(chat, c) {
+  if (!c) return setPreview(chat, null);
+  const badge = chat.slashRows.find((r) => r.c === c)?.badge || '';
+  const base = { title: '/' + c.name, badge, meta: [c.argumentHint, c.description].filter(Boolean).join(' · ') };
+  setPreview(chat, base);
+  if (c.own) return;
+  chat.cmdDetail = chat.cmdDetail || new Map();
+  let d = chat.cmdDetail.get(c.name);
+  if (!d) {
+    try { const r = await ccx.invoke('cmd:detail', { name: c.name, cwd: chat.cwd }); d = r && r.ok ? r : { found: false }; } catch { d = { found: false }; }
+    chat.cmdDetail.set(c.name, d);
+  }
+  if (chat.slashItems[chat.slashIdx] !== c) return;   // the user moved on
+  if (d.found) setPreview(chat, { ...base, meta: [d.argumentHint || c.argumentHint, d.description || c.description, d.path].filter(Boolean).join(' · '), body: d.preview, cut: d.cut });
 }
 
 export function moveSlash(chat, d) {
   if (!chat.slashItems.length) return;
   chat.slashIdx = (chat.slashIdx + d + chat.slashItems.length) % chat.slashItems.length;
-  renderSlash(chat);
+  showSelected(chat, true);
 }
 
+/** Jump to the start / end or by a page. */
+export function jumpSlash(chat, where) {
+  const n = chat.slashItems.length;
+  if (!n) return;
+  const page = Math.floor(LIST_H / ROW_H) - 1;
+  chat.slashIdx = where === 'home' ? 0 : where === 'end' ? n - 1
+    : Math.max(0, Math.min(n - 1, chat.slashIdx + (where === 'pagedown' ? page : -page)));
+  showSelected(chat, true);
+}
+
+/** Put the chosen command in the box. The user adds arguments, then sends. */
 export function applySlash(chat) {
   const c = chat.slashItems[chat.slashIdx >= 0 ? chat.slashIdx : 0];
-  if (c) { chat.composer.value = '/' + c.name + ' '; chat.composer.focus(); }
+  if (c) {
+    const tok = chat.slashToken || slashTokenAt(chat.composer.value, chat.composer.selectionStart);
+    const out = tok ? applySlashToken(chat.composer.value, tok, c.name) : { value: '/' + c.name + ' ', caret: c.name.length + 2 };
+    chat.composer.value = out.value;
+    chat.composer.setSelectionRange(out.caret, out.caret);
+    chat.composer.focus();
+    hideSlash(chat);
+    return;
+  }
   hideSlash(chat);
 }
 
-export function hideSlash(chat) { chat.slash.classList.add('hidden'); chat.slashIdx = -1; }
+export function hideSlash(chat) {
+  chat.slash.classList.add('hidden');
+  chat.slashIdx = -1;
+  clearTimeout(chat.slashPreviewTimer);
+  chat.composer.removeAttribute('aria-activedescendant');
+}
+
+export { SECTION_ORDER };

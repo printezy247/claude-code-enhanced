@@ -45,6 +45,19 @@ export function appendSummary(chat, text, uuid) {
 
 /** A thin rail of ticks on the left edge, one per request the user sent; hover to read it,
  *  click to jump there. Shown only while the left sidebar is hidden (CSS). */
+/** One word on how a request ended: running, answered, error, no reply. */
+export function replyStatus(chat, m, isLast) {
+  let n = m.nextElementSibling;
+  let answered = false;
+  while (n && !n.classList.contains('user-msg')) {
+    if (n.classList.contains('error-msg')) return 'error';
+    if (n.classList.contains('assistant-msg')) answered = true;
+    n = n.nextElementSibling;
+  }
+  if (isLast && chat.busy) return 'still running';
+  return answered ? 'answered' : 'no reply yet';
+}
+
 export function setupRequestRail(chat) {
   const body = chat.pane.querySelector('.chat-body');
   if (!body || !chat.msgs) return;
@@ -76,7 +89,9 @@ export function setupRequestRail(chat) {
     const b = tickOf(e), m = b && items[Number(b.dataset.i)];
     if (!m) return;
     const text = textOf(m);
-    tip.textContent = text.length > 280 ? text.slice(0, 280) + '…' : text;
+    const lines = text.split('\n');
+    const head = lines.slice(0, 3).join('\n');
+    tip.textContent = (head.length > 280 ? head.slice(0, 280) + '…' : head + (lines.length > 3 ? '\n…' : '')) + '\n— ' + replyStatus(chat, m, items[items.length - 1] === m);
     tip.classList.remove('hidden');
     const br = b.getBoundingClientRect(), pr = body.getBoundingClientRect();
     tip.style.top = Math.max(4, Math.min(br.top - pr.top - 8, pr.height - tip.offsetHeight - 4)) + 'px';

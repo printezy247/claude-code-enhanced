@@ -2,6 +2,7 @@
 import { elIcon, loadMonaco } from '../app/core.js';
 import { switchView } from '../app/tabs.js';
 import { makePanel } from './panels.js';
+import { codeFileName } from './cmdmatch.js';
 import { el } from './util.js';
 
 /** navigator.clipboard is refused in some Electron states (focus, permissions); fall back to the main process. */
@@ -27,6 +28,31 @@ export function addCopyBtn(host, getText, cls) {
   host.appendChild(b);
 }
 
+/** Language label on the left, Wrap and Save on the right. Copy stays where it was. */
+function addCodeHeader(pre, code, plain) {
+  const m = /(?:^|\s)language-([\w+#-]+)/.exec(code.className || '');
+  const lang = m ? m[1] : '';
+  const head = el('div', 'code-head');
+  head.appendChild(el('span', 'code-lang', lang || 'text'));
+  const wrap = el('button', 'code-act', 'Wrap');
+  wrap.type = 'button';
+  wrap.setAttribute('aria-pressed', 'false');
+  wrap.addEventListener('click', () => { const on = pre.classList.toggle('code-wrap'); wrap.setAttribute('aria-pressed', String(on)); });
+  const save = el('button', 'code-act', 'Save');
+  save.type = 'button';
+  save.title = 'Save as ' + codeFileName(lang);
+  save.addEventListener('click', () => {
+    const url = URL.createObjectURL(new Blob([plain], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url; a.download = codeFileName(lang);
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  head.appendChild(wrap);
+  head.appendChild(save);
+  pre.insertBefore(head, pre.firstChild);
+}
+
 export function enhanceMarkdown(container, rawText) {
   addCopyBtn(container, () => rawText, 'msg-copy');
   container.querySelectorAll('pre').forEach(pre => {
@@ -45,6 +71,7 @@ export function enhanceMarkdown(container, rawText) {
       pre.appendChild(code);
     }
     colorizeCode(pre, code, plain);
+    addCodeHeader(pre, code, plain);
     addCopyBtn(pre, () => plain, 'pre-copy');
   });
 }

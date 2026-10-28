@@ -48,7 +48,7 @@ describe('a send the engine refuses', () => {
 });
 
 describe('queued messages', () => {
-  it('are remembered as text only, never with their images', async () => {
+  it('keep their text in storage and their images in files, never in storage', async () => {
     const h = loadRenderer({ ipc: ipc() });
     await flush();
     const chat = h.window.Chat.chats.get('c1');
@@ -57,8 +57,11 @@ describe('queued messages', () => {
     chat.pendingImages.push({ ...img });
     chat.send('queue');
     const stored = h.window.localStorage.getItem('cce:pending:/tmp');
-    expect(JSON.parse(stored)).toEqual(['after this turn']);
-    expect(stored).not.toContain(img.data);
+    const saved = JSON.parse(stored);
+    expect(saved.map((x) => x.text)).toEqual(['after this turn']);
+    expect(saved[0].imgCount).toBe(1);
+    expect(stored).not.toContain(img.data);   // the image goes to main as a 0600 file instead
+    expect(h.calls.some((c) => c.channel === 'draft:images' && c.payload && c.payload.op === 'save' && /^queue:\/tmp:/.test(c.payload.key) && c.payload.images.length === 1)).toBe(true);
   });
 
   it('reads an older object-shaped queue back as text', async () => {
@@ -69,7 +72,7 @@ describe('queued messages', () => {
     await h.window.Chat.createSession({ cwd: '/tmp' });
     await flush(4);
     const chat = [...h.window.Chat.chats.values()].pop();
-    expect(chat.pendingMsgs).toEqual(['plain', 'with image']);
+    expect(chat.pendingMsgs.map((m) => m.text)).toEqual(['plain', 'with image']);
   });
 });
 

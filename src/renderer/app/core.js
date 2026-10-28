@@ -30,14 +30,20 @@ export function elIcon(tag, cls, markup) {
   return n;
 }
 
-export function toast(msg, kind = '') {
+export function toast(msg, kind = '', action) {
   const t = el('div', 'toast ' + kind, msg);
+  if (action && action.label) {
+    const b = el('button', 'toast-action', action.label);
+    b.addEventListener('click', () => { t.remove(); action.onClick(); });
+    t.appendChild(b);
+  }
   // An error toast is the app telling you something went wrong; a screen-reader
   // user was never told, because the toast area was not a live region. #53
   if (kind === 'err') t.setAttribute('role', 'alert');
   $('#toasts').appendChild(t);
-  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, 3600);
-  setTimeout(() => t.remove(), 4000);
+  const life = action ? 6000 : 3600;
+  setTimeout(() => { t.style.opacity = '0'; t.style.transition = 'opacity .3s'; }, life);
+  setTimeout(() => t.remove(), life + 400);
 }
 
 /**

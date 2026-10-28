@@ -19,6 +19,8 @@ describe('discipline prompt', () => {
 
   it('names a todo tool only when the chat has one', () => {
     expect(appendPromptFor(undefined, [])).toMatch(/TodoWrite/);
+    // A newer engine has no TodoWrite: the default prompt must not insist on it.
+    expect(appendPromptFor(undefined, [])).toMatch(/TaskCreate\/TaskUpdate, or TodoWrite if/);
     expect(appendPromptFor(['Read', 'TodoWrite'], [])).toMatch(/TodoWrite/);
     expect(appendPromptFor(['Read', 'Bash'], [])).not.toMatch(/TodoWrite|TaskCreate/);
     expect(appendPromptFor(undefined, ['TodoWrite', 'TaskCreate'])).not.toMatch(/TodoWrite|TaskCreate/);

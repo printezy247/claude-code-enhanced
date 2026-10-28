@@ -8,13 +8,15 @@ import { enhanceMarkdown, wireRunMenu } from './markdown.js';
 import { renderProjectInfo, wireHeaderMenu } from './panels.js';
 import { endPermCountdown } from './permissions.js';
 import { discoverModels, fillModelSelector, guardSwitch, openCustomModel, refreshEffort, setEffort, switchModel, switchProvider, wireModelPicker } from './picker.js';
-import { applySlash, doCompact, handleBuiltin, hideSlash, maybeSlash, moveSlash } from './slash.js';
-import { setBusy, setStatusLine, updateBusyUi } from './status.js';
+import { applySlash, doCompact, handleBuiltin, hideSlash, jumpSlash, maybeSlash, moveSlash, noteSlashUsed } from './slash.js';
+import { enqueue, restoreQueue, setQueue } from './qpanel.js';
+import { wireTargetChip } from './target.js';
+import { cancelChain, finishWorkflowRun, wireWorkflowPicker } from './workflows.js';
+import { drainQueue, setBusy, setStatusLine, updateBusyUi } from './status.js';
 import { thoughtNode } from './stream.js';
 import { clearTodos, makeToolCard, renderTodoItems, seedTodosFromPrompt } from './tools.js';
 import { appendCommandNote, appendError, appendSummary, appendUser, installVirtualization, nearBottom, scrollDown, scrollDownSoft, setupRequestRail, updateLatestBtn } from './transcript.js';
 import { basename, chats, el, md, modeLabel, splitThink } from './util.js';
-import { wireWorkflowPicker } from './workflows.js';
 
 /* ---------------- session lifecycle ---------------- */
 
@@ -62,6 +64,7 @@ export async function createSession(opts) {
         </div>
         <div class="chat-footbar">
           <button class="foot-pick chat-wf-btn" title="Workflows — multi-step task flows" aria-haspopup="menu"><span data-icon="flow"></span><span>workflows</span><span class="caret" data-icon="chevron"></span></button>
+          <button class="foot-pick chat-target-btn" type="button" aria-haspopup="menu" aria-expanded="false"><span class="tg-label">Local</span><span class="caret" data-icon="chevron"></span></button>
           <button class="foot-pick chat-model-btn" type="button" aria-haspopup="listbox" title="Model and provider (switching provider keeps this conversation)"><span class="mb-label">model</span><span class="caret" data-icon="chevron"></span></button>
           <select class="foot-pick chat-model-foot hidden" tabindex="-1" aria-hidden="true"></select>
           <select class="foot-pick chat-mode-foot" title="Permission mode"></select>
@@ -88,7 +91,7 @@ export async function createSession(opts) {
     projEl: pane.querySelector('.chat-project'), titleEl: pane.querySelector('.chat-title'),
     headerEl: pane.querySelector('.chat-header'),
     modelSel: pane.querySelector('.chat-model-foot'), modelBtn: pane.querySelector('.chat-model-btn'), modeSel: pane.querySelector('.chat-mode-foot'),
-    effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'),
+    effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'), targetBtn: pane.querySelector('.chat-target-btn'),
     // Element ref and queue *counter* must not share a name: showQueued used
     // to overwrite the element with a number and the next send threw.
     queuedEl: pane.querySelector('.chat-queued'),
@@ -160,11 +163,8 @@ export async function createSession(opts) {
     const d = localStorage.getItem('cce:draft:' + (chat.cwd || ''));
     if (d) { chat.composer.value = d; autosize(chat.composer); }
   } catch { /* ignore */ }
-  try {
-    const p = JSON.parse(localStorage.getItem('cce:pending:' + (chat.cwd || '')) || '[]')
-      .map((m) => (typeof m === 'string' ? m : (m && m.text) || '')).filter(Boolean);
-    if (p.length) { chat.pendingMsgs = p; renderQueued(chat); }
-  } catch { /* ignore */ }
+  chat.drainQueue = () => drainQueue(chat);
+  restoreQueue(chat);
   restoreDraftImages(chat);
   // The nav badge counts every open tab, chat tabs included.
   if (typeof window.updateTabCount === 'function') window.updateTabCount();
@@ -194,6 +194,7 @@ export async function createSession(opts) {
   chat.modeSel.value = chat.mode;
   refreshEffort(chat);
   wireModelPicker(chat);
+  wireTargetChip(chat, res);
   chat.modelSel.addEventListener('change', async () => {
     const v = chat.modelSel.value;
     if (!(await guardSwitch(chat, v))) { fillModelSelector(chat); return; }
@@ -216,7 +217,7 @@ export async function createSession(opts) {
     } else { toast(r.error, 'err'); chat.modeSel.value = chat.mode; }
   });
   chat.effortBtn.addEventListener('change', () => setEffort(chat, chat.effortBtn.value));
-  chat.stopBtn.addEventListener('click', () => ccx.invoke('chat:interrupt', { id: chat.id }));
+  chat.stopBtn.addEventListener('click', () => { cancelChain(chat); finishWorkflowRun(chat, 'stopped'); ccx.invoke('chat:interrupt', { id: chat.id }); });
   // Header overflow menu. 13 buttons wrapped onto three rows; everything that
   // is not model/mode/stop now lives behind one "⋯". #33
   const forkConversation = async () => {
@@ -242,6 +243,7 @@ export async function createSession(opts) {
     const text = chat.composer.value.trim();
     const blocks = chat.pendingImages.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }));
     if ((!text && !blocks.length) || !chat.alive) return;
+    if (text.startsWith('/')) noteSlashUsed(chat, text);
     if (text.startsWith('/') && !blocks.length && handleBuiltin(chat, text)) {
       chat.composer.value = '';
       autosize(chat.composer);
@@ -249,6 +251,7 @@ export async function createSession(opts) {
       return;
     }
     chat.follow = true;   // sending jumps back to the live end
+    chat.spendWarn = false;
     updateLatestBtn(chat);
     if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
     try { localStorage.removeItem('cce:draft:' + (chat.cwd || '')); } catch { /* ignore */ }
@@ -257,9 +260,7 @@ export async function createSession(opts) {
       const mode = action || chat.busyMode || 'queue';
       if (mode === 'queue') {
         appendUser(chat, text || '(image)');
-        chat.pendingMsgs.push(blocks.length ? { text, blocks } : text);
-        renderQueued(chat);
-        persistPending(chat);
+        enqueue(chat, { text, blocks });
         chat.msgs.appendChild(el('div', 'sys-note', '⏭ queued — will run after current turn finishes'));
         scrollDownSoft(chat);
         chat.composer.value = '';
@@ -349,6 +350,17 @@ export async function createSession(opts) {
   // prompt history: ↑ / ↓ when the composer is empty
   chat.composer.addEventListener('keydown', (e) => {
     if (chat.composer.value === '' && !chat.slash.classList.contains('hidden')) return;
+    if (e.key === 'ArrowUp' && chat.composer.value === '' && chat.pendingMsgs.length && !chat.pendingImages.length) {
+      // Edit the newest queued message: it comes back into the box.
+      e.preventDefault();
+      const last = chat.pendingMsgs[chat.pendingMsgs.length - 1];
+      chat.composer.value = last.text;
+      for (const b of last.blocks || []) if (b && b.source) chat.pendingImages.push({ media_type: b.source.media_type, data: b.source.data });
+      renderImageChips(chat);
+      setQueue(chat, chat.pendingMsgs.slice(0, -1));
+      autosize(chat.composer);
+      return;
+    }
     if (e.key === 'ArrowUp' && chat.composer.value === '' && chat.promptHistory.length) {
       e.preventDefault();
       chat.histIdx = Math.min(chat.histIdx + 1, chat.promptHistory.length - 1);
@@ -411,6 +423,7 @@ export async function createSession(opts) {
     if (chat.busy) {
       const text = chat.composer.value.trim();
       if (!text && !chat.pendingImages.length) {
+        cancelChain(chat); finishWorkflowRun(chat, 'stopped');
         ccx.invoke('chat:interrupt', { id: chat.id });
         return;
       }
@@ -457,8 +470,13 @@ export async function createSession(opts) {
     if (!chat.slash.classList.contains('hidden')) {
       if (e.key === 'ArrowDown') { e.preventDefault(); moveSlash(chat, 1); return; }
       if (e.key === 'ArrowUp') { e.preventDefault(); moveSlash(chat, -1); return; }
+      if (!chat.atMode && (e.key === 'PageDown' || e.key === 'PageUp')) { e.preventDefault(); jumpSlash(chat, e.key.toLowerCase()); return; }
+      if (!chat.atMode && e.ctrlKey && (e.key === 'Home' || e.key === 'End')) { e.preventDefault(); jumpSlash(chat, e.key.toLowerCase()); return; }
       if (e.key === 'Tab' || (e.key === 'Enter' && chat.slashItems.length)) {
-        e.preventDefault(); (chat.atMode ? applyAt(chat) : applySlash(chat)); return;
+        e.preventDefault();
+        if (chat.atMode) applyAt(chat);
+        else applySlash(chat);
+        return;
       }
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideSlash(chat); return; }
     }
@@ -601,6 +619,7 @@ export function publishTabState(chat) {
   if (!meta) return;
   const busy = !!chat.busy;
   const needsYou = !!(chat.permCount > 0) || !!(chat.elicCount > 0) || (!!chat.queued && chat.queued > 0);
+  if (meta.tabEl) meta.tabEl.dataset.queued = (chat.pendingMsgs && chat.pendingMsgs.length) ? String(chat.pendingMsgs.length) : '';
   if (meta.busy === busy && meta.needsYou === needsYou) return;
   meta.busy = busy;
   meta.needsYou = needsYou;
