@@ -1,5 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
-import { elIcon, toast } from '../app/core.js';
+import { elIcon, loadMonaco, toast } from '../app/core.js';
 import { enhanceMarkdown, monacoThemeName } from './markdown.js';
 import { openPlanViewer, updatePlanViewer } from './panels.js';
 import { noteToolOutcome } from './picker.js';
@@ -601,11 +601,34 @@ export function renderDiff(name, input, source) {
   const wrap = el('div', 'monaco-diff pending');
   wrap.__diffData = { name, input, source };
   wrap.appendChild(el('div', 'hint', 'click the card header to show the diff'));
-  wrap.__init = () => {
+  const init = () => {
     if (!wrap.__init) return;
     wrap.__init = null;
     wrap.classList.remove('pending');
-    if (!window.monaco || !window.monaco.editor) { renderTextDiff(wrap, name, input); return; }
+    if (!window.monaco || !window.monaco.editor) {
+      // Monaco loads on first use: say so, then build the editor, or fall
+      // back to the text diff when the bundle is not there.
+      wrap.innerHTML = '';
+      wrap.appendChild(el('div', 'hint', 'loading diff…'));
+      loadMonaco().then((m) => {
+        wrap.innerHTML = '';
+        if (!m || !m.editor) { renderTextDiff(wrap, name, input); return; }
+        // Scrolled out of the window while loading: an editor built now
+        // could never be disposed. Stay pending until it is opened again.
+        if (!wrap.isConnected) {
+          wrap.classList.add('pending');
+          wrap.appendChild(el('div', 'hint', 'click the card header to show the diff'));
+          wrap.__init = init;
+          return;
+        }
+        build();
+      });
+      return;
+    }
+    build();
+  };
+  wrap.__init = init;
+  const build = () => {
     wrap.innerHTML = '';
     const host = el('div', 'monaco-host');
     wrap.appendChild(host);

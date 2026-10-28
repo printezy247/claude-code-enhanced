@@ -8,6 +8,9 @@ import { Chat } from '../chat/index.js';
 
 export let splitTerm = null;
 
+// Connector status for the Overview card, per chat. #perf-connectors
+const CONNECTOR_STATUS_TTL_MS = 30_000;
+
 let splitSession = null;
 
   // { id } — the PTY behind the right-rail terminal
@@ -661,11 +664,11 @@ function renderTasks(target, cwd, only) {
   const connRows = el('div', 'task-rows');
   conn.inner.appendChild(connRows);
   if (chat) {
-    // Cache connector status per chat for 10s to avoid hammering the engine
-    // on repeated rail redraws. #perf-connectors
+    // Cache connector status per chat to avoid hammering the engine on
+    // repeated rail redraws; Refresh and a reconnect clear it. #perf-connectors
     const cacheKey = 'conn:' + chat.id;
     const cached = window.__connCache && window.__connCache[cacheKey];
-    const fetcher = (cached && (Date.now() - cached.at < 10000))
+    const fetcher = (cached && (Date.now() - cached.at < CONNECTOR_STATUS_TTL_MS))
       ? Promise.resolve(cached.r)
       : ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).then((r) => {
           window.__connCache = window.__connCache || {};

@@ -516,7 +516,8 @@ function createWindow(initialState) {
       setTimeout(() => {
         if (!w || w.isDestroyed()) return;
         w.webContents.executeJavaScript(
-          '(async () => { const out = { monaco: !!(window.monaco && window.monaco.editor), diff: "n/a" };'
+          '(async () => { if (window.cceLoadMonaco) await window.cceLoadMonaco();'
+          + ' const out = { monaco: !!(window.monaco && window.monaco.editor), diff: "n/a" };'
           + ' try { const d = document.createElement("div");'
           + ' d.style.cssText = "position:absolute;left:-9999px;width:500px;height:200px";'
           + ' document.body.appendChild(d);'

@@ -126,6 +126,39 @@ export const TERM_THEME = {
   brightCyan: '#a8dcff', brightWhite: '#ffffff',
 };
 
+/* ================= Monaco, on first use ================= */
+
+let monacoLoading = null;
+/**
+ * The diff editor and code-block colours come from Monaco, a 4.6 MB bundle
+ * that every start used to parse before the window could paint. It loads the
+ * first time a diff or code block asks for it. Resolves with window.monaco,
+ * or null when the bundle is missing (fresh clone before `npm run vendor`),
+ * so callers keep their plain-text fallback.
+ */
+export function loadMonaco() {
+  if (window.monaco && window.monaco.editor) return Promise.resolve(window.monaco);
+  if (monacoLoading) return monacoLoading;
+  const add = (src) => new Promise((ok, bad) => {
+    const s = document.createElement('script');
+    s.src = src;
+    s.onload = ok;
+    s.onerror = bad;
+    document.head.appendChild(s);
+  });
+  const css = document.createElement('link');
+  css.rel = 'stylesheet';
+  css.href = 'vendor/monaco.css';
+  document.head.appendChild(css);
+  monacoLoading = add('vendor/monaco-env.js')
+    .then(() => add('vendor/monaco.js'))
+    .then(() => {
+      applyTheme(state.theme);
+      return (window.monaco && window.monaco.editor) ? window.monaco : null;
+    }, () => null);
+  return monacoLoading;
+}
+
 /* ================= theme (#47) ================= */
 
 export function applyTheme(theme) {

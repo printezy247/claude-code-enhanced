@@ -10,7 +10,7 @@ import { Chat } from './chat/index.js';
 import { ProvidersUI } from './providers/ui.js';
 import { refreshMcpList, renderConnectors } from './app/connectors.js';
 import { ensureConvoDrop, loadConversationList, renderConversationList, renderOpenTabs, toggleConversations } from './app/conversations.js';
-import { $, applyTheme, elIcon, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
+import { $, applyTheme, elIcon, loadMonaco, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
 import { initSplitTabMenu, renderOverview, renderSplit, setAllOverviewCards, splitTerm, toggleOverview, toggleSplit } from './app/overview.js';
 import { openNewSessionModal, openProviderEditor } from './app/provider-forms.js';
 import { parseForceCtx, renderClaudeBanner, renderSettings } from './app/settings.js';
@@ -21,7 +21,7 @@ import { openNewWindow } from './app/window.js';
 
 // What other scripts, the tests and the console reach for.
 Object.assign(window, {
-  Chat, switchView, createSession, toast, state, tabRegistry, killSession,
+  Chat, switchView, createSession, toast, state, tabRegistry, killSession, cceLoadMonaco: loadMonaco,
   recentlyClosedCount, paintDeclaredIcons, elIcon, parseForceCtx,
 });
 
