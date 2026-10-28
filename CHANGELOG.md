@@ -2,6 +2,10 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.85
+- Changed: the perf-budget test now renders a 2100-card session through the real chat view and checks that the DOM stays at the virtual window, that later cards cost about what earlier ones did, and that the newest card is shown. It used to split a string and never touch the renderer.
+- Checked, no change: E2E smoke already runs in CI under Xvfb; E1–E3 have tests (0.9.79). Mutation testing stays opt-in: the CI job runs Stryker only when it is installed, and this batch adds no dependencies.
+
 ## 0.9.84
 - Fixed: auto mode judged shell commands on their raw text, so quoting could hide what the shell runs. `sed '-i' …` passed the "no -i" rule, and `cat ".e""nv"`, `cat \.env` or `cat $'\x2eenv'` passed the secret-file check. Commands are now read the way the shell reads them (quotes and escapes removed, split on `;`, `|`, `&&`, `||` outside quotes). Variables, `$'…'`, subshells, redirects and open quotes make auto mode ask. A glob may not reach a hidden file, the home folder, an absolute path or the parent folder (`ls src/*.js` is still approved).
 - Changed: images pasted into a message you have not sent yet are kept across a crash in files only you can read (0600), named by a hash of the folder. They used to be lost; they are never written to localStorage.
