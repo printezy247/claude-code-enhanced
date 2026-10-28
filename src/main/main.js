@@ -44,6 +44,9 @@ const tools = require('./tools');
 const automemory = require('./automemory');
 const localmodels = require('./localmodels');
 const worktrees = require('./worktrees');
+const { JobQueue } = require('./jobqueue');
+const { runToPR } = require('./pipeline');
+const { createInterruptedStore } = require('./interrupted');
 const gitsurface = require('./gitsurface');
 const workers = require('./workers');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
@@ -87,6 +90,12 @@ const chats = new ChatManager({ proxyToken, contextOf: modelContext, connectorMe
 // same ids and two windows would fight over one chat. This registry is what
 // keeps the windows apart. #feat-multi-window
 const windowRegistry = new WindowRegistry();
+// Background runs: one at a time by default, so two long jobs never fight
+// over the machine or the provider's rate limit. #feat-jobs
+const jobQueue = new JobQueue({ concurrency: 1 });
+// What was running when the app last stopped, so the next start can offer
+// to pick it back up. #feat-run-resume
+const interrupted = createInterruptedStore(path.join(app.getPath('userData'), 'interrupted-runs.json'));
 
 providers.useAuth(auth);
 let win = null;
@@ -1448,9 +1457,27 @@ function registerIpc() {
     }
     // Desktop notification for permission prompts — the card is easy to miss
     // behind a terminal window, and an unanswered one silently times out.
+    // The notification carries Allow/Deny buttons where the OS supports them
+    // (Windows/macOS; on Linux it stays click-to-focus).
     if (evt && evt.kind === 'permission') {
       notify('Claude needs permission: ' + (evt.toolName || 'tool'),
-        'Open Claude Code Enhanced to answer (auto-denies in 6 minutes).', owner);
+        'Allow or deny from the notification, or open Claude Code Enhanced (auto-denies in 6 minutes).', owner, {
+          actions: [{ type: 'button', text: 'Allow' }, { type: 'button', text: 'Deny' }],
+          onAction: (i) => {
+            try { chats.answer(id, evt.requestId, i === 0 ? 'allow' : 'deny'); }
+            catch { /* already answered or timed out */ }
+          },
+        });
+    }
+    // Interrupted-run memory: a turn that starts is written to disk, a turn
+    // that ends is forgotten. Whatever survives a restart is offered back.
+    if (evt && evt.kind === 'status') {
+      const live = chats.chats.get(id);
+      if (evt.busy === true && live) {
+        interrupted.record({ id, cwd: live.cwd || '', sessionId: live.sessionId || null, model: live.model || '' });
+      } else if (evt.busy === false) {
+        interrupted.forget(id);
+      }
     }
     // Finished turns, but only when the window is in the background: a
     // notification for work the user is already watching is noise. #36
@@ -1477,17 +1504,27 @@ function registerIpc() {
    *
    * `target` is the window that must come up when the notification is
    * clicked: the one that owns the chat, not the newest window. #F8
+   * `opts.actions` adds buttons (Windows/macOS); `opts.onAction(i)` receives
+   * the index of the button that was pressed. #feat-notify-actions
    */
-  function notify(title, body, target) {
+  function notify(title, body, target, opts) {
     if (process.env.CCE_QUIET_NOTIFY) return;
     try {
-      const n = new Notification({ title, body });
+      const nOpts = { title, body };
+      if (opts && opts.actions) nOpts.actions = opts.actions;
+      const n = new Notification(nOpts);
       n.on('click', () => {
         // The owning window may be gone by the time the notification is
         // clicked: fall back to the newest window rather than doing nothing. #N1
         const w = (target && !target.isDestroyed()) ? target : win;
         if (w && !w.isDestroyed()) w.show();
       });
+      if (opts && typeof opts.onAction === 'function') {
+        n.on('action', (details) => {
+          const i = details && typeof details.actionIndex === 'number' ? details.actionIndex : 0;
+          try { opts.onAction(i); } catch { /* caller's problem, not the notifier's */ }
+        });
+      }
       n.show();
     } catch { /* notifications unavailable */ }
   }
@@ -1679,6 +1716,8 @@ function registerIpc() {
   handle('chat:close', owned('chats', async ({ id }) => {
     chats.close(id);
     windowRegistry.release('chats', id);
+    // A deliberately closed chat is not an interrupted run. #feat-run-resume
+    interrupted.forget(id);
     return {};
   }));
   handle('chat:skills', async ({ cwd }) => ({ skills: chats.scanSkills(cwd) }));
@@ -2275,6 +2314,115 @@ function registerIpc() {
 
   // desktop-style history index: every session on disk, flat + recency-sorted
   handle('chats:index', async () => ({ sessions: await chats.index() }));
+  // The board: every live chat with what it is doing and whether it needs
+  // the user. #feat-board
+  handle('chats:board', async () => ({
+    rows: [...chats.chats.entries()].map(([id, c]) => ({
+      id,
+      cwd: c.cwd || '',
+      busy: !!c.busy,
+      needsYou: chats._permsOf(id).length,
+      model: c.model || '',
+      sessionId: c.sessionId || null,
+    })),
+  }));
+  // Background jobs: queue, list, cancel. Done/failed jobs notify. #feat-jobs
+  jobQueue.on('update', (job) => {
+    if (job.state === 'done' || job.state === 'failed') {
+      notify('Background job ' + (job.state === 'done' ? 'finished' : 'failed'),
+        job.label + (job.error ? ' — ' + job.error : ''), win);
+    }
+  });
+  /** Resolves when the chat's current turn ends (or the chat is gone). */
+  const waitForIdle = (id, timeoutMs = 30 * 60 * 1000) => new Promise((resolve) => {
+    const onEvt = (eid, evt) => {
+      if (eid !== id || !evt) return;
+      if (evt.kind === 'status' && evt.busy === false) { cleanup(); resolve({ ok: true }); }
+      else if (evt.kind === 'exit' || evt.kind === 'error') { cleanup(); resolve({ ok: false, error: evt.error || 'exited' }); }
+    };
+    const timer = setTimeout(() => { cleanup(); resolve({ ok: false, error: 'turn timed out after 30 minutes' }); }, timeoutMs);
+    const cleanup = () => { clearTimeout(timer); chats.off('event', onEvt); };
+    chats.on('event', onEvt);
+  });
+  handle('jobs:list', async () => ({ jobs: jobQueue.list() }));
+  handle('jobs:cancel', async ({ id }) => ({ canceled: jobQueue.cancel(String(id || '')) }));
+  // A background chat run: created without a window, prompted, waited on,
+  // closed. Permission prompts still raise a notification (with Allow/Deny).
+  handle('jobs:add', async ({ cwd, prompt, label, providerUid, model }) => {
+    if (!prompt) return { ok: false, error: 'a prompt is required' };
+    let dir = null;
+    if (cwd) {
+      dir = path.resolve(String(cwd).replace(/^~(?=\/|$)/, os.homedir()));
+      try { if (!fs.statSync(dir).isDirectory()) return { ok: false, error: 'not a directory: ' + dir }; }
+      catch { return { ok: false, error: 'directory not found: ' + dir }; }
+    }
+    const provider = store.providers.find(p => p.uid === providerUid)
+      || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
+    const job = jobQueue.add({
+      kind: 'chat',
+      label: String(label || prompt).slice(0, 120),
+      cwd: dir || '',
+      run: async (j) => {
+        const created = await chats.create({
+          cwd: dir || store.settings.defaultCwd || os.homedir(),
+          providerInstance: provider,
+          settings: store.settings,
+          model: sanitizeModel(model || (provider && provider.model) || ''),
+          claudePath: (store.settings.claudePath || '').trim() || undefined,
+        });
+        j.log.push('chat ' + created.id);
+        try {
+          const sent = chats.send(created.id, String(prompt));
+          if (sent && sent.ok === false) throw new Error(sent.error || 'could not send the prompt');
+          const end = await waitForIdle(created.id);
+          if (!end.ok) throw new Error(end.error || 'the run failed');
+        } finally {
+          try { chats.close(created.id); } catch { /* already gone */ }
+        }
+        return { chatId: created.id };
+      },
+    });
+    return { job };
+  });
+  // Task → PR: worktree, run, commit, push, open the PR — as one queued job.
+  // #feat-pipeline
+  handle('pipeline:start', async ({ cwd, prompt, title, providerUid }) => {
+    if (!cwd || !prompt) return { ok: false, error: 'folder and prompt are required' };
+    const dir = path.resolve(String(cwd).replace(/^~(?=\/|$)/, os.homedir()));
+    try { if (!fs.statSync(dir).isDirectory()) return { ok: false, error: 'not a directory: ' + dir }; }
+    catch { return { ok: false, error: 'directory not found: ' + dir }; }
+    const provider = store.providers.find(p => p.uid === providerUid)
+      || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
+    const job = jobQueue.add({
+      kind: 'pipeline',
+      label: 'task → PR: ' + String(title || prompt).slice(0, 80),
+      cwd: dir,
+      run: () => runToPR({
+        worktree: async (d) => worktrees.add(d),
+        createChat: async ({ cwd: c }) => chats.create({
+          cwd: c, providerInstance: provider, settings: store.settings,
+          model: sanitizeModel((provider && provider.model) || ''),
+          claudePath: (store.settings.claudePath || '').trim() || undefined,
+        }),
+        send: async (id, text) => {
+          const r = chats.send(id, text);
+          if (r && r.ok === false) throw new Error(r.error || 'could not send the prompt');
+        },
+        waitIdle: (id) => waitForIdle(id),
+        git: async (args, cw) => execFileAsync('git', args, { cwd: cw, timeout: 120000, maxBuffer: 32 * 1024 * 1024 }).then(r => r.stdout),
+        hasGh: () => execFileAsync('gh', ['--version'], { timeout: 10000 }).then(() => true, () => false),
+        ghPr: async (args, cw) => execFileAsync('gh', args, { cwd: cw, timeout: 120000 }).then(r => r.stdout),
+        closeChat: async (id) => { try { chats.close(id); } catch { /* already gone */ } },
+      }, { cwd: dir, prompt: String(prompt), title: title ? String(title) : '' }),
+    });
+    return { job };
+  });
+  // Interrupted runs from the previous start. Anything still on disk whose
+  // chat is not live is a run that was cut short. #feat-run-resume
+  handle('runs:interrupted', async () => ({
+    runs: interrupted.list().filter(r => !chats.chats.has(r.id)),
+  }));
+  handle('runs:ack', async ({ id }) => { interrupted.forget(String(id || '')); return {}; });
 
   // Usage dashboard: sum total_cost_usd over result frames in stored transcripts.
   handle('usage:scan', async () => {

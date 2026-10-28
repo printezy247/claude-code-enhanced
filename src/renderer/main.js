@@ -16,6 +16,7 @@ import { openNewSessionModal, openProviderEditor } from './app/provider-forms.js
 import { parseForceCtx, renderClaudeBanner, renderSettings } from './app/settings.js';
 import { activateSession, createSession, killSession, paintReopenButton, recentlyClosedCount, reopenLastClosed, resumeLatest, switchView, tabRegistry, toggleSidebar } from './app/tabs.js';
 import { initHome } from './app/home.js';
+import { renderBoard } from './app/board.js';
 import { renderUsage } from './app/usage.js';
 import { openNewWindow } from './app/window.js';
 
@@ -48,6 +49,7 @@ function wireChrome() {
   $('#qa-reopen').addEventListener('click', reopenLastClosed);
   paintReopenButton();
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
+  $('#btn-board-refresh')?.addEventListener('click', () => renderBoard());
   $('#btn-add-provider').addEventListener('click', () => (window.ProvidersUI ? ProvidersUI.openConnect() : openProviderEditor(null)));
   $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);
   // (The per-dropdown wiring — search/sort/filter/refresh/close — lives in

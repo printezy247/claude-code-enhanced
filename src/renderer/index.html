@@ -41,6 +41,7 @@
       </div>
       <nav id="nav" aria-label="Sections">
         <button class="nav-btn active" data-view="conversations" aria-current="page"><span class="ico" data-icon="layers"></span><span>Conversations</span><span id="sess-count" class="badge" role="status" aria-live="polite" aria-label="open conversations">0</span></button>
+        <button class="nav-btn" data-view="board"><span class="ico" data-icon="flow"></span><span>Board</span></button>
         <button class="nav-btn" data-view="usage"><span class="ico" data-icon="chart"></span><span>Usage</span></button>
         <button class="nav-btn" data-view="providers"><span class="ico" data-icon="hex"></span><span>Providers</span></button>
         <button class="nav-btn" data-view="connectors"><span class="ico" data-icon="plug2"></span><span>Connectors</span></button>
@@ -89,6 +90,25 @@
         </div>
         <div id="usage-summary" class="banner"></div>
         <div id="usage-days"></div>
+      </section>
+
+      <section id="view-board" class="view">
+        <div class="panel-head">
+          <button class="btn ghost small back-home" data-back="conversations" aria-label="Back to Conversations" title="Back to Conversations">← Conversations</button>
+          <h2><span data-icon="flow"></span> Board</h2>
+          <button id="btn-board-refresh" class="btn"><span data-icon="refresh"></span> Refresh</button>
+        </div>
+        <div class="banner">
+          Every live chat with what it is doing, the background jobs, and any run that was cut short when CCE last stopped.
+        </div>
+        <h3>Live chats</h3>
+        <div id="board-chats"></div>
+        <h3>Background jobs</h3>
+        <div id="board-jobs"></div>
+        <div id="board-runs-wrap">
+          <h3>Interrupted runs</h3>
+          <div id="board-runs"></div>
+        </div>
       </section>
 
       <section id="view-providers" class="view">

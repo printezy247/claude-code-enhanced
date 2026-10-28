@@ -2,6 +2,17 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.86
+- Fixed: the auth store no longer calls Electron's `basic_text` fallback "encryption". When the desktop keyring is unavailable, Electron falls back to a fixed-XOR "encryption" that any process can undo; `isEncryptionAvailable()` still says yes there. The store now checks the selected backend and reports honestly, so a key saved without real protection is never presented as protected.
+- Added: the packaged binary ships with the RunAsNode, NODE_OPTIONS and `--inspect` escape hatches fused off (an afterPack hook flips them on the packed copy only; the dev electron is untouched).
+- Added: waking the machine re-checks what sleep broke: connector health is invalidated, the claude CLI is re-probed, and every window is told (`app:resumed`).
+- Added: native crashes (node-pty, the GPU process) leave a local, compressed dump instead of nothing. Upload stays off.
+- Added: the Board view (sidebar → Board) lists every live chat with what it is doing (working / needs you / idle), the background job queue, and any run that was cut short when the app last stopped — with a Resume button per interrupted run.
+- Added: background jobs with a queue: `pipeline:start` and `jobs:add` run long work one job at a time; the board can cancel them, and a finished or failed job raises a notification.
+- Added: task → PR pipeline: one prompt in a folder makes an isolated worktree, runs the chat, commits, pushes the branch and opens the PR (or hands back a compare URL when `gh` is not installed).
+- Added: permission notifications carry Allow / Deny buttons where the OS supports them (Windows/macOS); clicking the answer in the notification answers the pending request. On Linux the notification stays click-to-focus.
+- Added: a chat that is busy when the app stops is remembered on disk; the next start's board offers to resume it by session id.
+
 ## 0.9.85
 - Added: reasoning summaries now reach the chat from every provider protocol. GPT-5 / o-series through the OpenAI Responses API: the request asks for `reasoning.summary` and the streamed, part-only and item-only summary shapes are all captured (each summary once). Gemini: `includeThoughts` is requested and thought parts are shown as thinking instead of leaking into the answer. Engines that hand the summary back in a `summary` field on a thinking block are read too, instead of saying "reasoning not shared by the provider" over text that was right there.
 - Added: Settings > Session caps & model > "Show thinking" now also hides the reasoning summaries in the chat itself (live thoughts, finished thoughts and replayed transcripts alike) and brings them back when ticked again. It still controls whether Claude models are asked for their summaries.

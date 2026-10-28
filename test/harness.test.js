@@ -20,12 +20,12 @@ describe('renderer harness', () => {
   it('loads app.js + chat.js and renders the nav shell', async () => {
     const { window } = loadRenderer({ ipc: bootIpc() });
     await flush();
-    // Conversations, Usage, Providers, Connectors, Settings. Sessions and History
-    // were folded into Conversations.
-    expect(window.document.querySelectorAll('.nav-btn').length).toBe(5);
+    // Conversations, Board, Usage, Providers, Connectors, Settings. Sessions
+    // and History were folded into Conversations.
+    expect(window.document.querySelectorAll('.nav-btn').length).toBe(6);
     const labels = [...window.document.querySelectorAll('.nav-btn')]
       .map(b => b.querySelector('span:nth-child(2)').textContent);
-    expect(labels).toEqual(['Conversations', 'Usage', 'Providers', 'Connectors', 'Settings']);
+    expect(labels).toEqual(['Conversations', 'Board', 'Usage', 'Providers', 'Connectors', 'Settings']);
     expect(window.document.querySelector('#view-chats')).toBeNull();
     expect(window.document.querySelector('#view-conversations')).toBeTruthy();
     expect(typeof window.switchView).toBe('function');
