@@ -113,6 +113,18 @@ export const state = {
   booting: true,
 };
 
+/**
+ * Settings > "Show thinking" also controls whether reasoning summaries are
+ * shown in chat. A body class keeps it live: every thought block, streamed or
+ * replayed, hides at once — and reappears when the box is ticked again.
+ */
+export function applyThinkingDisplay() {
+  const hidden = !!(state.settings && state.settings.showThinking === false);
+  if (typeof document !== 'undefined' && document.body) {
+    document.body.classList.toggle('hide-reasoning', hidden);
+  }
+}
+
 export const TERM_THEME = {
   background: '#000000',
   foreground: '#ffffff',

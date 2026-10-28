@@ -391,6 +391,9 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 /* A thought is a one-line aside between tool calls, not a card: a run of them
    used to fill the screen with identical boxes. */
 .thinking-block { margin: 2px 0; max-width: 860px; }
+/* Settings > "Show thinking" off: every reasoning summary, live or replayed,
+   is out of the transcript at once. */
+.hide-reasoning .thinking-block { display: none; }
 .thinking-block summary {
   cursor: pointer; padding: 3px 4px; color: var(--muted); font-size: 12px; user-select: none;
   list-style: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;

@@ -5,6 +5,7 @@
 // and result frames with cost/usage.
 'use strict';
 const { classifyUserText } = require('../shared/usertext.js');
+const { thinkingText } = require('../shared/think.js');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -224,7 +225,7 @@ function transcriptItems(records) {
     } else {
       for (const b of msg.content || []) {
         if (b.type === 'text' && b.text && b.text.trim()) items.push({ t: 'assistant', text: b.text });
-        else if (b.type === 'thinking' && b.thinking) items.push({ t: 'thinking', text: b.thinking });
+        else if (b.type === 'thinking' && thinkingText(b)) items.push({ t: 'thinking', text: thinkingText(b) });
         else if (b.type === 'tool_use') {
           const it = { t: 'tool', name: b.name, input: b.input || {} };
           items.push(it);

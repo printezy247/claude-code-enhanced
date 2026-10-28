@@ -3,6 +3,8 @@
 All notable changes to Claude Code Enhanced are documented here.
 
 ## 0.9.85
+- Added: reasoning summaries now reach the chat from every provider protocol. GPT-5 / o-series through the OpenAI Responses API: the request asks for `reasoning.summary` and the streamed, part-only and item-only summary shapes are all captured (each summary once). Gemini: `includeThoughts` is requested and thought parts are shown as thinking instead of leaking into the answer. Engines that hand the summary back in a `summary` field on a thinking block are read too, instead of saying "reasoning not shared by the provider" over text that was right there.
+- Added: Settings > Session caps & model > "Show thinking" now also hides the reasoning summaries in the chat itself (live thoughts, finished thoughts and replayed transcripts alike) and brings them back when ticked again. It still controls whether Claude models are asked for their summaries.
 - Changed: the perf-budget test now renders a 2100-card session through the real chat view and checks that the DOM stays at the virtual window, that later cards cost about what earlier ones did, and that the newest card is shown. It used to split a string and never touch the renderer.
 - Checked, no change: E2E smoke already runs in CI under Xvfb; E1–E3 have tests (0.9.79). Mutation testing stays opt-in: the CI job runs Stryker only when it is installed, and this batch adds no dependencies.
 

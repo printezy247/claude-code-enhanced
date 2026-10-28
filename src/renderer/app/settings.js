@@ -1,5 +1,5 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
-import { $, applyTheme, el, state, toast } from './core.js';
+import { $, applyTheme, applyThinkingDisplay, el, state, toast } from './core.js';
 import { updateStatusbar } from './tabs.js';
 
 /* ================= settings view ================= */
@@ -253,7 +253,7 @@ export function renderSettings() {
   const st = el('label', 'check');
   const stc = el('input'); stc.type = 'checkbox'; stc.checked = s.showThinking !== false;
   st.appendChild(stc);
-  st.appendChild(el('span', '', 'Show thinking (ask Claude models for thinking summaries)'));
+  st.appendChild(el('span', '', 'Show thinking (reasoning summaries in chat; Claude models are asked for their summaries when on)'));
   c5.appendChild(st);
   body.appendChild(c5);
 
@@ -440,6 +440,7 @@ async function saveSettings(patch) {
   const r = await ccx.invoke('settings:set', { settings: patch });
   if (r.ok) {
     state.settings = r.settings;
+    applyThinkingDisplay();
     state.info = { ...state.info, claude: r.claude };
     renderClaudeBanner();
     updateStatusbar(state.sessions.get(state.activeId) || { provider: null, alive: true, cwd: '' });

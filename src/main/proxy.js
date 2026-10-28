@@ -826,7 +826,10 @@ function reasoningOf(d) {
     if (typeof d[k] === 'string') out += d[k];
   }
   if (!out && Array.isArray(d.reasoning_details)) {
-    for (const r of d.reasoning_details) if (r && typeof r.text === 'string') out += r.text;
+    for (const r of d.reasoning_details) {
+      if (r && typeof r.text === 'string') out += r.text;
+      else if (r && typeof r.summary === 'string') out += r.summary;
+    }
   }
   return out;
 }

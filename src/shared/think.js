@@ -41,5 +41,23 @@
     return { thinking: '', text: s };
   }
 
-  return { THINK_CLOSE_RE, inCode, splitThink };
+  /**
+   * The readable text of a thinking block. `thinking` is the field the
+   * Messages API fills (the *summary* when summarized display is on), but
+   * some engines hand the summary back as a `summary` string or part list
+   * instead and leave the chat saying "reasoning not shared" over text that
+   * was right there in the block. #feat-reasoning-summaries
+   */
+  function thinkingText(block) {
+    if (!block) return '';
+    if (typeof block.thinking === 'string' && block.thinking.trim()) return block.thinking;
+    const s = block.summary;
+    if (typeof s === 'string') return s;
+    if (Array.isArray(s)) {
+      return s.map((p) => (p && (typeof p.text === 'string' ? p.text : typeof p.thinking === 'string' ? p.thinking : '')) || '').join('');
+    }
+    return '';
+  }
+
+  return { THINK_CLOSE_RE, inCode, splitThink, thinkingText };
 });

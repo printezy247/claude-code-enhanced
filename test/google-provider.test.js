@@ -111,15 +111,17 @@ describe('thinking and effort sent to google', () => {
 
   it('native: clamps the budget, omits a zero budget, uses a level only without a budget', () => {
     const cfg = (b) => adapters.buildGeminiBody(b, native).generationConfig.thinkingConfig;
-    expect(cfg(turn())).toEqual({ thinkingBudget: 24576 });
-    expect(cfg(turn({ thinking: { budget_tokens: 4096 } }))).toEqual({ thinkingBudget: 4096 });
+    // includeThoughts asks Gemini for its thought summaries (reasoning the
+    // chat can show) wherever thinking is configured. #feat-reasoning-summaries
+    expect(cfg(turn())).toEqual({ thinkingBudget: 24576, includeThoughts: true });
+    expect(cfg(turn({ thinking: { budget_tokens: 4096 } }))).toEqual({ thinkingBudget: 4096, includeThoughts: true });
     expect(cfg(turn({ thinking: { budget_tokens: 0 } }))).toBeUndefined();
-    expect(cfg(turn({ thinking: undefined, output_config: { effort: 'low' } }))).toEqual({ thinkingLevel: 'low' });
-    expect(cfg(turn({ thinking: undefined, output_config: { effort: 'max' } }))).toEqual({ thinkingLevel: 'high' });
+    expect(cfg(turn({ thinking: undefined, output_config: { effort: 'low' } }))).toEqual({ thinkingLevel: 'low', includeThoughts: true });
+    expect(cfg(turn({ thinking: undefined, output_config: { effort: 'max' } }))).toEqual({ thinkingLevel: 'high', includeThoughts: true });
   });
 
   it('native: another gemini gateway keeps the budget it was given', () => {
     const gw = { baseUrl: 'https://gw.example/v1beta', apiKey: 'k', protocol: 'gemini', keyHeader: 'bearer' };
-    expect(adapters.buildGeminiBody(turn(), gw).generationConfig.thinkingConfig).toEqual({ thinkingBudget: 31999 });
+    expect(adapters.buildGeminiBody(turn(), gw).generationConfig.thinkingConfig).toEqual({ thinkingBudget: 31999, includeThoughts: true });
   });
 });

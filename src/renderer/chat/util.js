@@ -51,7 +51,7 @@ export const md = (text) => {
 
 // Reasoning the model wrote into its reply rather than the thinking channel.
 // Shared with the proxy (src/shared/think.js) — the two must agree on the cut.
-export const { splitThink } = CCEThink;
+export const { splitThink, thinkingText } = CCEThink;
 
 // Real HTML escaping. The old version was String(s), and it fed innerHTML with
 // tool names — MCP tool names come from remote servers and are untrusted. #7

@@ -59,9 +59,14 @@ describe('reasoning settings go only to providers that accept them', () => {
     expect(buildOpenAIBody(ask('gpt-5', { effort: undefined, output_config: { effort: 'low' } }), false, p).reasoning_effort).toBe('low');
   });
 
-  it('the Responses API gets a clamped level too', () => {
+  it('the Responses API gets a clamped level too, and asks for reasoning summaries', () => {
     const req = buildResponsesInput(ask('gpt-5', { effort: 'max' }), prov('https://api.openai.com/v1'));
-    expect(req.reasoning).toEqual({ effort: 'high' });
+    expect(req.reasoning).toEqual({ effort: 'high', summary: 'auto' });
+  });
+
+  it('a thinking budget alone still asks for summaries (no effort)', () => {
+    const req = buildResponsesInput(ask('gpt-5', { effort: undefined, thinking: { budget_tokens: 2048 } }), prov('https://api.openai.com/v1'));
+    expect(req.reasoning).toEqual({ summary: 'auto' });
   });
 });
 

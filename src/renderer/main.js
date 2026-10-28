@@ -10,7 +10,7 @@ import { Chat } from './chat/index.js';
 import { ProvidersUI } from './providers/ui.js';
 import { refreshMcpList, renderConnectors } from './app/connectors.js';
 import { ensureConvoDrop, loadConversationList, renderConversationList, renderOpenTabs, toggleConversations } from './app/conversations.js';
-import { $, applyTheme, elIcon, loadMonaco, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
+import { $, applyTheme, applyThinkingDisplay, elIcon, loadMonaco, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
 import { initSplitTabMenu, renderOverview, renderSplit, setAllOverviewCards, splitTerm, toggleOverview, toggleSplit } from './app/overview.js';
 import { openNewSessionModal, openProviderEditor } from './app/provider-forms.js';
 import { parseForceCtx, renderClaudeBanner, renderSettings } from './app/settings.js';
@@ -270,6 +270,7 @@ function wireChrome() {
   state.leanAllTools = (provAll.leanAllTools || settingsRes.leanAllTools || []);
   state.settings = settingsRes.settings;
   applyTheme(state.settings.theme);   // #47
+  applyThinkingDisplay();
   state.connectorPresets = connPresets.presets;
   state.booting = false;
 
