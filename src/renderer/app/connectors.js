@@ -13,6 +13,15 @@ export let connectorCheckedAt = 0;
 
 export let connectorChecking = false;
 
+/**
+ * Forget when the health check last ran. Sleep put hours between two checks
+ * without the 60 s staleness window ever elapsing in wall-clock terms the
+ * view cares about, so the next open would have shown pre-sleep chips. #fix-resume
+ */
+export function invalidateConnectorStatus() {
+  connectorCheckedAt = 0;
+}
+
 function connectorChip(s) {
   switch (s && s.state) {
     case 'connected': return ['● connected', 'mcp-ok'];

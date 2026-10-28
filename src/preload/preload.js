@@ -84,4 +84,10 @@ contextBridge.exposeInMainWorld('ccx', {
     ipcRenderer.on('claude:detected', listener);
     return () => ipcRenderer.removeListener('claude:detected', listener);
   },
+  // The machine came back from sleep: stale checks get re-run. #fix-resume
+  onAppResumed: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('app:resumed', listener);
+    return () => ipcRenderer.removeListener('app:resumed', listener);
+  },
 });

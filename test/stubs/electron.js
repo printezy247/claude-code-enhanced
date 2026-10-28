@@ -29,6 +29,11 @@ const opened = [];
 const appEvents = new Map();
 /** BrowserWindow instances created during the test. */
 const windows = [];
+/** Options each crashReporter.start() was called with. */
+const crashReports = [];
+/** OS power events (suspend/resume/unlock), emitted by tests. */
+const powerMonitor = new EventEmitter();
+const crashReporter = { start: (opts) => { crashReports.push(opts || {}); } };
 
 const app = new EventEmitter();
 app.setName = () => {};
@@ -175,10 +180,10 @@ const shell = {
 
 module.exports = {
   app, ipcMain, BrowserWindow, Notification, Tray, Menu, nativeImage, dialog, shell,
-  contextBridge, ipcRenderer,
+  contextBridge, ipcRenderer, powerMonitor, crashReporter,
   // --- test helpers -------------------------------------------------------
   __state: {
-    handlers, sent, notifications, opened, appEvents, windows, exposed, invokeCalls,
+    handlers, sent, notifications, opened, appEvents, windows, exposed, invokeCalls, crashReports,
     get tray() { return lastTray; },
   },
   __reset() {

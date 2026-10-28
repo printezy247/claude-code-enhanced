@@ -8,7 +8,7 @@
 // anything here runs.
 import { Chat } from './chat/index.js';
 import { ProvidersUI } from './providers/ui.js';
-import { refreshMcpList, renderConnectors } from './app/connectors.js';
+import { invalidateConnectorStatus, refreshMcpList, renderConnectors } from './app/connectors.js';
 import { ensureConvoDrop, loadConversationList, renderConversationList, renderOpenTabs, toggleConversations } from './app/conversations.js';
 import { $, applyTheme, applyThinkingDisplay, elIcon, loadMonaco, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
 import { initSplitTabMenu, renderOverview, renderSplit, setAllOverviewCards, splitTerm, toggleOverview, toggleSplit } from './app/overview.js';
@@ -287,6 +287,12 @@ function wireChrome() {
       ? `claude ${c.version}\nCCE v${state.info.appVersion} · Electron ${state.info.electron}`
       : `CCE v${state.info.appVersion} · Electron ${state.info.electron}`;
     renderClaudeBanner();
+  });
+  // Sleep made the last connector health check a guess: forget it and, if the
+  // connectors view is what the user is looking at, re-run the check. #fix-resume
+  if (ccx.onAppResumed) ccx.onAppResumed(() => {
+    invalidateConnectorStatus();
+    if (state.view === 'connectors') refreshMcpList();
   });
   if (window.__CCE_SMOKE) {
     setTimeout(() => console.log('[monaco]', !!(window.monaco && window.monaco.editor)), 3000);

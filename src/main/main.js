@@ -1,6 +1,6 @@
 // Claude Code Enhanced — main process.
 'use strict';
-const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard, nativeImage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, Notification, Tray, Menu, clipboard, nativeImage, crashReporter } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -14,6 +14,13 @@ const rendererDir = path.resolve(__dirname, '..', 'renderer');
 
 app.setName('claude-code-enhanced');
 if (process.env.CCE_NO_SANDBOX) app.commandLine.appendSwitch('no-sandbox');
+
+// Native crashes (node-pty, the GPU process) leave no trace otherwise: the
+// app just dies. The dump stays on this machine — uploadToServer is off —
+// so a bug report can include it without shipping anything anywhere. #fix-crash-dumps
+try {
+  crashReporter.start({ uploadToServer: false, compress: true, rateLimit: 60_000 });
+} catch { /* crash reporter unavailable in this environment */ }
 
 // Surface async failures with a real stack instead of an anonymous warning.
 process.on('unhandledRejection', (reason) => {
@@ -2555,6 +2562,7 @@ if (!gotLock) {
     registerIpc();
     createWindow();
     if (store.settings.closeToTray) createTray();
+    wirePowerResume();
     // Global shortcut: bring the app to front when hidden in the tray.
     // Ctrl+Shift+C is mnemonic for "Claude". Only when close-to-tray is on.
     if (store.settings.closeToTray) {
@@ -2578,6 +2586,34 @@ if (!gotLock) {
   }).catch((err) => {
     console.error('[cce] startup failed:', (err && err.stack) || err);
   });
+}
+
+/**
+ * Sleep breaks things quietly: MCP health checks go stale, the claude CLI
+ * probe ages out, and a resumed stream may have been cut by the network
+ * stack. Tell every window the machine came back so they re-run the checks
+ * that are now lies. powerMonitor is only legal after app ready. #fix-resume
+ */
+function wirePowerResume() {
+  try {
+    const { powerMonitor } = require('electron');
+    const resume = () => {
+      lastClaudeProbe = 0;   // allow an immediate re-probe after wake
+      // Sleep is when claude self-updates: re-run the probe now instead of
+      // waiting for a focus event that may already have happened.
+      detectClaude().then((info) => {
+        claudeInfo = info;
+        for (const w of BrowserWindow.getAllWindows()) {
+          if (!w.isDestroyed()) w.webContents.send('claude:detected', info);
+        }
+      }).catch(() => { /* probe failed; the focus probe tries again */ });
+      for (const w of BrowserWindow.getAllWindows()) {
+        if (!w.isDestroyed()) w.webContents.send('app:resumed');
+      }
+    };
+    powerMonitor.on('resume', resume);
+    powerMonitor.on('unlock-screen', resume);
+  } catch { /* powerMonitor unavailable (tests / headless) */ }
 }
 
 app.on('window-all-closed', () => { if (!store.settings.closeToTray) app.quit(); });
