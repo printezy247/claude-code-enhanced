@@ -40,6 +40,7 @@ export async function refreshEffort(chat) {
   }
   sel.value = chat.effort || '';
   sel.classList.remove('hidden');
+  if (chat.syncModelBtn) chat.syncModelBtn();
 }
 
 export async function setEffort(chat, next) {
@@ -51,6 +52,7 @@ export async function setEffort(chat, next) {
     chat.effort = prev;
     if (chat.effortBtn) chat.effortBtn.value = prev;
   } else if (chat.effort) toast('effort → ' + chat.effort, 'ok');
+  if (chat.syncModelBtn) chat.syncModelBtn();
 }
 
 /* ---------------- model selector ---------------- */
@@ -92,7 +94,8 @@ export function wireModelPicker(chat) {
   if (!btn) return;
   const sync = () => {
     const o = sel.options[sel.selectedIndex];
-    btn.querySelector('.mb-label').textContent = o ? o.textContent : 'model';
+    // One chip for model and effort: "model · high".
+    btn.querySelector('.mb-label').textContent = (o ? o.textContent : 'model') + (chat.effort ? ' · ' + chat.effort : '');
     btn.title = (o ? o.textContent + ' — ' : '') + 'change model or provider';
   };
   // Code all over this file sets sel.value directly; keep the button in step.

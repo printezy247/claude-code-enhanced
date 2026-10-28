@@ -2,6 +2,18 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.90
+- Added: command menu preview — typing `/` shows a list on the left and a preview on the right (description, argument hint, where the command comes from, first 30 lines of its file). Sections: Recent, Built-in, Project & user, Plugins, MCP. Search matches loosely and highlights the matched letters, the 24-item cap is gone (the list is windowed), recently used commands rise to the top, and `/` also opens mid-message. Tab or Enter completes, PageUp/PageDown/Ctrl+Home/Ctrl+End jump, hovering moves the selection.
+- Added: `@` menu preview — files show their first 40 lines, folders list their entries, and `@diff`, `@staged` and `@branch` paste your git state into the message.
+- Added: queue panel — queued messages are an editable list: click to edit, drag or Alt+↑/↓ to reorder, per-item menu (send now as steer, run next, duplicate, move back to the box, ask before running, run at a time, remove), Pause/Resume, Clear with Undo, Up arrow takes the newest back. The queue holds itself after a failed turn, a waiting permission prompt or the spend ceiling (Settings → toggles), and notifies you when it holds or finishes. Queued images now survive a restart (saved as 0600 files, never in localStorage).
+- Added: workflow options — every workflow has a `⋯` options panel: when it runs (put in the box / send now / queue), permission mode, model and effort for that run, scope (whole project, current changes, staged, chosen files), read-only, your own command, a prompt preview you can edit per project, and a "then run" chain of up to 4 more workflows (auto or ask first). Save per project or everywhere.
+- Added: your command with a workflow — a box at the top of the workflow menu is sent together with whichever workflow you pick. Shift+click puts a workflow in the message box instead of sending it.
+- Added: workflow menu — filter box, Pinned and Recent groups, number keys 1–9, hide workflows (Settings), your own custom workflows (new, duplicate, edit, delete, export/import as JSON), two ready-made chains (Feature, Bug), and four new workflows: Upgrade plan, De-risk, Verify live, Release. Run history shows runs, last run and how it ended.
+- Fixed: a workflow no longer overwrites a half-typed message (it asks, or uses your text as the task), no longer leaves the chat stuck in plan mode, and queues itself when the chat is busy.
+- Added: target chip (Local / Worktree) in the message footer, one model chip that shows `model · effort`, code blocks with a language label plus Wrap and Save, and a jump-marker preview with three lines and the reply state.
+- Added: Lanox provider preset (OpenAI-compatible gateway, bearer key).
+- Fixed: command previews refuse `..` and symlinks that lead out of the commands/skills/plugins folders; a diff pasted with `@diff` can no longer break its code fence; the command list refreshes after a minute.
+
 ## 0.9.89
 - Added: markdown editor — the Files tab gets an **edit** button on every .md/.txt row: source on the left, live preview on the right, task checkboxes you can tick, and ```flow``` arrow chains drawn as SVG. Saving goes through the same guarded path as file reads (open projects only, never a secret file).
 - Added: review pane — a Review tab in the tool panel shows the working-tree diff with stats (+/− per file), one click to open a file's patch, and a button to ask Claude about the changes.

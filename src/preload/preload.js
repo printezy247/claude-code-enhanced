@@ -44,7 +44,7 @@ const INVOKE_CHANNELS = new Set([
   'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
   'file:read', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
   'git:status', 'git:cache-invalidate', 'project:files', 'project:scripts', 'skill:import',
-  'skills:list', 'skills:read', 'skills:set-enabled',
+  'skills:list', 'skills:read', 'cmd:detail', 'skills:set-enabled',
   'plugins:list', 'plugins:pick', 'plugins:install', 'plugins:uninstall',
   'mcp:list-tools', 'mcp:call-tool', 'mcp:list-resources', 'mcp:read-resource', 'mcp:authenticate',
   'skills:toggle', 'agents:toggle',

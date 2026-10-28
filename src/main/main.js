@@ -1873,6 +1873,7 @@ function registerIpc() {
     skills: skilltoggle.scanSkills({ skillsDir, cwd }),
   }));
   handle('skills:read', async ({ path }) => skilltoggle.readSkill(path));
+  handle('cmd:detail', async ({ name, cwd }) => require('./cmddetail').commandDetail({ name, cwd }));
   handle('skills:set-enabled', async ({ name, enabled }) => {
     const res = skilltoggle.setSkillEnabled(name, !!enabled);
     return { ok: true, ...res };

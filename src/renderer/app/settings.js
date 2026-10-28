@@ -1,4 +1,7 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
+import { WORKFLOW_MENU } from '../chat/wfdata.js';
+import { loadStore, saveStore, storeKey } from '../chat/wfoptions.js';
+import { queueRules, saveQueueRules } from '../chat/qpanel.js';
 import { $, applyTheme, applyThinkingDisplay, el, state, toast } from './core.js';
 import { updateStatusbar } from './tabs.js';
 import { LOCALES, applyLang, getLang, setLang, t } from '../i18n.js';
@@ -363,7 +366,39 @@ export function renderSettings() {
   notifyLabel.appendChild(notifyCheck);
   notifyLabel.appendChild(el('span', '', 'Notify when a turn finishes while the window is in the background'));
   c9.appendChild(notifyLabel);
+  // Queue: when a queued message waits instead of running
+  c9.appendChild(el('div', 'hint', 'Message queue — hold the queue (Pause banner) when:'));
+  const qRules = queueRules();
+  for (const [key, text] of [['onError', 'the last turn ended with an error'], ['onPermission', 'a permission prompt is waiting'], ['onSpend', 'the spend ceiling was reached']]) {
+    const cb = el('input'); cb.type = 'checkbox'; cb.checked = qRules[key] !== false;
+    cb.addEventListener('change', () => saveQueueRules({ ...queueRules(), [key]: cb.checked }));
+    const lb = el('label', 'check');
+    lb.appendChild(cb);
+    lb.appendChild(el('span', '', text));
+    c9.appendChild(lb);
+  }
   body.appendChild(c9);
+
+  // Workflows you hid from the picker (Hide in a workflow's options)
+  const cwf = el('div', 'settings-card');
+  cwf.appendChild(el('h4', '', 'Workflows in the picker'));
+  cwf.appendChild(el('div', 'hint', 'Untick a workflow to hide it from the picker in every project. Per-project hiding is in the workflow\'s own options.'));
+  const wfStore = loadStore(localStorage, storeKey(''));
+  for (const [, , items] of WORKFLOW_MENU) {
+    for (const [key, , label] of items) {
+      const cb = el('input'); cb.type = 'checkbox'; cb.checked = !wfStore.hidden.includes(key);
+      cb.addEventListener('change', () => {
+        const st = loadStore(localStorage, storeKey(''));
+        st.hidden = cb.checked ? st.hidden.filter((k) => k !== key) : st.hidden.concat(key);
+        saveStore(localStorage, storeKey(''), st);
+      });
+      const lb = el('label', 'check');
+      lb.appendChild(cb);
+      lb.appendChild(el('span', '', label));
+      cwf.appendChild(lb);
+    }
+  }
+  body.appendChild(cwf);
 
   // lean tools (#41) + provider failover chain (#42)
   const c10 = el('div', 'settings-card');

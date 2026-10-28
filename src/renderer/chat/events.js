@@ -1,4 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
+import { finishWorkflowRun } from './workflows.js';
 import { elIcon, toast } from '../app/core.js';
 import { uiMode } from '../app/modes.js';
 import { autosize } from './composer.js';
@@ -198,6 +199,7 @@ export function handleEvent(evt) {
   else if (kind === 'cost-guard') {
     chat.msgs.appendChild(el('div', 'sys-note', 'Stopped: this chat crossed its $' + Number(evt.limit).toFixed(2)
       + ' spend ceiling (spent $' + Number(evt.spent).toFixed(2) + '). Raise the ceiling in Settings to continue.'));
+    chat.spendWarn = true;
     toast('Spend ceiling reached', 'err');
   }
   else if (kind === 'auto-unsupported') {
@@ -351,6 +353,8 @@ function handleMessage(chat, msg) {
     case 'engine_notification': onEngineNotification(chat, msg); break;
     case 'result': {
       chat.lastResult = msg;
+      chat.lastTurnError = !!(msg.is_error || /^error/.test(String(msg.subtype || '')));
+      finishWorkflowRun(chat, chat.lastTurnError ? 'error' : 'finished');
       endTurnCleanup(chat);
       // The transcript is on disk now — pick up the new/updated conversation.
       if (typeof window.scheduleConvoRefresh === 'function') window.scheduleConvoRefresh(true);

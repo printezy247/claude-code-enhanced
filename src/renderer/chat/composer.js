@@ -1,6 +1,8 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { elIcon, toast } from '../app/core.js';
 import { handleEvent } from './events.js';
+import { folderEntries, headLines } from './cmdmatch.js';
+import { ensurePanes, setPreview } from './preview.js';
 import { hideSlash } from './slash.js';
 import { chats, el, esc } from './util.js';
 
@@ -86,41 +88,7 @@ export function applyAttachedFiles(chat, files) {
   autosize(chat.composer);
 }
 
-/** Messages sent while a turn is running, shown as pending chips. #32 */
-export function renderQueued(chat) {
-  if (!chat.queuedEl) return;
-  chat.queuedEl.innerHTML = '';
-  chat.queuedEl.classList.toggle('hidden', !chat.pendingMsgs.length);
-  for (let i = 0; i < chat.pendingMsgs.length; i++) {
-    const item = chat.pendingMsgs[i];
-    const t = typeof item === 'string' ? item : (item && item.text) || '';
-    const chip = el('span', 'queued-chip');
-    const label = el('span', 'queued-chip-text', t.length > 70 ? t.slice(0, 70) + '…' : t);
-    const del = el('span', 'queued-chip-del', ' ×');
-    del.title = 'Remove queued message';
-    del.onclick = (e) => {
-      e.stopPropagation();
-      chat.pendingMsgs.splice(i, 1);
-      persistPending(chat);
-      renderQueued(chat);
-    };
-    chip.appendChild(label);
-    chip.appendChild(del);
-    chat.queuedEl.appendChild(chip);
-  }
-}
-
-/**
- * Remember queued messages across a crash: the text only. Pasted images are
- * megabytes of base64, which overflow the storage quota and would leave
- * screenshots sitting unencrypted on disk.
- */
-export function persistPending(chat) {
-  try {
-    const texts = (chat.pendingMsgs || []).map((m) => (typeof m === 'string' ? m : (m && m.text) || '')).filter(Boolean);
-    localStorage.setItem('cce:pending:' + (chat.cwd || ''), JSON.stringify(texts));
-  } catch { /* quota or private mode: the queue just is not remembered */ }
-}
+export { persistPending, renderQueued } from './qpanel.js';
 
 /**
  * A send the engine refused: put the text and images back in the composer
@@ -178,6 +146,23 @@ export async function restoreDraftImages(chat) {
 
 export function clearImages(chat) { chat.pendingImages = []; renderImageChips(chat); }
 
+const GIT_REFS = [
+  { kind: 'git', label: 'diff', hint: 'Unstaged changes, pasted as a diff' },
+  { kind: 'git', label: 'staged', hint: 'Staged changes, pasted as a diff' },
+  { kind: 'git', label: 'branch', hint: 'Current branch name' },
+];
+const AT_DIFF_MAX = 20000;
+
+/** Folder names found in the flat file list, shallowest first. */
+function projectFolders(files) {
+  const set = new Set();
+  for (const f of files) {
+    const parts = f.split('/');
+    for (let i = 1; i < parts.length; i++) set.add(parts.slice(0, i).join('/'));
+  }
+  return [...set].sort((a, b) => a.split('/').length - b.split('/').length || a.localeCompare(b));
+}
+
 export async function maybeAt(chat) {
   const v = chat.composer.value;
   const pos = chat.composer.selectionStart ?? v.length;
@@ -192,32 +177,87 @@ export async function maybeAt(chat) {
     const r = await ccx.invoke('project:files', { cwd: chat.cwd });
     chat.filesCache = r.ok ? r.files : [];
   }
-  const files = chat.filesCache.filter(f => f.toLowerCase().includes(q)).slice(0, 10);
-  if (!files.length) { hideSlash(chat); return true; }
-  chat.atItems = files;
+  if (!chat.foldersCache) chat.foldersCache = projectFolders(chat.filesCache);
+  const git = GIT_REFS.filter((g) => g.label.startsWith(q));
+  const dirs = chat.foldersCache.filter((f) => f.toLowerCase().includes(q)).slice(0, 4).map((f) => ({ kind: 'folder', label: f + '/' }));
+  const files = chat.filesCache.filter(f => f.toLowerCase().includes(q)).slice(0, 10).map((f) => ({ kind: 'file', label: f }));
+  const items = git.concat(dirs, files);
+  if (!items.length) { hideSlash(chat); return true; }
+  chat.atItems = items;
   chat.slashIdx = 0;
-  chat.slash.innerHTML = '';
-  files.forEach((f, i) => {
-    const item = elIcon('div', 'slash-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg('file', 14) + ' ' + esc(f));
+  chat.slashItems = items;   // the key handler checks its length
+  ensurePanes(chat);
+  chat.slashList.style.maxHeight = '';
+  chat.slashSpacer.style.height = '0px';
+  for (const n of [...chat.slashList.querySelectorAll('.slash-item, .slash-section')]) n.remove();
+  items.forEach((it, i) => {
+    const icon = it.kind === 'git' ? 'branch' : 'file';
+    const item = elIcon('div', 'slash-item at-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg(icon, 14) + ' ' + esc(it.kind === 'git' ? '@' + it.label : it.label));
+    item.dataset.idx = String(i);
+    item.style.position = 'static';
     item.addEventListener('mousedown', (e) => { e.preventDefault(); chat.slashIdx = i; applyAt(chat); });
-    chat.slash.appendChild(item);
+    item.addEventListener('mouseenter', () => { chat.slashIdx = i; markAt(chat); });
+    chat.slashList.appendChild(item);
   });
   chat.slash.classList.remove('hidden');
+  markAt(chat);
   return true;
 }
 
-export function applyAt(chat) {
-  const f = chat.atItems[chat.slashIdx >= 0 ? chat.slashIdx : 0];
-  if (f) {
-    const v = chat.composer.value;
-    const pos = chat.composer.selectionStart ?? v.length;
-    const before = v.slice(0, pos).replace(/@([^\s@]*)$/, '@' + f + ' ');
-    chat.composer.value = before + v.slice(pos);
-    chat.composer.setSelectionRange(before.length, before.length);
-    chat.composer.focus();
+function markAt(chat) {
+  for (const n of chat.slashList.querySelectorAll('.at-item')) n.classList.toggle('sel', n.dataset.idx === String(chat.slashIdx));
+  clearTimeout(chat.slashPreviewTimer);
+  const it = chat.atItems[chat.slashIdx];
+  chat.slashPreviewTimer = setTimeout(() => loadAtPreview(chat, it), 80);
+}
+
+async function loadAtPreview(chat, it) {
+  if (!it) return setPreview(chat, null);
+  if (it.kind === 'git') return setPreview(chat, { title: '@' + it.label, badge: 'git', meta: it.hint });
+  if (it.kind === 'folder') {
+    const names = folderEntries(chat.filesCache, it.label, 30);
+    return setPreview(chat, { title: it.label, badge: 'folder', meta: names.length + (names.length >= 30 ? '+' : '') + ' entries', body: names.join('\n') });
   }
+  if (/\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|woff2?)$/i.test(it.label)) return setPreview(chat, { title: it.label, badge: 'file', meta: 'Binary file: no text preview' });
+  setPreview(chat, { title: it.label, badge: 'file', meta: 'loading…' });
+  if (it.label.split('/').includes('..') || it.label.startsWith('/')) return setPreview(chat, { title: it.label, badge: 'file', meta: 'No preview' });
+  try {
+    const r = await ccx.invoke('file:read', { path: (chat.cwd || '') + '/' + it.label, maxBytes: 24000 });
+    if (chat.atItems[chat.slashIdx] !== it) return;
+    if (r && r.ok && !r.tooLarge) {
+      const h = headLines(r.content, 40);
+      setPreview(chat, { title: it.label, badge: 'file', meta: r.size + ' bytes', body: h.text, cut: h.cut });
+    } else setPreview(chat, { title: it.label, badge: 'file', meta: r && r.tooLarge ? 'Large file: ' + r.size + ' bytes' : 'No preview' });
+  } catch { if (chat.atItems[chat.slashIdx] === it) setPreview(chat, { title: it.label, badge: 'file', meta: 'No preview' }); }
+}
+
+export async function applyAt(chat) {
+  const it = chat.atItems[chat.slashIdx >= 0 ? chat.slashIdx : 0];
   chat.atMode = false;
   hideSlash(chat);
+  if (!it) return;
+  let insert = it.kind === 'git' ? '' : '@' + it.label + ' ';
+  if (it.kind === 'git') {
+    try {
+      if (it.label === 'branch') {
+        const r = await ccx.invoke('git:info', { cwd: chat.cwd });
+        insert = (r && r.ok && r.branch ? 'branch `' + r.branch + '`' : '(no branch)') + ' ';
+      } else {
+        const r = await ccx.invoke('git:diff', { cwd: chat.cwd, staged: it.label === 'staged' });
+        const patch = r && r.ok ? String(r.patch || '').slice(0, AT_DIFF_MAX) : '';
+        // A diff of a markdown file can hold ``` itself: fence with one more backtick than any run inside.
+        const fence = '`'.repeat(Math.max(3, ...(patch.match(/`+/g) || []).map((m) => m.length + 1)));
+        insert = patch ? '\n' + fence + 'diff\n' + patch + '\n' + fence + '\n' : '(no ' + it.label + ' changes) ';
+      }
+    } catch { insert = '(git unavailable) '; }
+  }
+  const v = chat.composer.value;
+  const pos = chat.composer.selectionStart ?? v.length;
+  const before = v.slice(0, pos).replace(/@([^\s@]*)$/, insert);
+  chat.composer.value = before + v.slice(pos);
+  chat.composer.setSelectionRange(before.length, before.length);
+  autosize(chat.composer);
+  chat.composer.focus();
 }
 
 // The composer auto-expands as new lines are formed (matching Claude Code Desktop)

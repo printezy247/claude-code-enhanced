@@ -43,15 +43,18 @@ describe('"/" in the composer', () => {
     expect(chat.init).toBeFalsy();
     await type(h, chat, '/');
     expect(chat.slash.classList.contains('hidden')).toBe(false);
-    expect(items(chat)).toEqual(expect.arrayContaining(['/compact', '/ecc:code-review [pr]', '/review']));
+    // The list is windowed (only the visible rows are drawn), so check the full list on the chat.
+    expect(chat.slashItems.map(c => c.name)).toEqual(expect.arrayContaining(['compact', 'ecc:code-review', 'review']));
     expect(h.calls.filter(c => c.channel === 'chat:commands')).toHaveLength(1);
+    await type(h, chat, '/ecc');
     expect(chat.slash.textContent).toContain('Code review of local changes or a PR');
   });
 
   it('filters by prefix, then by any part of the name', async () => {
     const { h, chat } = await open();
     await type(h, chat, '/rev');
-    expect(items(chat)).toEqual(['/review', '/preview', '/ecc:code-review [pr]']);
+    // prefix first, then word-start (after ":"), then any part of the name
+    expect(items(chat)).toEqual(['/review', '/ecc:code-review [pr]', '/preview']);
   });
 
   it('puts the picked command in the composer', async () => {
@@ -65,7 +68,7 @@ describe('"/" in the composer', () => {
   it('still offers cce\'s own commands when the session lists none', async () => {
     const { h, chat } = await open({ commands: [] });
     await type(h, chat, '/co');
-    expect(items(chat)).toEqual(['/compact', '/cost', '/context']);
+    expect(items(chat).sort()).toEqual(['/compact', '/context', '/cost']);
   });
 });
 
