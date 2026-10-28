@@ -16,7 +16,7 @@ function start(cwd) {
     .catch((err) => toast(String((err && err.message) || err), 'err'));
 }
 
-async function openFolder() {
+export async function openFolder() {
   const r = await ccx.invoke('dialog:pickDir', { defaultPath: state.settings && state.settings.defaultCwd });
   if (r && !r.canceled && r.path) start(r.path);
 }

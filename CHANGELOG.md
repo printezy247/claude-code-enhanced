@@ -2,6 +2,10 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.81
+- Added: the conversations list shows a folder illustration, a short hint and an Open folder… button when there are no conversations yet, instead of a bare "No conversations yet".
+- Added: a test that fails if any icon-only button lacks an aria-label or a tooltip. The audit found none missing today.
+
 ## 0.9.80
 - Fixed: a connector tool whose schema points into its own definitions (`$ref` to `$defs`/`definitions`) was sent with the pointer but without the definitions, which vLLM's guided decoding and Gemini reject. Local references are now filled in; a recursive or unknown one becomes an open schema.
 - Fixed: an image over 5 MB (a large screenshot a tool returned) made the provider refuse the whole request. It is now sent as a short note, on every API format.

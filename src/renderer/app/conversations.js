@@ -2,6 +2,7 @@
 import { basenameOf, el, elIcon, lsGet, lsSet, paintDeclaredIcons, state, toast } from './core.js';
 import { activateSession, switchView, tabRegistry, toggleSidebar } from './tabs.js';
 import { Chat } from '../chat/index.js';
+import { openFolder } from './home.js';
 
 /* ================= conversation list (#34) ================= */
 /*
@@ -153,6 +154,19 @@ export function renderConversationList() {  // Async data can land after the win
   if (!items.length) {
     const empty = { pinned: 'Nothing pinned — use ▾ → Pin on a conversation you come back to.',
       open: 'No open conversations.', archived: 'Nothing archived.' }[view];
+    if (!q && !folder && !allOpen && !empty && !convoSessions.length) {
+      // First run, nothing stored yet: say how to start instead of a bare line.
+      const box = el('div', 'convo-empty convo-empty-illus');
+      box.appendChild(elIcon('div', 'convo-empty-icon', CCEIcons.svg('folder', 28)));
+      box.appendChild(el('div', 'convo-empty-title', 'No conversations yet'));
+      box.appendChild(el('div', 'hint', 'Open a folder to start one. Past chats appear here.'));
+      const open = el('button', 'btn small', 'Open folder…');
+      open.type = 'button';
+      open.addEventListener('click', () => openFolder());
+      box.appendChild(open);
+      root.appendChild(box);
+      return;
+    }
     root.appendChild(el('div', 'convo-empty hint', q || folder ? 'Nothing matches.'
       : (allOpen ? 'Every conversation is open in the list above.' : (empty || 'No conversations yet.'))));
     // The list only knows the previews. When a search finds nothing there,
