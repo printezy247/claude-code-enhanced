@@ -1,5 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
-import { elIcon } from '../app/core.js';
+import { elIcon, loadMonaco } from '../app/core.js';
 import { switchView } from '../app/tabs.js';
 import { makePanel } from './panels.js';
 import { el } from './util.js';
@@ -56,7 +56,12 @@ export const monacoThemeName = () => (document.documentElement.getAttribute('dat
 // Monaco is already vendored for the diff editor, so syntax highlighting
 // costs no extra dependency. Falls back to plain text when unavailable. #35
 function colorizeCode(pre, code, plain) {
-  if (!window.monaco || !window.monaco.editor || typeof window.monaco.editor.colorize !== 'function') return;
+  if (!window.monaco || !window.monaco.editor) {
+    // Monaco loads on first use; colour the block once it is in.
+    loadMonaco().then((m) => { if (m && typeof m.editor.colorize === 'function') colorizeCode(pre, code, plain); });
+    return;
+  }
+  if (typeof window.monaco.editor.colorize !== 'function') return;
   const text = plain != null ? plain : (code.textContent || '');
   if (!text.trim() || text.length > 20000) return;
   try {

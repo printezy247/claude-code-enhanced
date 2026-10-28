@@ -2,6 +2,11 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.82
+- Changed: Monaco (the 4.6 MB diff editor and code-colour bundle) is no longer parsed on every start. It loads the first time a diff or code block needs it; a diff shows "loading diff…" for that moment, and falls back to the text diff when the bundle is missing.
+- Changed: the Overview's connector status is cached for 30 s (was 10 s). Refresh and a reconnect still clear it at once.
+- Checked, no change: the Overview's 6 s poll is already gone (a 60 s safety net is left, skipped while the window is hidden).
+
 ## 0.9.81
 - Added: the conversations list shows a folder illustration, a short hint and an Open folder… button when there are no conversations yet, instead of a bare "No conversations yet".
 - Added: a test that fails if any icon-only button lacks an aria-label or a tooltip. The audit found none missing today.
