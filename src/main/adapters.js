@@ -204,9 +204,29 @@ const GEMINI_FORMATS = new Set(['enum', 'date-time']);
  */
 function sanitizeSchema(schema, dialect = 'openai') {
   const gemini = dialect === 'gemini';
+  const root = schema && typeof schema === 'object' ? schema : {};
+  // `$defs`/`definitions` are stripped below, so a local `$ref` into them is
+  // inlined first: a dangling pointer is a 400 on vLLM's guided decoding and
+  // on Gemini. A recursive or unknown ref becomes an open schema.
+  const refDepth = new Map();
+  const resolve = (ref) => {
+    const m = /^#\/(\$defs|definitions)\/(.+)$/.exec(String(ref));
+    const defs = m && root[m[1]];
+    return defs && Object.prototype.hasOwnProperty.call(defs, m[2]) ? defs[m[2]] : null;
+  };
   const walk = (node) => {
     if (Array.isArray(node)) return node.map(walk);
     if (!node || typeof node !== 'object') return node;
+    if (typeof node.$ref === 'string') {
+      const target = resolve(node.$ref);
+      const seen = refDepth.get(node.$ref) || 0;
+      if (!target || seen >= 3) return {};
+      refDepth.set(node.$ref, seen + 1);
+      const { $ref, ...rest } = node;
+      const merged = walk({ ...target, ...rest });
+      refDepth.set(node.$ref, seen);
+      return merged;
+    }
     const out = {};
     for (const [k, v] of Object.entries(node)) {
       if (DROP_ALWAYS.has(k) || (gemini && DROP_GEMINI.has(k))) continue;
@@ -241,7 +261,7 @@ function sanitizeSchema(schema, dialect = 'openai') {
     }
     return out;
   };
-  const clean = walk(schema && typeof schema === 'object' ? schema : {});
+  const clean = walk(root);
   if (!clean.type && !clean.anyOf) clean.type = 'object';
   if (clean.type === 'object' && !clean.properties) clean.properties = {};
   return clean;
@@ -274,6 +294,18 @@ function toolResultImages(b) {
 }
 
 const NO_VISION_NOTE = '[image omitted: this model cannot read images]';
+
+/**
+ * Providers refuse the whole request over one image above ~5 MB (Anthropic
+ * and most OpenAI-compatible servers), so a big screenshot a tool returned
+ * ended the turn. It goes as a note instead. Returns null when it fits.
+ */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+function tooBigImage(data) {
+  const bytes = Math.floor((String(data || '').length * 3) / 4);
+  if (bytes <= MAX_IMAGE_BYTES) return null;
+  return '[image omitted: ' + (bytes / 1048576).toFixed(1) + ' MB is over the 5 MB image limit]';
+}
 
 function buildOpenAIBody(body, wantStream, prov) {
   const caps = capsFor(prov, body.model);
@@ -352,7 +384,7 @@ function buildOpenAIBody(body, wantStream, prov) {
     const textParts = [];
     const imgPart = (media, data) => (caps.vision === false
       ? NO_VISION_NOTE
-      : { type: 'image_url', image_url: { url: 'data:' + (media || 'image/png') + ';base64,' + data } });
+      : tooBigImage(data) || { type: 'image_url', image_url: { url: 'data:' + (media || 'image/png') + ';base64,' + data } });
     for (const b of c) {
       if (b.type === 'text') textParts.push(b.text);
       else if (b.type === 'image' && b.source && b.source.type === 'base64') {
@@ -501,6 +533,7 @@ function buildResponsesInput(body, prov) {
       else if (b.type === 'image' && b.source && b.source.type === 'base64') {
         input.push(caps.vision === false
           ? { role: 'user', content: [{ type: 'input_text', text: NO_VISION_NOTE }] }
+          : tooBigImage(b.source.data) ? { role: 'user', content: [{ type: 'input_text', text: tooBigImage(b.source.data) }] }
           : { role: 'user', content: [{ type: 'input_image', image_url: 'data:' + (b.source.media_type || 'image/png') + ';base64,' + b.source.data }] });
       } else if (b.type === 'tool_result') {
         input.push({ type: 'function_call_output', call_id: b.tool_use_id, output: toolResultText(b) });
@@ -508,6 +541,7 @@ function buildResponsesInput(body, prov) {
         if (imgs.length) {
           input.push({ role: 'user', content: imgs.map((im) => (caps.vision === false
             ? { type: 'input_text', text: NO_VISION_NOTE }
+            : tooBigImage(im.data) ? { type: 'input_text', text: tooBigImage(im.data) }
             : { type: 'input_image', image_url: 'data:' + im.media_type + ';base64,' + im.data })) });
         }
       }
@@ -673,6 +707,7 @@ function buildGeminiBody(body, prov) {
       if (b.type === 'text') parts.push({ text: b.text });
       else if (b.type === 'image' && b.source && b.source.type === 'base64') {
         parts.push(caps.vision === false ? { text: NO_VISION_NOTE }
+          : tooBigImage(b.source.data) ? { text: tooBigImage(b.source.data) }
           : { inlineData: { mimeType: b.source.media_type || 'image/png', data: b.source.data } });
       } else if (b.type === 'tool_use') {
         const part = { functionCall: { name: b.name, args: b.input || {} } };
@@ -686,7 +721,9 @@ function buildGeminiBody(body, prov) {
         const fname = b.name || toolNameById.get(b.tool_use_id) || b.tool_use_id || 'tool';
         parts.push({ functionResponse: { name: fname, response: { output: toolResultText(b) } } });
         for (const im of toolResultImages(b)) {
-          parts.push(caps.vision === false ? { text: NO_VISION_NOTE } : { inlineData: { mimeType: im.media_type, data: im.data } });
+          parts.push(caps.vision === false ? { text: NO_VISION_NOTE }
+            : tooBigImage(im.data) ? { text: tooBigImage(im.data) }
+            : { inlineData: { mimeType: im.media_type, data: im.data } });
         }
       }
     }

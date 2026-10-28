@@ -33,10 +33,15 @@ function startKeepAlive(res, ms = KEEPALIVE_MS) {
 // listener and, before #8, exposed provider keys to that process.
 const CCE_PROXY_PORT = Number(process.env.CCE_PROXY_PORT || 0);
 
+const MAX_BODY_BYTES = 96 * 1024 * 1024;
+
 function startProxy(resolveProvider, opts = {}) {
   // resolveProvider(uid) -> { baseUrl, apiKey } | null
   const token = opts.token || null;
   const port = opts.port || Number(process.env.CCE_PROXY_PORT || 0);
+  // A turn with many screenshots can be large, but an unbounded buffer lets
+  // one runaway request take the whole app's memory. Over the cap: 413.
+  const maxBody = opts.maxBodyBytes || MAX_BODY_BYTES;
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const m = url.pathname.match(/^\/px\/([a-z0-9]+)\/(.+)$/i);
@@ -66,8 +71,22 @@ function startProxy(resolveProvider, opts = {}) {
     }
 
     const chunks = [];
-    req.on('data', (c) => chunks.push(c));
+    let size = 0;
+    let refused = false;
+    req.on('data', (c) => {
+      if (refused) return;
+      size += c.length;
+      if (size > maxBody) {
+        refused = true;
+        chunks.length = 0;
+        res.writeHead(413, { 'content-type': 'application/json', connection: 'close' });
+        res.end(JSON.stringify({ type: 'error', error: { type: 'request_too_large', message: 'request is ' + Math.round(size / 1048576) + '+ MB, over the proxy limit of ' + Math.round(maxBody / 1048576) + ' MB' } }));
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', () => {
+      if (refused) return;
       const raw = Buffer.concat(chunks).toString('utf8');
       handleTranslated(restPath, raw, prov, res, req.headers).catch((err) => {
         if (process.env.CCE_SMOKE) console.log('[proxy] TRANSLATE ERR ' + String((err && err.stack) || err).slice(0, 300));
