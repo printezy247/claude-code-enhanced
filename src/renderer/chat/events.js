@@ -232,6 +232,7 @@ function handleMessage(chat, msg) {
     if (meta && meta.sessionId !== msg.session_id) {
       meta.sessionId = msg.session_id;
       window.onConvoSessionsChanged && window.onConvoSessionsChanged();
+      window.cceRememberOpenChats && window.cceRememberOpenChats();
     }
   }
   // Track it on the chat too: fork / edit-and-resend pass chat.sessionId.
@@ -258,7 +259,8 @@ function handleMessage(chat, msg) {
         // The error code alone ("invalid_request") hid the provider's own
         // words ("model not found", "context too long"); show both.
         const detail = (msg.message?.content || []).filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
-        appendError(chat, detail ? msg.error + ': ' + detail.slice(0, 600) : msg.error);
+        const why = sendFailureCause(msg.error, detail);
+        appendError(chat, (why ? why + ' (' + msg.error + ')' : msg.error) + (detail ? ': ' + detail.slice(0, 600) : ''));
         break;
       }
       for (const block of (msg.message?.content || [])) renderBlock(chat, block, msg.parent_tool_use_id);
@@ -586,6 +588,33 @@ const TERMINAL_WHY = {
   background_requested: 'This turn moved to a background task.',
   turn_setup_failed: 'The turn could not be started.',
 };
+
+/**
+ * A failed send in plain words: what went wrong and the one thing to do. The
+ * engine's code alone ("billing_error") left the user guessing whether to
+ * retry, re-login or top up. Null when there is nothing better to say.
+ */
+export function sendFailureCause(code, detail = '') {
+  const d = String(detail || '');
+  if (/too long|too large|request_too_large|maximum context|context length|413/i.test(d)) {
+    return 'The request is too large for this model: compact the chat or drop big attachments';
+  }
+  switch (code) {
+    case 'authentication_failed': case 'oauth_org_not_allowed': case 'cloud_credential_error':
+      return 'Sign-in failed: check the provider\'s API key in Providers, or log in again';
+    case 'billing_error': case 'account_on_hold':
+      return 'Out of credit or quota on this provider: top up, or switch provider';
+    case 'rate_limit':
+      return 'Hit the provider\'s rate limit: wait a moment and send again';
+    case 'overloaded': case 'server_error':
+      return 'The provider is overloaded or failing: send again in a moment';
+    case 'model_not_found':
+      return 'This model is not available on this provider: pick another in the model menu';
+    case 'verification_required':
+      return 'The provider wants you to verify your account before it answers';
+    default: return null;
+  }
+}
 
 function explainTerminal(reason) {
   return reason && reason !== 'completed' ? (TERMINAL_WHY[reason] || null) : null;

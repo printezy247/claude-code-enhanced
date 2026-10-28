@@ -47,12 +47,43 @@ async function paintRecent(list) {
   }
 }
 
+/* The chats open when the app last stopped (quit or crash), by session id,
+   so the home page can bring them back. #phase4 */
+const OPEN_KEY = 'cce:openChats';
+const SESSION_ID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
+
+export function rememberOpenChats() {
+  const tabs = window.__tabs;
+  if (!tabs) return;
+  const list = [...tabs.values()]
+    .filter((m) => m && m.kind === 'chat' && m.sessionId && m.cwd)
+    .map((m) => ({ cwd: m.cwd, sessionId: m.sessionId }))
+    .slice(0, 12);
+  try { localStorage.setItem(OPEN_KEY, JSON.stringify(list)); } catch { /* private mode */ }
+}
+window.cceRememberOpenChats = rememberOpenChats;
+
+function lastOpenChats() {
+  try {
+    const list = JSON.parse(localStorage.getItem(OPEN_KEY) || '[]');
+    return Array.isArray(list) ? list.filter((x) => x && typeof x.cwd === 'string' && SESSION_ID.test(String(x.sessionId))) : [];
+  } catch { return []; }
+}
+
+async function reopen(list) {
+  for (const x of list) {
+    try { await Chat.createSession({ cwd: x.cwd, resume: x.sessionId }); }
+    catch (err) { toast(String((err && err.message) || err), 'err'); }
+  }
+}
+
 /** True while no chat or terminal pane is open. */
 const empty = () => !document.querySelector('#terminals > .chat-pane, #terminals > .term-pane');
 
 function sync(home) {
   const was = home.hidden;
   home.hidden = !empty();
+  rememberOpenChats();
   // Coming back after the last chat closed: the folder list may have changed.
   if (was && !home.hidden) paintRecent($('#home-recent'));
 }
@@ -80,6 +111,14 @@ export function initHome() {
   resume.addEventListener('click', () => resumeLatest());
   actions.append(open, here, resume);
   home.appendChild(actions);
+  const last = lastOpenChats();
+  if (last.length) {
+    const restore = el('button', 'btn', 'Reopen ' + last.length + ' chat' + (last.length === 1 ? '' : 's') + ' from last time');
+    restore.id = 'home-restore'; restore.type = 'button';
+    restore.title = last.map((x) => short(x.cwd)).join('\n');
+    restore.addEventListener('click', () => { restore.disabled = true; reopen(last); });
+    actions.appendChild(restore);
+  }
 
   home.appendChild(el('h3', 'home-recent-head', 'Recent folders'));
   const list = el('div', 'home-recent');

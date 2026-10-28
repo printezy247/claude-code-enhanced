@@ -86,6 +86,8 @@ function loadRenderer(opts = {}) {
     window.Element.prototype.scrollIntoView = function () {};
   }
   window.ccx = ccx;
+  // What a previous run left in localStorage, set before the app boots.
+  for (const [k, v] of Object.entries(opts.storage || {})) window.localStorage.setItem(k, v);
   window.Terminal = class { constructor() { this.cols = 80; this.rows = 24; } loadAddon() {} open() {} focus() {} dispose() {} write() {} onData() {} onResize() {} attachCustomKeyEventHandler() {} hasSelection() { return false; } getSelection() { return ''; } };
   window.FitAddon = { FitAddon: class { fit() {} } };
   window.monaco = { editor: {} };
