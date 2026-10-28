@@ -69,16 +69,46 @@ function runRow(run) {
   return row;
 }
 
+// Engine tabs (item 11): Codex / Gemini / OpenCode as terminal tabs. Only
+// engines found on PATH get a button; a missing one shows its install hint.
+function engineRow(e) {
+  const row = el('div', 'mcp-row');
+  row.appendChild(el('span', 'chip ' + (e.found ? 'mcp-ok' : 'mcp-off'), e.found ? 'installed' : 'missing'));
+  row.appendChild(el('b', '', e.label));
+  if (e.found && e.version) row.appendChild(el('span', 'meta', e.version));
+  if (e.found) {
+    const open = el('button', 'btn small', 'Open tab');
+    open.addEventListener('click', async () => {
+      open.disabled = true;
+      try {
+        await window.createSession({ cwd: state.settings && state.settings.defaultCwd, type: e.id });
+      } catch (err) { toast(String(err && err.message || err), 'err'); open.disabled = false; }
+    });
+    row.appendChild(open);
+  } else {
+    row.appendChild(el('span', 'meta', e.hint || ''));
+  }
+  return row;
+}
+
 export async function renderBoard() {
-  const [board, jobs, runs] = await Promise.all([
+  const [board, jobs, runs, engineList] = await Promise.all([
     ccx.invoke('chats:board'),
     ccx.invoke('jobs:list'),
     ccx.invoke('runs:interrupted'),
+    ccx.invoke('engines:list'),
   ]);
   const chatsBox = $('#board-chats');
   const jobsBox = $('#board-jobs');
   const runsBox = $('#board-runs');
+  const enginesBox = $('#board-engines');
   if (!chatsBox) return;
+
+  if (enginesBox) {
+    enginesBox.textContent = '';
+    const list = (engineList && engineList.ok && engineList.engines) || [];
+    list.forEach((e) => enginesBox.appendChild(engineRow(e)));
+  }
 
   chatsBox.textContent = '';
   const rows = (board && board.ok && board.rows) || [];

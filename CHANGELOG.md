@@ -2,6 +2,12 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.87
+- Added: engine tabs — Codex, Gemini CLI and OpenCode open as real terminal tabs (Board → Engine tabs, or Settings → Engine tabs to see what is installed). Detection is a PATH scan of the login shell; nothing is spawned until you open a tab.
+- Added: per-agent models — Settings → Agent models picks which model each subagent in `~/.claude/agents` runs; blank keeps the agent file's own default.
+- Added: mobile/web remote with QR pairing — Settings → Mobile access starts a loopback-only web page (token in the URL, shown as a QR code) to watch chats, answer permission prompts and send messages. The token is compared in constant time and is regenerated on every start.
+- Added: SSH hosts — Settings → SSH hosts remembers machines (keys/agent only, never passwords) and opens a real `ssh` terminal tab. Host/user/port fields are validated and the argv is built as an array, so a saved host can never smuggle ssh options or shell syntax.
+
 ## 0.9.86
 - Fixed: the auth store no longer calls Electron's `basic_text` fallback "encryption". When the desktop keyring is unavailable, Electron falls back to a fixed-XOR "encryption" that any process can undo; `isEncryptionAvailable()` still says yes there. The store now checks the selected backend and reports honestly, so a key saved without real protection is never presented as protected.
 - Added: the packaged binary ships with the RunAsNode, NODE_OPTIONS and `--inspect` escape hatches fused off (an afterPack hook flips them on the packed copy only; the dev electron is untouched).

@@ -51,6 +51,10 @@ const gitsurface = require('./gitsurface');
 const workers = require('./workers');
 const { sanitizeModel, warmOllamaModel, pickLocalDefault, ollamaModelCtx } = localmodels;
 const SessionManager = require('./sessions');
+const engines = require('./engines');
+const webremote = require('./webremote');
+const sshhosts = require('./sshhosts');
+const sdkoptions = require('./sdkoptions');
 const { startProxy, clearLastGoodModel } = require('./proxy');
 const { effortLevels, modelCaps } = require('./modelcontext');
 // Per-launch secret the translator proxy requires on every request. The proxy
@@ -1382,7 +1386,7 @@ function registerIpc() {
   });
 
   // ----- sessions -----
-  handle('session:create', async ({ cwd, type = 'claude', providerUid, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '' }, e) => {
+  handle('session:create', async ({ cwd, type = 'claude', providerUid, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '', hostId = '' }, e) => {
     const dir = (cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
     if (!fs.existsSync(dir)) throw new Error(`directory not found: ${dir}`);
 
@@ -1390,6 +1394,21 @@ function registerIpc() {
     let command, args = [];
     if (type === 'shell') {
       command = process.env.SHELL || 'bash';
+    } else if (type === 'ssh') {
+      // A remembered host, opened as a real ssh tab (item 14). The argv is an
+      // array built by sshhosts.sshArgs — no shell ever sees these values.
+      const hostsList = Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : [];
+      const host = hostsList.find((h) => h && h.id === hostId);
+      if (!host) throw new Error('unknown ssh host: ' + (hostId || '(none given)'));
+      command = 'ssh';
+      args = sshhosts.sshArgs(host);
+    } else if (engines.REGISTRY.some((e) => e.id === type)) {
+      const resolved = await engines.commandFor(type, { PATH: (await loginEnvReady()).PATH || process.env.PATH });
+      if (resolved.error) throw new Error(resolved.error);
+      command = resolved.command;
+      args = resolved.args;
+    } else if (type !== 'claude') {
+      throw new Error(`unknown session type: ${type} (known: claude, shell, ssh, ${engines.REGISTRY.map((e) => e.id).join(', ')})`);
     } else {
       command = claudePath();
       if (continueLast) args.push('--continue');
@@ -2326,6 +2345,77 @@ function registerIpc() {
       sessionId: c.sessionId || null,
     })),
   }));
+  // ---- Phase 3 (items 11-14) --------------------------------------------------
+  // Engine tabs: which Codex/Gemini/OpenCode binaries are on PATH. #feat-engines
+  handle('engines:list', async () => ({
+    engines: await engines.detect({ PATH: (await loginEnvReady()).PATH || process.env.PATH }),
+  }));
+  // Per-agent model overrides: which model each subagent runs. #feat-agent-models
+  handle('agents:models', async () => {
+    const defs = sdkoptions.agentDefinitions(sdkoptions.agentDirs(store.settings.defaultCwd));
+    return { agents: Object.keys(defs).sort(), overrides: { ...(store.settings.agentModels || {}) } };
+  });
+  handle('agents:set-model', async ({ name, model }) => {
+    const n = String(name || '').trim();
+    if (!/^[A-Za-z0-9_-]{1,64}$/.test(n)) throw new Error('invalid agent name');
+    const overrides = { ...(store.settings.agentModels || {}) };
+    const m = sanitizeModel(model || '');
+    if (m) overrides[n] = m; else delete overrides[n];
+    store.settings = { ...store.settings, agentModels: overrides };
+    return { overrides };
+  });
+  // Web/QR remote (item 13): loopback server, pairing token in the QR. #feat-webremote
+  const remote = webremote.createWebRemote({
+    boardRows: () => [...chats.chats.entries()].map(([id, c]) => ({
+      id, cwd: c.cwd || '', busy: !!c.busy, needsYou: chats._permsOf(id).length,
+    })),
+    pendingPerms: () => [...chats.pendingPerms.entries()].map(([requestId, p]) => ({
+      requestId, chatId: p.chatId, toolName: p.toolName,
+    })),
+    send: async (id, text) => {
+      if (!chats.chats.has(id)) return { ok: false, error: 'no such chat' };
+      await chats.send(id, text);
+      return { ok: true };
+    },
+    answer: (requestId, decision) => {
+      const p = chats.pendingPerms.get(requestId);
+      if (!p) return { ok: false, error: 'no such request' };
+      chats.answer(p.chatId, requestId, decision);
+      return { ok: true };
+    },
+  });
+  const remoteQrFor = async (url) => {
+    try {
+      const QRCode = require('qrcode');
+      return await QRCode.toString(url, { type: 'svg', margin: 1 });
+    } catch { return ''; }
+  };
+  handle('webremote:status', async () => ({ ...remote.status(), qr: '' }));
+  handle('webremote:start', async () => {
+    const status = await remote.start({ host: '127.0.0.1', port: 0 });
+    return { ...status, qr: await remoteQrFor(status.url) };
+  });
+  handle('webremote:stop', async () => { remote.stop(); return { running: false }; });
+  // SSH hosts (item 14): remembered machines, opened as terminal tabs. #feat-ssh
+  handle('sshhosts:list', async () => ({
+    hosts: (Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : []).map((h) => ({ ...h })),
+  }));
+  handle('sshhosts:save', async ({ host }) => {
+    const rec = sshhosts.normalize(host || {});
+    const list = Array.isArray(store.settings.sshHosts) ? [...store.settings.sshHosts] : [];
+    const id = rec.id || sshhosts.newId();
+    const saved = { ...rec, id };
+    const at = list.findIndex((h) => h && h.id === id);
+    if (at >= 0) list[at] = saved; else list.push(saved);
+    store.settings = { ...store.settings, sshHosts: list };
+    return { host: saved };
+  });
+  handle('sshhosts:delete', async ({ id }) => {
+    const list = (Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : [])
+      .filter((h) => !(h && h.id === id));
+    store.settings = { ...store.settings, sshHosts: list };
+    return { ok: true };
+  });
   // Background jobs: queue, list, cancel. Done/failed jobs notify. #feat-jobs
   jobQueue.on('update', (job) => {
     if (job.state === 'done' || job.state === 'failed') {
