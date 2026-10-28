@@ -52,7 +52,7 @@ describe('side panel', () => {
     await flush(4);
     click(doc().querySelector('#btn-split-tabs'));
     const rows = [...doc().querySelectorAll('#split-tabs-menu input')];
-    expect(rows.length).toBe(5);
+    expect(rows.length).toBe(6);   // changes, files, terminal, diff, review, preview
     rows[1].checked = false;   // Files
     rows[1].dispatchEvent(new h.window.Event('change', { bubbles: true }));
     expect(doc().querySelector('.split-tab[data-kind="files"]').classList.contains('hidden')).toBe(true);

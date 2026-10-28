@@ -59,6 +59,8 @@ const usageparse = require('./usageparse');
 const codeindex = require('./codeindex');
 const autolearn = require('./autolearn');
 const marketplace = require('./marketplace');
+const deeplink = require('./deeplink');
+const updatecheck = require('./updatecheck');
 const { startProxy, clearLastGoodModel } = require('./proxy');
 const { effortLevels, modelCaps } = require('./modelcontext');
 // Per-launch secret the translator proxy requires on every request. The proxy
@@ -867,18 +869,36 @@ function registerIpc() {
     return { id: created.id, count: windowRegistry.size };
   });
 
-  // Release ping (#47): compares the packaged version with the GitHub release.
-  // 404 = repo has no releases yet (expected before the first push).
+  // Release ping (#47, item 25): the same GitHub release feed, but compared
+  // numerically per version segment (string order said 0.9.10 < 0.9.9) and
+  // with fetch failures reported as errors — never as "you are up to date".
+  // 404 still means "no releases yet" (expected before the first push).
   handle('update:check', async () => {
     const current = app.getVersion();
-    const res = await fetch('https://api.github.com/repos/printezy247/claude-code-enhanced/releases/latest', {
-      headers: { 'user-agent': 'claude-code-enhanced' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.status === 404) return { current, latest: null, note: 'no releases published yet' };
-    if (!res.ok) return { current, latest: null, note: 'release feed returned ' + res.status };
-    const j = await res.json();
-    return { current, latest: String(j.tag_name || '').replace(/^v/, ''), url: j.html_url || '' };
+    const r = await updatecheck.check({ current });
+    if (r.error) {
+      if (/404/.test(r.error)) return { current, latest: null, note: 'no releases published yet' };
+      return { current, latest: null, note: r.error, error: r.error };
+    }
+    return { current: r.current, latest: r.latest, url: r.url, updateAvailable: r.updateAvailable };
+  });
+
+  // cce:// deep links (item 24): one parse, one pending slot, a ping to any
+  // open window; the renderer pulls the pending link (so a link that arrives
+  // before the renderer finishes loading is not lost in an event nobody heard).
+  let pendingDeepLink = null;
+  function routeDeepLink(url) {
+    const d = deeplink.parseCceUrl(String(url || ''));
+    if (!d || d.action === 'unknown') return;
+    pendingDeepLink = d;
+    for (const w of BrowserWindow.getAllWindows()) {
+      try { w.webContents.send('deeplink'); } catch { /* window may be closing */ }
+    }
+  }
+  handle('deeplink:pending', async () => {
+    const link = pendingDeepLink;
+    pendingDeepLink = null;
+    return { ok: true, link };
   });
 
   // ----- providers -----
@@ -2215,6 +2235,29 @@ function registerIpc() {
   // still read these itself through the claude CLI; this only blocks the host
   // bridge that the renderer uses for diffs and @-mentions.
   const SENSITIVE_RE = /\.env$|\.env\.|\.pem$|\.key$|id_(rsa|ed25519|ecdsa)|\.gnupg|google_credentials|service_account|credentials\.json$|secrets\./i;
+  // Guarded text save for the visual markdown editor (item 21). Same readable
+  // roots as file:read, never a sensitive file, only .md/.markdown/.txt, and
+  // the same size ceiling — the renderer cannot use this to rewrite config or
+  // credentials, only prose files inside an open project.
+  handle('file:saveText', async ({ path: p, content }) => {
+    if (!p) throw new Error('path required');
+    const home = process.env.HOME || os.homedir();
+    const real = path.resolve(String(p).replace(/^~(?=\/|$)/, home));
+    let target;
+    try { target = fs.realpathSync(real); } catch { target = real; }   // new file: parent must exist below
+    const roots = readableRoots();
+    if (!roots.some((r) => target === r || target.startsWith(r + path.sep))) {
+      throw new Error('path is outside any open project');
+    }
+    if (SENSITIVE_RE.test(target)) throw new Error('that file is not editable here');
+    if (!/\.(md|markdown|txt)$/i.test(target)) throw new Error('only .md/.markdown/.txt files can be saved here');
+    const text = String(content ?? '');
+    if (Buffer.byteLength(text, 'utf8') > 1024 * 1024) throw new Error('file too large (1 MB max)');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, text);
+    return { ok: true, bytes: Buffer.byteLength(text, 'utf8'), path: target };
+  });
+
   handle('file:read', async ({ path: p, maxBytes }) => {
     if (!p) throw new Error('path required');
     const home = process.env.HOME || os.homedir();
@@ -2803,13 +2846,27 @@ if (store.settings && store.settings.closeToTray) {
 if (!gotLock) {
   app.quit();
 } else {
-  app.on('second-instance', () => {
+  app.on('second-instance', (_e, argv) => {
     // A second launch opens a second window in the running app. #feat-multi-window
     createWindow();
+    // ...and if it carried a cce:// link, route it into the running app. #item-24
+    const link = (argv || []).find((a) => /^cce:\/\//i.test(String(a)));
+    if (link) routeDeepLink(link);
+  });
+
+  // macOS delivers links to the running instance through open-url instead of argv.
+  app.on('open-url', (e, url) => {
+    e.preventDefault();
+    routeDeepLink(url);
   });
 
   app.whenReady().then(async () => {
     if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: app ready');
+    // cce:// links (item 24). Registration needs the packaged app; in dev the
+    // catch keeps startup clean and links simply arrive through argv.
+    try { app.setAsDefaultProtocolClient('cce'); } catch { /* not packaged */ }
+    const bootLink = (process.argv || []).find((a) => /^cce:\/\//i.test(String(a)));
+    if (bootLink) routeDeepLink(bootLink);
     loginEnvReady();   // probe the login shell in the background, never on the main thread
     // Bind an ephemeral port: a fixed one collides with any other listener and
     // leaks provider API keys to whoever grabs it.

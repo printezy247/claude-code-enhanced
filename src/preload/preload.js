@@ -40,6 +40,7 @@ const INVOKE_CHANNELS = new Set([
   'skills:sync',
   'skills:autolearn-prompt', 'skills:autolearn-propose', 'skills:autolearn-pending', 'skills:autolearn-resolve',
   'marketplace:list', 'marketplace:install',
+  'deeplink:pending', 'file:saveText',
   'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
   'file:read', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
   'git:status', 'git:cache-invalidate', 'project:files', 'project:scripts', 'skill:import',
@@ -94,6 +95,12 @@ contextBridge.exposeInMainWorld('ccx', {
     const listener = (_e, payload) => cb(payload);
     ipcRenderer.on('claude:detected', listener);
     return () => ipcRenderer.removeListener('claude:detected', listener);
+  },
+  // A cce:// link arrived: pull the pending one with deeplink:pending. #item-24
+  onDeepLink: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on('deeplink', listener);
+    return () => ipcRenderer.removeListener('deeplink', listener);
   },
   // The machine came back from sleep: stale checks get re-run. #fix-resume
   onAppResumed: (cb) => {

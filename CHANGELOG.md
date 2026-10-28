@@ -2,6 +2,14 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.89
+- Added: markdown editor — the Files tab gets an **edit** button on every .md/.txt row: source on the left, live preview on the right, task checkboxes you can tick, and ```flow``` arrow chains drawn as SVG. Saving goes through the same guarded path as file reads (open projects only, never a secret file).
+- Added: review pane — a Review tab in the tool panel shows the working-tree diff with stats (+/− per file), one click to open a file's patch, and a button to ask Claude about the changes.
+- Added: cce:// links — CCE registers itself as the `cce://` handler: `cce://view/usage`, `cce://open/<path>`, `cce://chat/<session-id>` jump straight into the app (or queue for the next launch). Traversal and junk URLs are rejected.
+- Fixed: update check is honest and numeric — it talks to the GitHub releases API, compares versions segment-by-segment (0.9.10 is newer than 0.9.9, unlike a string compare), and when the fetch fails it says so instead of "up to date".
+- Added: translations — Settings → Language switches the UI between English, Español and Deutsch; strings live in one i18n dictionary and new locales fail the test suite until complete.
+- Locked in (already shipped, now regression-tested): the preview pane stays a sandboxed iframe that only follows localhost dev servers, with "open externally" for anything else.
+
 ## 0.9.88
 - Added: codebase index — Settings → Codebase index builds a per-project symbol index (plain JSON on this machine, junk dirs skipped) and offers chats a `search_codebase` tool so the model finds definitions without reading files.
 - Added: usage by model — the Usage view now breaks tokens and engine-reported cost down per model, next to the daily bars.

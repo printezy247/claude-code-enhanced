@@ -1,6 +1,7 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
 import { $, applyTheme, applyThinkingDisplay, el, state, toast } from './core.js';
 import { updateStatusbar } from './tabs.js';
+import { LOCALES, applyLang, getLang, setLang, t } from '../i18n.js';
 
 /* ================= settings view ================= */
 
@@ -269,7 +270,9 @@ export function renderSettings() {
     upBtn.disabled = false;
     if (!r.ok) { upState.textContent = r.error; return; }
     if (!r.latest) { upState.textContent = 'v' + r.current + ' · ' + r.note; return; }
-    const newer = r.latest !== r.current;
+    // Numeric compare from the main process (item 25) — string order would
+    // call 0.9.10 older than 0.9.9.
+    const newer = typeof r.updateAvailable === 'boolean' ? r.updateAvailable : r.latest !== r.current;
     upState.textContent = newer
       ? 'v' + r.current + ' → v' + r.latest + ' available'
       : 'v' + r.current + ' is the latest release';
@@ -436,6 +439,33 @@ export function renderSettings() {
   body.appendChild(saveBtn);
   renderRemoteCards(body);
   renderIndexGuardCards(body);
+  renderLangCard(body);
+}
+
+// Translations (item 26): pick the interface language; nav labels carry
+// data-i18n and re-translate the moment this changes.
+function renderLangCard(body) {
+  const card = el('div', 'settings-card');
+  card.appendChild(el('h4', '', t('set.language')));
+  card.appendChild(el('div', 'hint', t('set.hint.language')));
+  const row = el('div', 'inline');
+  const sel = el('select');
+  const NAMES = { en: 'English', es: 'Español', de: 'Deutsch' };
+  for (const code of LOCALES) {
+    const o = el('option', '', NAMES[code] || code);
+    o.value = code;
+    sel.appendChild(o);
+  }
+  sel.value = getLang();
+  sel.setAttribute('aria-label', t('set.language'));
+  sel.addEventListener('change', async () => {
+    setLang(sel.value);
+    await saveSettings({ lang: sel.value });
+    applyLang();
+  });
+  row.appendChild(sel);
+  card.appendChild(row);
+  body.appendChild(card);
 }
 
 /**
