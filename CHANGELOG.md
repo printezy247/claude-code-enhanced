@@ -2,6 +2,13 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.84
+- Fixed: auto mode judged shell commands on their raw text, so quoting could hide what the shell runs. `sed '-i' …` passed the "no -i" rule, and `cat ".e""nv"`, `cat \.env` or `cat $'\x2eenv'` passed the secret-file check. Commands are now read the way the shell reads them (quotes and escapes removed, split on `;`, `|`, `&&`, `||` outside quotes). Variables, `$'…'`, subshells, redirects and open quotes make auto mode ask. A glob may not reach a hidden file, the home folder, an absolute path or the parent folder (`ls src/*.js` is still approved).
+- Changed: images pasted into a message you have not sent yet are kept across a crash in files only you can read (0600), named by a hash of the folder. They used to be lost; they are never written to localStorage.
+- Changed: IPC size limits are set per channel. Chat sends and draft images get 24 MB; every other channel, including new ones, keeps 1 MB.
+- Changed: IPC from a DevTools page is refused in the installed app (it is only allowed in a development build).
+- Added: tests that only http(s) links leave the app, and that the translator proxy listens on 127.0.0.1 only and refuses calls without its token.
+
 ## 0.9.83
 - Added: the home page offers "Reopen N chats from last time": the chats open when the app last stopped (quit or crash), resumed by session id.
 - Changed: a failed send says the cause and what to do (sign-in failed, out of credit or quota, rate limit, provider overloaded, model not available, request too large), with the engine's code and the provider's words after it. It used to show only the code.

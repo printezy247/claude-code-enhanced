@@ -51,6 +51,8 @@ let proxyPort = null;
 const ChatManager = require('./chats');
 const { modelContext } = require('./modelcontext');
 const { WindowRegistry, route } = require('./windows');
+const ipcguard = require('./ipcguard');
+const { createDraftStore } = require('./drafts');
 const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
 const { normalizeDomains } = require('./webdomains');
 
@@ -451,9 +453,7 @@ function createWindow(initialState) {
     }
   });
   w.webContents.setWindowOpenHandler(({ url }) => {
-    try {
-      if (/^https?:$/.test(new URL(url).protocol)) shell.openExternal(url);
-    } catch { /* malformed url */ }
+    if (ipcguard.isExternalLink(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
   // Refuse every permission request the renderer could make: the app needs no
@@ -757,26 +757,8 @@ function isValidSender(e) {
   // a `sender` or a frame) with no frame URL fails closed.
   if (!e || (!e.sender && !e.senderFrame)) return true;
   if (!e.senderFrame || !e.senderFrame.url) return false;
-  const url = String(e.senderFrame.url);
-  if (url.startsWith('devtools://')) return true;
-  if (url.startsWith('file://')) {
-    try {
-      const filePath = fileURLToPath(url);
-      const rel = path.relative(rendererDir, filePath);
-      return !rel.startsWith('..') && !path.isAbsolute(rel);
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  return ipcguard.isAllowedSenderUrl(e.senderFrame.url, rendererDir, { packaged: app.isPackaged });
 }
-
-const IPC_MAX_PAYLOAD_BYTES = 1000000;
-// Channels that carry pasted or attached images as base64. The renderer shrinks
-// each image first, but a few screenshots can still pass 1 MB, which blocked
-// the message with "IPC payload too large".
-const IPC_LARGE_PAYLOAD_BYTES = 24000000;
-const IPC_LARGE_CHANNELS = new Set(['chat:send', 'chat:steer']);
 function handle(channel, fn) {
   ipcMain.handle(channel, async (e, payload) => {
     if (!isValidSender(e)) {
@@ -785,7 +767,7 @@ function handle(channel, fn) {
     if (payload != null) {
       try {
         const sz = Buffer.byteLength(JSON.stringify(payload));
-        const cap = IPC_LARGE_CHANNELS.has(channel) ? IPC_LARGE_PAYLOAD_BYTES : IPC_MAX_PAYLOAD_BYTES;
+        const cap = ipcguard.payloadCap(channel);
         if (sz > cap) return { ok: false, error: 'IPC payload too large (' + sz + ' bytes)' };
       } catch { /* not stringifyable */ }
     }
@@ -2362,6 +2344,15 @@ function registerIpc() {
       defaultPath: defaultPath || store.settings.defaultCwd || os.homedir(),
     });
     return { canceled: res.canceled, path: res.canceled ? null : res.filePaths[0] };
+  });
+
+  // Images pasted into a message not sent yet, kept across a crash in 0600
+  // files instead of localStorage. #phase5
+  const drafts = createDraftStore(path.join(app.getPath('userData'), 'drafts'));
+  handle('draft:images', async ({ op, key, images }) => {
+    if (op === 'save') { drafts.save(key, images); return {}; }
+    if (op === 'load') return { images: drafts.load(key) };
+    throw new Error('unknown op');
   });
 
   // Attach files to a chat turn. Images come back as base64 blocks, text files
