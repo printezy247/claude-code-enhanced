@@ -15,6 +15,7 @@ import { initSplitTabMenu, renderOverview, renderSplit, setAllOverviewCards, spl
 import { openNewSessionModal, openProviderEditor } from './app/provider-forms.js';
 import { parseForceCtx, renderClaudeBanner, renderSettings } from './app/settings.js';
 import { activateSession, createSession, killSession, paintReopenButton, recentlyClosedCount, reopenLastClosed, resumeLatest, switchView, tabRegistry, toggleSidebar } from './app/tabs.js';
+import { initHome } from './app/home.js';
 import { renderUsage } from './app/usage.js';
 import { openNewWindow } from './app/window.js';
 
@@ -29,6 +30,9 @@ Object.assign(window, {
 function wireChrome() {
   document.querySelectorAll('.nav-btn').forEach(b =>
     b.addEventListener('click', () => switchView(b.dataset.view)));
+  // "← Conversations" and the breadcrumb's Home on the other views.
+  document.querySelectorAll('[data-back]').forEach(b =>
+    b.addEventListener('click', (e) => { e.preventDefault(); switchView(b.dataset.back); }));
   paintDeclaredIcons();
   // The conversation list and the Open list live in the sidebar from the start.
   ensureConvoDrop();
@@ -290,9 +294,14 @@ function wireChrome() {
   renderSettings();
   switchView('terminal');
 
-  // Welcome session — desktop-style chat on the real Agent SDK stream.
-  await Chat.createSession({
-    cwd: state.settings.defaultCwd || '~',
-    providerUid: state.providers.defaultUid,
-  });
+  // A blank home page with a folder picker, the way the desktop app opens. A
+  // chat starts only once a folder is picked; autoOpenWelcomeChat restores
+  // the old welcome chat in the default folder.
+  initHome();
+  if (state.settings.autoOpenWelcomeChat) {
+    await Chat.createSession({
+      cwd: state.settings.defaultCwd || '~',
+      providerUid: state.providers.defaultUid,
+    });
+  }
 })();

@@ -262,6 +262,7 @@ function handleMessage(chat, msg) {
         break;
       }
       for (const block of (msg.message?.content || [])) renderBlock(chat, block, msg.parent_tool_use_id);
+      chat.streamedThoughts?.delete(msg.parent_tool_use_id || 'main');
       // Checklist fallback: only fresh messages count (a reconnect replays
       // the turn), and the stream is ordered so the last writer wins —
       // tool renders and parses simply overwrite each other.
@@ -719,6 +720,11 @@ export function clearLive(chat, parentId) {
     if (!n) return;
     if (n.parentNode === chat.msgs) chat.msgs.removeChild(n); else n.remove();
   };
+  // The finished message can carry a thought with its text left out (the
+  // provider redacted or omitted it). Keep what streamed, in order, so the
+  // final rendering does not replace a readable thought with an empty one.
+  chat.streamedThoughts ??= new Map();
+  chat.streamedThoughts.set(key, [...live.blocks.values()].filter(b => b.type === 'thinking').map(b => b.text));
   for (const [, b] of live.blocks) { drop(b.node); drop(b.think); }
   chat.lives.delete(key);
 }

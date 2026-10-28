@@ -66,8 +66,13 @@ function loadRenderer(opts = {}) {
       calls.push({ channel, payload });
       const entry = opts.ipc || {};
       const v = entry[channel];
-      if (typeof v === 'function') return await v(payload);
-      return v !== undefined ? v : { ok: true };
+      const r = typeof v === 'function' ? await v(payload) : (v !== undefined ? v : { ok: true });
+      // Most suites drive the chat the app used to open on boot. Keep it for
+      // them; a suite that tests the blank home page passes welcome: false.
+      if (channel === 'settings:get' && opts.welcome !== false && r && r.settings && r.settings.autoOpenWelcomeChat === undefined) {
+        return { ...r, settings: { ...r.settings, autoOpenWelcomeChat: true } };
+      }
+      return r;
     },
     send: (channel, payload) => { calls.push({ channel, payload, sent: true }); },
     onPtyData: (cb) => { listeners.pty.push(cb); return () => {}; },
