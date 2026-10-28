@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS = {
   webFetchDomains: [],      // sites WebFetch may read without asking; anything else asks first
   streamIdleSeconds: 180,   // how long a silent stream may stay silent before the turn is called dead
   autoNudge: false,         // off by default: avoids burning whole turns on closing remarks
+  autoOpenWelcomeChat: false, // start on the blank home page, not in a chat rooted at defaultCwd
   thinkingBudget: 2048,     // sensible default to prevent unbounded thinking token burn (blank/0 = model default)
   localNumCtx: 73728,        // context to load local Ollama models with (claude base prompt ≈66K tokens; more costs RAM)
   forceCtx: {},             // per-model override: { "qwen3-4b": 32000 } skips the floor (#11)

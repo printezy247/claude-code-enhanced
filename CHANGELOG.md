@@ -2,6 +2,13 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.79
+- Fixed: a thought that streamed in was replaced by the finished message's empty copy, leaving only a "Thought for Xs" pill. The streamed text now stays, and a thought the provider kept to itself says "reasoning not shared by the provider" instead of showing an empty block.
+- Fixed: reasoning sent by OpenAI-format providers in `reasoning_text`, `thinking` or OpenRouter's `reasoning_details` was dropped. The proxy now reads every known field, streamed and not streamed.
+- Changed: a finished thought stays open until the answer starts, and its pill shows the opening line of the thought.
+- Added: Usage, Providers, Connectors and Settings have a "← Conversations" button, and Connectors has a Home › Connectors breadcrumb.
+- Changed: the app starts on a blank home page with recent folders, Open folder…, New chat here and Resume latest, instead of opening a chat in the home folder. Settings → Chat behaviour → "Open a chat in the default folder on start" brings the old start back.
+
 ## 0.9.78
 - Fixed: attaching a file (e.g. a `.pine` script) failed with "totalBytes is not defined".
 - Fixed: Claude's thinking is visible again. Newer Claude models omit the thinking text unless the app asks for summaries; CCE now asks. Settings > Session caps & model > "Show thinking" turns it off.

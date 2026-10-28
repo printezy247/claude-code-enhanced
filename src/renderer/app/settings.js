@@ -91,6 +91,13 @@ export function renderSettings() {
   nudgeLabel.appendChild(nudgeCheck);
   nudgeLabel.appendChild(el('span', '', 'Auto-continue when a model stops after saying what it will do next'));
   c3b.appendChild(nudgeLabel);
+  const welcomeCheck = el('input'); welcomeCheck.type = 'checkbox'; welcomeCheck.id = 'opt-welcomechat';
+  welcomeCheck.checked = !!s.autoOpenWelcomeChat;
+  welcomeCheck.addEventListener('change', () => saveSettings({ autoOpenWelcomeChat: welcomeCheck.checked }));
+  const welcomeLabel = el('label', 'check');
+  welcomeLabel.appendChild(welcomeCheck);
+  welcomeLabel.appendChild(el('span', '', 'Open a chat in the default folder on start (off: start on the home page)'));
+  c3b.appendChild(welcomeLabel);
   c3b.appendChild(el('div', 'hint', 'Some models end a turn on “Let me …” without making the tool call, so the chat just goes quiet. When this is on, cce sends one automatic reminder per prompt; the ▶ continue button is always available.'));
   const cmRow = el('label', 'check');
   cmRow.appendChild(el('span', '', 'context-mode plugin in chats'));

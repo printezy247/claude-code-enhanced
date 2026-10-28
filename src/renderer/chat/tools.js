@@ -3,7 +3,7 @@ import { elIcon, toast } from '../app/core.js';
 import { enhanceMarkdown, monacoThemeName } from './markdown.js';
 import { openPlanViewer, updatePlanViewer } from './panels.js';
 import { noteToolOutcome } from './picker.js';
-import { thoughtNode } from './stream.js';
+import { hiddenThoughtNode, thoughtNode } from './stream.js';
 import { scrollDownSoft } from './transcript.js';
 import { el, md, splitThink, stripAnsi } from './util.js';
 
@@ -143,9 +143,11 @@ export function renderBlock(chat, block, parentId) {
     w.appendChild(body);
     enhanceMarkdown(body, cut.text);
     host.appendChild(w);
-  } else if (block.type === 'thinking') {
-    if (!block.thinking) return;
-    host.appendChild(thoughtNode(block.thinking));
+  } else if (block.type === 'thinking' || block.type === 'redacted_thinking') {
+    // The text that streamed live wins over a final copy that left it out.
+    const streamed = chat.streamedThoughts?.get(parentId || 'main')?.shift();
+    const text = block.thinking || streamed || '';
+    host.appendChild(text ? thoughtNode(text) : hiddenThoughtNode());
   } else if (block.type === 'tool_use') {
     // Group long runs of read-only lookups into one collapsible row, the way
     // the desktop app does, so a 40-file sweep is 2 lines instead of 40. #27

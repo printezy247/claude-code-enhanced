@@ -78,6 +78,7 @@
 
       <section id="view-usage" class="view">
         <div class="panel-head">
+          <button class="btn ghost small back-home" data-back="conversations" aria-label="Back to Conversations" title="Back to Conversations">← Conversations</button>
           <h2><span data-icon="chart"></span> Usage</h2>
           <button id="btn-usage-refresh" class="btn"><span data-icon="refresh"></span> Refresh</button>
         </div>
@@ -92,6 +93,7 @@
 
       <section id="view-providers" class="view">
         <div class="panel-head">
+          <button class="btn ghost small back-home" data-back="conversations" aria-label="Back to Conversations" title="Back to Conversations">← Conversations</button>
           <h2>Providers</h2>
           <button id="btn-add-provider" class="btn primary">＋ Add provider</button>
         </div>
@@ -101,7 +103,11 @@
 
       <section id="view-connectors" class="view">
         <div class="panel-head">
-          <h2>Connectors</h2>
+          <button class="btn ghost small back-home" data-back="conversations" aria-label="Back to Conversations" title="Back to Conversations">← Conversations</button>
+          <div class="head-stack">
+            <nav class="crumbs" aria-label="Breadcrumb"><a href="#" data-back="conversations">Home</a> <span aria-hidden="true">›</span> <span aria-current="page">Connectors</span></nav>
+            <h2>Connectors</h2>
+          </div>
           <span id="connector-scope-wrap" class="scope-wrap">scope
             <select id="connector-scope">
               <option value="user" selected>user (all projects)</option>
@@ -121,7 +127,10 @@
       </section>
 
       <section id="view-settings" class="view">
-        <div class="panel-head"><h2>Settings</h2></div>
+        <div class="panel-head">
+          <button class="btn ghost small back-home" data-back="conversations" aria-label="Back to Conversations" title="Back to Conversations">← Conversations</button>
+          <h2>Settings</h2>
+        </div>
         <div id="settings-body"></div>
       </section>
     </main>

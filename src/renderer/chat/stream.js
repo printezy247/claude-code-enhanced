@@ -65,6 +65,10 @@ export function handleStream(chat, event, parentId) {
   switch (event.type) {
     case 'content_block_start': {
       const b = event.content_block || {};
+      // The answer (or a tool call) has begun: fold away the finished thought.
+      if (b.type !== 'thinking') {
+        for (const [, prev] of live.blocks) if (prev.type === 'thinking' && prev.done) prev.node.open = false;
+      }
       let entry;
       if (b.type === 'text') {
         const node = el('div', 'msg assistant-msg live' + (parentId ? ' nested' : ''));
@@ -132,8 +136,11 @@ export function handleStream(chat, event, parentId) {
       } else if (blk.type === 'thinking') {
         const secs = ((Date.now() - (blk.t0 || Date.now())) / 1000).toFixed(0);
         const pill = blk.node.querySelector('.think-pill');
-        if (pill) setPill(pill, 'Thought for ' + secs + 's');
-        blk.node.open = false;   // collapse into the desktop-style summary pill
+        const g = gist(blk.text);
+        if (pill) setPill(pill, 'Thought for ' + secs + 's' + (g ? ' · ' + g : ''));
+        // Stay open so the thought can be read; the first answer token folds
+        // it (content_block_start above). Folding here hid it at once.
+        blk.done = true;
       }
       break;
     }
@@ -145,11 +152,25 @@ export function handleStream(chat, event, parentId) {
 /** A collapsed, finished thought, labelled with its opening line so a run of
  *  them says something instead of repeating "click to view". */
 export function thoughtNode(text) {
-  const gist = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 110);
-  const d = buildThinking(gist ? 'Thought · ' + gist + (String(text).length > 110 ? '…' : '') : 'Thought');
+  const g = gist(text);
+  const d = buildThinking(g ? 'Thought · ' + g : 'Thought');
   d.querySelector('.think-body').textContent = text;
   d.open = false;
   return d;
+}
+
+/** A thought the provider kept to itself: say so instead of an empty block. */
+export function hiddenThoughtNode() {
+  const d = buildThinking('Thought · reasoning not shared by the provider');
+  d.classList.add('think-hidden');
+  d.open = false;
+  return d;
+}
+
+/** The opening line of a thought, for its collapsed pill. */
+function gist(text) {
+  const s = String(text || '').replace(/\s+/g, ' ').trim();
+  return s.length > 110 ? s.slice(0, 110) + '…' : s;
 }
 
 // Icon markup, then the label as text: the label can carry model output, and

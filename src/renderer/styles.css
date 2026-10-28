@@ -1780,3 +1780,33 @@ body.ov-resizing { user-select: none; cursor: col-resize; }
 .conn-manage { margin-top: 6px; align-self: flex-start; }
 .conn-mode { display: inline-flex; gap: 6px; align-items: center; flex-basis: 100%; }
 .conn-mode select { width: auto; min-width: 0; padding: 4px 8px; font-size: 12px; }
+
+/* ===== Way back from the other views (#E2) ===== */
+.panel-head .back-home { margin-left: 0; }
+.head-stack { display: flex; flex-direction: column; gap: 2px; }
+.crumbs { font-size: 12px; color: var(--muted); }
+.crumbs a { color: var(--muted); text-decoration: none; }
+.crumbs a:hover, .crumbs a:focus-visible { color: var(--accent); text-decoration: underline; }
+
+/* ===== Blank home page with a folder picker (#E3) ===== */
+.home-blank {
+  position: absolute; inset: 0; overflow: auto;
+  display: flex; flex-direction: column; align-items: center;
+  padding: 14vh 24px 24px; background: var(--bg); color: var(--text);
+}
+.home-blank[hidden] { display: none; }
+.home-title { font-size: 22px; margin-bottom: 6px; }
+.home-sub { color: var(--muted); margin-bottom: 18px; text-align: center; }
+.home-actions { display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; margin-bottom: 30px; }
+.home-recent-head { font-size: 13px; color: var(--muted); align-self: center; width: min(520px, 100%); margin-bottom: 8px; }
+.home-recent { display: flex; flex-direction: column; gap: 6px; width: min(520px, 100%); }
+.home-folder {
+  display: flex; align-items: baseline; gap: 10px; text-align: left;
+  padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
+  background: none; color: var(--text); cursor: pointer; font: inherit;
+}
+.home-folder:hover, .home-folder:focus-visible { border-color: var(--accent); }
+.home-folder-name { font-weight: 600; }
+.home-folder-path { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-none { color: var(--muted); font-size: 13px; text-align: center; }
+.think-hidden .think-pill { font-style: italic; }

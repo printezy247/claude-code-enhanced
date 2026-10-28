@@ -417,10 +417,10 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
           return;
         }
         const d = choice.delta || {};
-        if (d.reasoning || d.reasoning_content) {
+        const piece = reasoningOf(d);
+        if (piece) {
           // Tool-tuned models (e.g. Qwen3-toolcall via Ollama) emit tool calls
           // as <tool_call>{json}</tool_call> inside the reasoning channel.
-          const piece = (typeof d.reasoning === 'string' ? d.reasoning : '') + (typeof d.reasoning_content === 'string' ? d.reasoning_content : '');
           emitThinking(piece);
           reasonBuf += piece;
           let m2;
@@ -793,13 +793,32 @@ function isTokenValid(req, token) {
   return false;
 }
 
+/**
+ * The reasoning text in an OpenAI-style delta or message. Providers disagree
+ * on the field: `reasoning` (Ollama, OpenRouter), `reasoning_content`
+ * (DeepSeek, vLLM, Kimi), `reasoning_text` and `thinking` (others), and
+ * OpenRouter's `reasoning_details` list. A field this misses is a thought the
+ * chat shows as an empty block.
+ */
+function reasoningOf(d) {
+  if (!d) return '';
+  let out = '';
+  for (const k of ['reasoning', 'reasoning_content', 'reasoning_text', 'thinking']) {
+    if (typeof d[k] === 'string') out += d[k];
+  }
+  if (!out && Array.isArray(d.reasoning_details)) {
+    for (const r of d.reasoning_details) if (r && typeof r.text === 'string') out += r.text;
+  }
+  return out;
+}
+
 function aggregateToAnthropic(j, body, back = (n) => n) {
   const choice = (j.choices || [])[0] || {};
   const m = choice.message || {};
   // Thinking models (qwen3.5, gemma-through-Ollama) put reasoning in a
   // separate field, not in content. Surface it as a thinking block so the
   // engine sees the reasoning and the reply is not an empty message.
-  let reasoning = [m.reasoning, m.reasoning_content].filter(x => typeof x === 'string' && x).join('');
+  let reasoning = reasoningOf(m);
   // Reasoning written into the content itself (<think>…</think>, or only the
   // closing tag) belongs with the thinking, not in the answer.
   if (typeof m.content === 'string' && /think/i.test(m.content)) {
@@ -1121,7 +1140,7 @@ function pickToolSlot(toolBuf, tc) {
 }
 
 module.exports = {
-  pickToolSlot, cachedFrom, anthropicUsage,
+  pickToolSlot, cachedFrom, anthropicUsage, reasoningOf,
   startProxy,
   CCE_PROXY_PORT,
   isTokenValid,
