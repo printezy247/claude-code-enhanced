@@ -313,6 +313,15 @@ class ChatManager extends EventEmitter {
     return true;
   }
 
+  /** Answer every pending request of an engine chat with a denial and clear its cards. */
+  _clearPerms(id, reason) {
+    for (const entry of this._permsOf(id)) {
+      this._dropPerm(entry.requestId);
+      this.emit('event', id, { kind: 'permission-cleared', requestId: entry.requestId, reason });
+      try { entry.resolve({ behavior: 'deny', message: 'Interrupted by the user' }); } catch { /* settled */ }
+    }
+  }
+
   /** Pending permission requests for one chat (used by close/interrupt). */
   _permsOf(chatId) {
     return [...this.pendingPerms.values()].filter(e => e.chatId === chatId);
@@ -1216,10 +1225,18 @@ class ChatManager extends EventEmitter {
    * the Agent SDK. It lives in the same map and emits the same events, so the
    * chat view, Board and window routing need no special case. #feat-engine-chat
    */
-  createEngine({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], providerName = '' }) {
+  createEngine({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], providerName = '', resumeId = '', onThread }) {
     const { EngineChat } = require('./enginechat');
     const id = 'c' + this.nextId++;
-    const runner = new EngineChat({ engine, command, cwd, env, yolo, model, extraArgs, emit: (evt) => this.emit('event', id, evt) });
+    // Codex runs over its app-server so it can ask before acting; the other
+    // CLIs run one headless command per message.
+    const runner = engine === 'codex'
+      ? new (require('./codexchat').CodexChat)({
+        command, cwd, env, yolo, model, extraArgs, sessionId: resumeId || null,
+        emit: (evt) => this.emit('event', id, evt),
+        ask: (req) => this._askEngine(id, req), onThread,
+      })
+      : new EngineChat({ engine, command, cwd, env, yolo, model, extraArgs, emit: (evt) => this.emit('event', id, evt) });
     const chat = {
       engine, runner, cwd, q: runner.q, abort: new AbortController(),
       // No model = the CLI's own default; a CCE model shows with its provider.
@@ -1231,6 +1248,38 @@ class ChatManager extends EventEmitter {
     };
     this.chats.set(id, chat);
     return { id, cwd, engine, label: runner.label, model: chat.model, permissionMode: chat.permissionMode, provider: null, sandbox: false };
+  }
+
+  /**
+   * An approval request from an engine runner (Codex), shown as the usual
+   * Allow / Deny card. Resolves 'allow' | 'always' | 'deny'. Goes through the
+   * same pending map as Claude's requests, so answer(), timeouts and the
+   * interrupt/close cleanup all apply unchanged.
+   */
+  _askEngine(id, { toolName, input, title = '', description = '', itemId = '' }) {
+    const requestId = 'r' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
+    // The rule an "Allow for this session" answer stands for, shown on the card.
+    // Codex remembers a session approval for this exact command (or these files).
+    const suggestions = [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName: toolName === 'Bash' ? 'this exact command, for the rest of this chat' : 'these files, for the rest of this chat' }] }];
+    return new Promise((resolve) => {
+      const finish = (v) => resolve(v);
+      const entry = {
+        chatId: id, requestId, toolName, input, suggestions, grantName: toolName, policy: null, destructive: false,
+        suppressAlwaysAllowRule: false, title, description, decisionReason: '', blockedPath: '', displayName: '', toolUseID: itemId || '',
+        resolve: (r) => finish(r && r.behavior === 'allow' ? (r.updatedPermissions ? 'always' : 'allow') : 'deny'),
+        timer: setTimeout(() => {
+          this._dropPerm(requestId);
+          this.emit('event', id, { kind: 'permission-timeout', requestId });
+          finish('deny');
+        }, PERM_TIMEOUT_MS),
+      };
+      this.pendingPerms.set(requestId, entry);
+      this.emit('event', id, {
+        kind: 'permission', requestId, toolName, input, suggestions, suppressAlwaysAllowRule: false,
+        title, description, decisionReason: '', blockedPath: '', displayName: '', toolUseID: itemId || '',
+        expiresAt: Date.now() + PERM_TIMEOUT_MS,
+      });
+    });
   }
 
   send(id, text, blocks, opts = {}) {
@@ -1297,7 +1346,7 @@ class ChatManager extends EventEmitter {
   async interrupt(id) {
     const chat = this.chats.get(id);
     if (!chat) return;
-    if (chat.engine) return chat.runner.interrupt();
+    if (chat.engine) { this._clearPerms(id, 'interrupted'); return chat.runner.interrupt(); }
     // The Stop button ends the turn: the live tail must stop with it, or the
     // card keeps updating and the engine is polled every 700 ms for a turn
     // the user already ended. #F2
@@ -2054,7 +2103,7 @@ class ChatManager extends EventEmitter {
     this._stopTasksForChat(id, false);
     this._settlePending(id);
     if (!chat) return;
-    if (chat.engine) { chat.runner.close(); this.chats.delete(id); return; }
+    if (chat.engine) { this._clearPerms(id, 'closed'); chat.runner.close(); this.chats.delete(id); return; }
     clearTimeout(chat.watchdog);       // never fire "engine did not start" on a closed tab
     clearTimeout(chat.recoverTimer);
     try { chat.close && chat.close(); } catch { /* stream already ended */ }

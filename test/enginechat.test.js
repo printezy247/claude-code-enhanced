@@ -273,11 +273,8 @@ describe('ChatManager engine chats', () => {
   it('createEngine registers a chat that send/interrupt/close/context reach', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-engmgr-'));
     try {
-      const bin = path.join(dir, 'codex');
-      fs.writeFileSync(bin, '#!/bin/sh\ncat >/dev/null\n'
-        + `echo '{"type":"thread.started","thread_id":"th-1"}'\n`
-        + `echo '{"type":"item.completed","item":{"id":"i","type":"agent_message","text":"hey"}}'\n`
-        + `echo '{"type":"turn.completed","usage":{"input_tokens":3,"output_tokens":1}}'\n`, { mode: 0o755 });
+      // Codex chats run over app-server (0.9.98): the stand-in speaks its protocol.
+      const bin = path.join(__dirname, 'fixtures', 'fake-codex-appserver.js');
       const mgr = new ChatManager({});
       const events = [];
       mgr.on('event', (id, e) => events.push({ id, ...e }));
@@ -288,12 +285,12 @@ describe('ChatManager engine chats', () => {
       const end = Date.now() + 4000;
       while (!events.some((e) => e.kind === 'status' && e.busy === false) && Date.now() < end) await new Promise((r) => setTimeout(r, 20));
       expect(events.every((e) => e.id === created.id)).toBe(true);
-      expect(events.find((e) => e.kind === 'message' && e.msg.type === 'assistant').msg.message.content[0].text).toBe('hey');
-      expect(mgr.chats.get(created.id).sessionId).toBe('th-1');
+      expect(events.find((e) => e.kind === 'message' && e.msg.type === 'assistant').msg.message.content[0].text).toBe('reply to: hello (history 1)');
+      expect(mgr.chats.get(created.id).sessionId).toMatch(/^thread-/);
       expect(mgr.chats.get(created.id).busy).toBe(false);
       expect(await mgr.commands(created.id)).toEqual([]);
       const ctx = await mgr.context(created.id);
-      expect(ctx.totalTokens).toBe(3);
+      expect(ctx.totalTokens).toBe(10);
       await mgr.interrupt(created.id);   // idle: no throw
       mgr.close(created.id);
     } finally { fs.rmSync(dir, { recursive: true, force: true }); }

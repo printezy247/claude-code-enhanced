@@ -399,4 +399,6 @@ class EngineChat {
   }
 }
 
-module.exports = { argsFor, createTranslator, EngineChat, labelOf, providerSetup, PROVIDER_KEY_ENV };
+const frames = { assistant, textMsg, thinkingMsg, toolUse, toolResult, initMsg, resultMsg };
+
+module.exports = { argsFor, createTranslator, EngineChat, labelOf, providerSetup, PROVIDER_KEY_ENV, frames };
