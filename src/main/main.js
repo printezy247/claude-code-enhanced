@@ -1610,8 +1610,9 @@ function registerIpc() {
       if (providerUid) {
         const inst = store.providers.find((p) => p.uid === providerUid);
         if (!inst) return { ok: false, error: 'provider not found' };
-        await ensureFreshAuth(inst);
-        prov = { name: inst.name, baseUrl: inst.baseUrl, protocol: inst.protocol, apiKey: providers.resolveApiKey(inst) };
+        if (!inst.baseUrl) return { ok: false, error: inst.name + ' has no base URL to route ' + engine + ' through' };
+        // Through CCE's proxy: it holds the key and speaks the provider's dialect.
+        prov = { name: inst.name, proxyBase: proxyPort ? proxyBaseUrl(inst) : '', token: proxyToken };
       }
       const setup = enginechat.providerSetup(String(engine), prov, sanitizeModel(model || ''));
       if (setup.error) return { ok: false, error: setup.error };

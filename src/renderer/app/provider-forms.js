@@ -101,7 +101,7 @@ export function openNewSessionModal() {
     modelHint.textContent = cli === 'antigravity'
       ? 'Antigravity runs with its own login and models only.'
       : cli === 'claude' ? 'Or run Claude Code through one of your CCE providers.'
-        : 'Or run it through a CCE provider (' + (cli === 'codex' ? 'OpenAI-format' : 'OpenAI-format or Anthropic') + ').';
+        : 'Or run it on any CCE provider (through CCE’s local proxy).';
   };
   ccx.invoke('engines:list').then((r) => {
     const all = (r && r.engines) || [];

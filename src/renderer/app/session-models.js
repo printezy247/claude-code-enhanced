@@ -1,9 +1,8 @@
 // Which CCE provider models a CLI can run, for the New session modal. Pure,
-// so it is tested without a DOM. Claude takes every provider (the proxy
-// translates); Codex an OpenAI-format endpoint; OpenCode an OpenAI-format or
-// Anthropic one; Antigravity only its own login. Providers without a base URL
-// (the Claude login itself) or with an OAuth login cannot be handed to
-// another CLI.
+// so it is tested without a DOM. Claude takes every provider; Codex and
+// OpenCode reach any provider with a base URL through CCE's local proxy (it
+// translates to the provider's dialect); Antigravity only its own login. The
+// Claude login itself has no base URL to hand to another CLI.
 
 export const CHAT_CLIS = [
   { id: 'claude', label: 'Claude Code' },
@@ -21,10 +20,7 @@ export const TERMINAL_CLIS = [
 
 function canRun(cli, p) {
   if (cli === 'claude') return true;
-  if (!p.baseUrl || p.authKind === 'oauth' || p.authKind === 'device-code') return false;
-  const proto = p.protocol || 'openai';
-  if (cli === 'codex') return proto === 'openai' || proto === 'responses';
-  if (cli === 'opencode') return proto === 'openai' || proto === 'responses' || proto === 'anthropic';
+  if (cli === 'codex' || cli === 'opencode') return !!p.baseUrl;
   return false;
 }
 
