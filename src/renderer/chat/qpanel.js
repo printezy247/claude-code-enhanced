@@ -2,7 +2,8 @@
 // The data rules live in queue.js; this file draws them and saves them.
 import { elIcon, toast } from '../app/core.js';
 import { autosize, renderImageChips } from './composer.js';
-import { HOLD_TEXT, DEFAULT_RULES, deserialize, duplicate, edit, imageKey, makeItem, move, nextAction, remove, runNext, serialize, setOverrides, summary } from './queue.js';
+import { DEFAULT_RULES, deserialize, duplicate, edit, imageKey, makeItem, move, holdText, nextAction, remove, runNext, serialize, setOverrides, summary } from './queue.js';
+import { t, tf } from '../i18n.js';
 import { el } from './util.js';
 
 const pendKey = (chat) => 'cce:pending:' + (chat.cwd || '');
@@ -21,6 +22,16 @@ export function setQueue(chat, list) {
   persistPending(chat);
   renderQueued(chat);
   if (window.refreshOverview) window.refreshOverview(chat.id, 300);
+  // The Board lists every chat's queue; keep it current while it is on screen.
+  if (document.body && document.body.dataset.view === 'board' && window.__renderBoardQueues) window.__renderBoardQueues();
+}
+
+/** Hold the queue after the current turn, or run it again. Used by the panel and the Board. */
+export function setQueuePaused(chat, paused) {
+  chat.queuePaused = !!paused;
+  if (!chat.queuePaused) { chat.queueHeld = null; if (chat.drainQueue) chat.drainQueue(); }
+  renderQueued(chat);
+  if (document.body && document.body.dataset.view === 'board' && window.__renderBoardQueues) window.__renderBoardQueues();
 }
 
 /**
@@ -133,20 +144,20 @@ function openRowMenu(chat, i, anchor) {
     b.addEventListener('click', () => { menu.remove(); fn(); });
     menu.appendChild(b);
   };
-  add('Send now as steer', () => steerNow(chat, i));
-  if (i > 0) add('Run next', () => setQueue(chat, runNext(chat.pendingMsgs, i)));
-  add('Duplicate', () => setQueue(chat, duplicate(chat.pendingMsgs, i)));
-  add('Move back to the message box', () => toComposer(chat, i));
-  add(it.ask ? 'Do not ask before running' : 'Ask before running', () => setQueue(chat, chat.pendingMsgs.map((x, k) => {
+  add(t('queue.menu.steer'), () => steerNow(chat, i));
+  if (i > 0) add(t('queue.menu.runNext'), () => setQueue(chat, runNext(chat.pendingMsgs, i)));
+  add(t('queue.menu.duplicate'), () => setQueue(chat, duplicate(chat.pendingMsgs, i)));
+  add(t('queue.menu.toComposer'), () => toComposer(chat, i));
+  add(it.ask ? t('queue.menu.askOff') : t('queue.menu.askOn'), () => setQueue(chat, chat.pendingMsgs.map((x, k) => {
     if (k !== i) return x;
     const y = { ...x, ask: !x.ask };
     delete y.approved;
     if (!y.ask) delete y.ask;
     return y;
   })));
-  add(it.runAt ? 'Change run time…' : 'Run at a time…', () => pickTime(chat, i));
-  add('Model and effort…', () => editModelEffort(chat, i, anchor));
-  add('Remove', () => setQueue(chat, remove(chat.pendingMsgs, i)));
+  add(it.runAt ? t('queue.menu.runAtChange') : t('queue.menu.runAt'), () => pickTime(chat, i));
+  add(t('queue.menu.modelEffort'), () => editModelEffort(chat, i, anchor));
+  add(t('queue.menu.remove'), () => setQueue(chat, remove(chat.pendingMsgs, i)));
   anchor.parentNode.appendChild(menu);
   const away = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', away, true); } };
   setTimeout(() => document.addEventListener('mousedown', away, true), 0);
@@ -184,14 +195,14 @@ function editModelEffort(chat, i, anchor) {
     pop.appendChild(l);
     return sel;
   };
-  const models = [['', 'this chat’s model' + (chat.model ? ' (' + chat.model + ')' : '')], ...queueModelChoices(chat).map((m) => [m.value, m.label])];
-  const efforts = [['', 'this chat’s effort'], ...((chat.effortLevels && chat.effortLevels.length ? chat.effortLevels : ['low', 'medium', 'high']).map((e) => [e, e]))];
-  const modelSel = field('Model', models, it.model || '');
-  const effortSel = field('Effort', efforts, it.effort || '');
+  const models = [['', t('queue.pop.thisModel') + (chat.model ? ' (' + chat.model + ')' : '')], ...queueModelChoices(chat).map((m) => [m.value, m.label])];
+  const efforts = [['', t('queue.pop.thisEffort')], ...((chat.effortLevels && chat.effortLevels.length ? chat.effortLevels : ['low', 'medium', 'high']).map((e) => [e, e]))];
+  const modelSel = field(t('queue.pop.model'), models, it.model || '');
+  const effortSel = field(t('queue.pop.effort'), efforts, it.effort || '');
   const row = el('div', 'q-pop-actions');
-  const save = el('button', 'q-btn', 'Set');
+  const save = el('button', 'q-btn', t('queue.pop.set'));
   save.addEventListener('click', () => { pop.remove(); setQueue(chat, setOverrides(chat.pendingMsgs, i, { model: modelSel.value, effort: effortSel.value })); });
-  const cancel = el('button', 'q-btn', 'Cancel');
+  const cancel = el('button', 'q-btn', t('queue.pop.cancel'));
   cancel.addEventListener('click', () => { pop.remove(); anchor.focus(); });
   row.appendChild(save); row.appendChild(cancel);
   pop.appendChild(row);
@@ -227,7 +238,7 @@ function clearAll(chat) {
   const old = chat.pendingMsgs.slice();
   if (!old.length) return;
   setQueue(chat, []);
-  toast('Queue cleared. ', '', { label: 'Undo', onClick: () => { if (!chat.pendingMsgs.length) setQueue(chat, old); } });
+  toast(t('queue.cleared'), '', { label: t('queue.undo'), onClick: () => { if (!chat.pendingMsgs.length) setQueue(chat, old); } });
 }
 
 /** The panel: header, hold banner, rows. */
@@ -241,29 +252,25 @@ export function renderQueued(chat) {
 
   const head = el('div', 'q-head');
   const fold = elIcon('button', 'q-fold', CCEIcons.svg('chevron', 12));
-  fold.title = chat.queueCollapsed ? 'Show the queue' : 'Hide the queue';
+  fold.title = chat.queueCollapsed ? t('queue.show') : t('queue.hide');
   fold.setAttribute('aria-expanded', String(!chat.queueCollapsed));
   fold.addEventListener('click', () => { chat.queueCollapsed = !chat.queueCollapsed; renderQueued(chat); });
   head.appendChild(fold);
-  head.appendChild(el('b', 'q-title', 'Queue (' + list.length + ')'));
-  const pause = el('button', 'q-btn', chat.queuePaused ? 'Resume' : 'Pause');
-  pause.title = chat.queuePaused ? 'Run the queue again' : 'Hold the queue after the current turn';
-  pause.addEventListener('click', () => {
-    chat.queuePaused = !chat.queuePaused;
-    if (!chat.queuePaused) { chat.queueHeld = null; if (chat.drainQueue) chat.drainQueue(); }
-    renderQueued(chat);
-  });
+  head.appendChild(el('b', 'q-title', tf('queue.title', { n: list.length })));
+  const pause = el('button', 'q-btn', chat.queuePaused ? t('queue.resume') : t('queue.pause'));
+  pause.title = chat.queuePaused ? t('queue.resumeTip') : t('queue.pauseTip');
+  pause.addEventListener('click', () => setQueuePaused(chat, !chat.queuePaused));
   head.appendChild(pause);
-  const clear = el('button', 'q-btn', 'Clear');
+  const clear = el('button', 'q-btn', t('queue.clear'));
   clear.addEventListener('click', () => clearAll(chat));
   head.appendChild(clear);
   host.appendChild(head);
 
   const hold = chat.queuePaused ? 'paused' : chat.queueHeld;
   if (hold) {
-    const banner = el('div', 'q-banner', HOLD_TEXT[hold] || 'Queue held');
+    const banner = el('div', 'q-banner', holdText(hold));
     if (hold === 'ask' || hold === 'error' || hold === 'permission' || hold === 'spend' || hold === 'tests') {
-      const run = el('button', 'q-btn', hold === 'ask' ? 'Run' : 'Run anyway');
+      const run = el('button', 'q-btn', hold === 'ask' ? t('queue.run') : t('queue.runAnyway'));
       run.addEventListener('click', () => {
         if (hold === 'ask') chat.pendingMsgs[0] = { ...chat.pendingMsgs[0], approved: true };
         chat.queueOverride = true;
@@ -273,7 +280,7 @@ export function renderQueued(chat) {
       });
       banner.appendChild(run);
       if (hold === 'ask') {
-        const skip = el('button', 'q-btn', 'Skip');
+        const skip = el('button', 'q-btn', t('queue.skip'));
         skip.addEventListener('click', () => { chat.queueHeld = null; setQueue(chat, remove(chat.pendingMsgs, 0)); if (chat.drainQueue) chat.drainQueue(); });
         banner.appendChild(skip);
       }
@@ -313,13 +320,13 @@ export function renderQueued(chat) {
     row.appendChild(el('span', 'q-grip', '⋮⋮'));
     row.appendChild(el('span', 'q-idx', String(i + 1)));
     const text = el('span', 'q-text', it.label ? it.label + ': ' + it.text : it.text || '(image)');
-    text.title = 'Click to edit';
+    text.title = t('queue.row.edit');
     text.addEventListener('click', () => editInline(chat, i, text));
     row.appendChild(text);
     for (const bit of summary(it)) row.appendChild(el('span', 'q-chip', bit));
     const more = el('button', 'q-more', '⋯');
-    more.title = 'Actions';
-    more.setAttribute('aria-label', 'Queue item actions');
+    more.title = t('queue.row.actions');
+    more.setAttribute('aria-label', t('queue.row.actions'));
     more.setAttribute('aria-haspopup', 'menu');
     more.addEventListener('click', () => openRowMenu(chat, i, more));
     row.appendChild(more);

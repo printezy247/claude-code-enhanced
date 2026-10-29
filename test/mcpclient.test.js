@@ -268,17 +268,75 @@ describe('errors', () => {
     await client.close();
   });
 
-  it('never repeats a call that may already have run', async () => {
+  it('never repeats a tool call that may already have run', async () => {
+    let calls = 0;
+    const s = await startServer((req, res) => {
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => {
+        const msg = JSON.parse(raw);
+        if (msg.method === 'initialize') { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: INIT_RESULT })); return; }
+        if (msg.method === 'tools/call') { calls++; res.writeHead(502, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, error: { code: -32000, message: 'bad gateway' } })); return; }
+        res.writeHead(202).end();
+      });
+    });
+    const client = new McpClient({ url: s.url, retryBaseMs: 1 });
+    await client.initialize();
+    await expect(client.callTool('delete_everything', {})).rejects.toThrow(/bad gateway/);
+    // A 502 may hide a call that already ran, so a tool call is not repeated.
+    expect(calls).toBe(1);
+    await client.close();
+  });
+
+  it('asks again, with growing pauses, for a request that changes nothing', async () => {
     let hits = 0;
     const s = await startServer((req, res) => {
       hits++;
-      res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'bad gateway' } }));
+      if (hits <= 3) { res.writeHead(503, { 'content-type': 'application/json' }); res.end('{}'); return; }
+      let raw = '';
+      req.on('data', (c) => { raw += c; });
+      req.on('end', () => { const msg = JSON.parse(raw); res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: msg.id, result: INIT_RESULT })); });
     });
-    const client = new McpClient({ url: s.url });
-    await expect(client.initialize()).rejects.toThrow(/bad gateway/);
-    // A 502 may hide a tool call that already ran, so it is not repeated.
+    const pauses = [];
+    const client = new McpClient({ url: s.url, retryBaseMs: 100, retryMaxMs: 1000, sleep: async (ms) => { pauses.push(ms); } });
+    const info = await client.initialize();
+    expect(info.serverInfo.name).toBe('test-server');
+    expect(hits).toBe(5);   // 3 refusals, the handshake that worked, and its `initialized` notice
+    // 100, 200, 400 ms, each within ±20 % jitter
+    expect(pauses).toHaveLength(3);
+    pauses.forEach((p, i) => { const base = 100 * 2 ** i; expect(p).toBeGreaterThanOrEqual(base * 0.8 - 1); expect(p).toBeLessThanOrEqual(base * 1.2 + 1); });
+    await client.close();
+  });
+
+  it('gives up after the retry limit and reports the last error', async () => {
+    let hits = 0;
+    const s = await startServer((req, res) => { hits++; res.writeHead(503, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'unavailable' } })); });
+    const client = new McpClient({ url: s.url, retries: 2, retryBaseMs: 1 });
+    await expect(client.initialize()).rejects.toThrow(/unavailable/);
+    expect(hits).toBe(3);   // the first try and two retries
+    await client.close();
+  });
+
+  it('retries: 0 turns the reconnect off', async () => {
+    let hits = 0;
+    const s = await startServer((req, res) => { hits++; res.writeHead(503, { 'content-type': 'application/json' }); res.end('{}'); });
+    const client = new McpClient({ url: s.url, retries: 0 });
+    await expect(client.initialize()).rejects.toThrow();
     expect(hits).toBe(1);
+    await client.close();
+  });
+
+  it('retries a refused connection even for a tool call, because nothing was sent', async () => {
+    const net = await import('node:net');
+    const probe = net.createServer();
+    await new Promise((r) => probe.listen(0, '127.0.0.1', r));
+    const port = probe.address().port;
+    await new Promise((r) => probe.close(r));      // nothing listens there now
+    const pauses = [];
+    const client = new McpClient({ url: 'http://127.0.0.1:' + port + '/', retries: 2, retryBaseMs: 5, sleep: async (ms) => { pauses.push(ms); } });
+    client._initialized = true;                    // go straight to the tool call
+    await expect(client.callTool('t', {})).rejects.toBeTruthy();
+    expect(pauses).toHaveLength(2);
     await client.close();
   });
 });

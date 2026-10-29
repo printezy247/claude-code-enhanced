@@ -10,6 +10,14 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.12.0
+- New: the **Board** has a Queues section: every open chat with messages waiting, why it is held, its first three items, Pause / Resume per chat, Pause all / Resume all, and a jump to the chat. It updates live while the Board is open.
+- New: dropped MCP connections reconnect with **exponential backoff** (250 ms, 500 ms, 1 s … up to 4 s, with jitter, three retries). A tool call is never repeated after it may have run: only a connection that never came up, or a 429, is retried for one. Handshakes and tool lists also retry on a 502/503/504.
+- New: a chat in an isolated **git worktree** now says which dependency folders the project has but the worktree lacks (`node_modules`, `.venv`, `venv`), so you reinstall there. Tests with real git confirm lockfiles, installs and build output stay separate per worktree and the main checkout's `git status` stays clean.
+- New: the Markdown editor preview draws **mermaid flowcharts** (`graph` / `flowchart`, TD/LR/BT/RL, box, round, diamond, circle and pill nodes, labelled and dotted arrows, cycles) with no new dependency. Other mermaid types show their source with a note instead of a wrong picture.
+- New: **callouts** in the preview: `> [!NOTE]`, `[!TIP]`, `[!IMPORTANT]`, `[!WARNING]`, `[!CAUTION]`, and `> [!NOTE]- Title` / `+` for collapsible ones.
+- New: the queue panel, the Board's queue view, the target chip, code-block actions and the queue settings follow the interface language (English, Spanish, German); the dictionaries are checked to stay in sync, with the same placeholders.
 ## 0.11.0
 - New: **Send to terminal** on shell code blocks (bash, sh, zsh, console). It pastes the block into your terminal tab without running it (bracketed paste, so a multi-line block waits for Enter) and drops the `$ ` prompts a console example carries. With no terminal open it opens a shell in the chat's folder.
 - New: queued messages get **Model and effort…** in their row menu, so each queued message can run on its own model and reasoning effort (shown as chips on the row).

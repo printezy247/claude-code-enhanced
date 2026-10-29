@@ -1,4 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
+import { t } from '../i18n.js';
 import { elIcon, loadMonaco } from '../app/core.js';
 import { sendToTerminal, switchView } from '../app/tabs.js';
 import { makePanel } from './panels.js';
@@ -34,11 +35,11 @@ function addCodeHeader(pre, code, plain) {
   const lang = m ? m[1] : '';
   const head = el('div', 'code-head');
   head.appendChild(el('span', 'code-lang', lang || 'text'));
-  const wrap = el('button', 'code-act', 'Wrap');
+  const wrap = el('button', 'code-act', t('code.wrap'));
   wrap.type = 'button';
   wrap.setAttribute('aria-pressed', 'false');
   wrap.addEventListener('click', () => { const on = pre.classList.toggle('code-wrap'); wrap.setAttribute('aria-pressed', String(on)); });
-  const save = el('button', 'code-act', 'Save');
+  const save = el('button', 'code-act', t('code.save'));
   save.type = 'button';
   save.title = 'Save as ' + codeFileName(lang);
   save.addEventListener('click', () => {
@@ -51,13 +52,13 @@ function addCodeHeader(pre, code, plain) {
   head.appendChild(wrap);
   head.appendChild(save);
   if (isShellBlock(lang, plain)) {
-    const term = el('button', 'code-act', 'Send to terminal');
+    const term = el('button', 'code-act', t('code.sendTerminal'));
     term.type = 'button';
-    term.title = 'Paste into a terminal tab. It is not run until you press Enter.';
+    term.title = t('code.sendTip');
     term.addEventListener('click', async () => {
       const ok = await sendToTerminal(shellText(plain));
-      term.textContent = ok ? 'Sent' : 'No terminal';
-      setTimeout(() => { term.textContent = 'Send to terminal'; }, 1500);
+      term.textContent = ok ? t('code.sent') : t('code.noTerminal');
+      setTimeout(() => { term.textContent = t('code.sendTerminal'); }, 1500);
     });
     head.insertBefore(term, wrap);
   }

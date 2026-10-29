@@ -1,6 +1,8 @@
 // The message queue as plain data. No DOM here: the panel (composer.js) and
 // the drain (status.js) call these, and the tests load them directly.
 
+import { t, tf } from '../i18n.js';
+
 let seq = 0;
 const newId = () => 'q' + Date.now().toString(36) + (seq++).toString(36);
 
@@ -84,6 +86,11 @@ export function nextAction(list, state = {}) {
   return { run: head };
 }
 
+/** The banner for a hold, in the interface language. */
+export function holdText(hold) {
+  return t('queue.hold.' + hold) !== 'queue.hold.' + hold ? t('queue.hold.' + hold) : t('queue.hold.default');
+}
+
 export const HOLD_TEXT = {
   paused: 'Queue paused',
   error: 'Queue paused: the last turn ended with an error',
@@ -137,11 +144,11 @@ export function deserialize(raw) {
 export function summary(item) {
   const bits = [];
   const n = item.blocks ? item.blocks.length : (item.imgCount || 0);
-  if (n) bits.push(n + (n === 1 ? ' image' : ' images'));
+  if (n) bits.push(n === 1 ? t('queue.chip.image') : tf('queue.chip.images', { n }));
   if (item.mode) bits.push(item.mode);
   if (item.model) bits.push(item.model);
-  if (item.effort) bits.push('effort ' + item.effort);
-  if (item.ask) bits.push('asks first');
-  if (item.runAt) bits.push('at ' + new Date(item.runAt).toTimeString().slice(0, 5));
+  if (item.effort) bits.push(tf('queue.chip.effort', { e: item.effort }));
+  if (item.ask) bits.push(t('queue.chip.ask'));
+  if (item.runAt) bits.push(tf('queue.chip.at', { time: new Date(item.runAt).toTimeString().slice(0, 5) }));
   return bits;
 }

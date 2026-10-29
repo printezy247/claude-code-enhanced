@@ -4,6 +4,10 @@
 import { $, el, state, toast } from './core.js';
 import { Chat } from '../chat/index.js';
 import { switchView } from './tabs.js';
+import { holdText, summary } from '../chat/queue.js';
+import { setQueuePaused } from '../chat/qpanel.js';
+import { chatTitle } from '../chat/mentions-live.js';
+import { t, tf } from '../i18n.js';
 
 function rowCard(r) {
   const card = el('div', 'card');
@@ -109,6 +113,59 @@ function engineRow(e) {
   return row;
 }
 
+/** Chats that have messages waiting, with what holds them. */
+function queuedChats() {
+  return [...Chat.chats.values()].filter((c) => c && c.alive && (c.pendingMsgs || []).length);
+}
+
+function queueCard(chat) {
+  const card = el('div', 'card board-queue');
+  const head = el('h4');
+  head.appendChild(el('span', '', chatTitle(chat)));
+  const hold = chat.queuePaused ? 'paused' : chat.queueHeld;
+  head.appendChild(el('span', 'chip ' + (hold ? 'mcp-warn' : chat.busy ? 'mcp-ok' : 'mcp-off'), hold ? holdText(hold) : (chat.busy ? t('board.queues.running') : t('board.queues.idle'))));
+  card.appendChild(head);
+  card.appendChild(el('div', 'meta', (chat.cwd || '') + ' · ' + tf('queue.title', { n: chat.pendingMsgs.length })));
+  const list = el('ol', 'board-queue-list');
+  chat.pendingMsgs.slice(0, 3).forEach((it) => {
+    const li = el('li', '', (it.label ? it.label + ': ' : '') + (it.text || '(image)').slice(0, 90));
+    for (const bit of summary(it)) li.appendChild(el('span', 'q-chip', bit));
+    list.appendChild(li);
+  });
+  card.appendChild(list);
+  if (chat.pendingMsgs.length > 3) card.appendChild(el('div', 'meta', tf('board.queues.more', { n: chat.pendingMsgs.length - 3 })));
+  const pause = el('button', 'btn small', chat.queuePaused ? t('queue.resume') : t('queue.pause'));
+  pause.addEventListener('click', () => setQueuePaused(chat, !chat.queuePaused));
+  const jump = el('button', 'btn small', t('board.queues.jump'));
+  jump.addEventListener('click', () => { switchView('conversations'); if (window.__activate) window.__activate(chat.id); });
+  card.appendChild(pause);
+  card.appendChild(jump);
+  return card;
+}
+
+/** The Queues section: every open chat's waiting messages, pausable from one place. */
+export function renderBoardQueues() {
+  const wrap = $('#board-queues-wrap');
+  const box = $('#board-queues');
+  if (!wrap || !box) return;
+  const list = queuedChats();
+  wrap.classList.toggle('hidden', !list.length);
+  box.textContent = '';
+  const title = $('#board-queues-title');
+  if (title) title.textContent = t('board.queues');
+  const all = $('#btn-queues-pause'); const res = $('#btn-queues-resume');
+  if (all) all.textContent = t('board.queues.pauseAll');
+  if (res) res.textContent = t('board.queues.resumeAll');
+  if (!list.length) return;
+  box.appendChild(el('div', 'meta', t('board.queues.intro')));
+  list.forEach((c) => box.appendChild(queueCard(c)));
+}
+window.__renderBoardQueues = renderBoardQueues;
+
+function setAllQueues(paused) {
+  for (const c of queuedChats()) setQueuePaused(c, paused);
+}
+
 export async function renderBoard() {
   const [board, jobs, runs, engineList] = await Promise.all([
     ccx.invoke('chats:board'),
@@ -128,6 +185,7 @@ export async function renderBoard() {
     list.forEach((e) => enginesBox.appendChild(engineRow(e)));
   }
 
+  renderBoardQueues();
   chatsBox.textContent = '';
   const rows = (board && board.ok && board.rows) || [];
   if (!rows.length) chatsBox.appendChild(el('div', 'meta', 'No live chats yet — start one from Conversations.'));
@@ -148,3 +206,9 @@ export async function renderBoard() {
     runList.forEach(r => runsBox.appendChild(runRow(r)));
   }
 }
+
+document.addEventListener('click', (e) => {
+  const id = e.target && e.target.id;
+  if (id === 'btn-queues-pause') setAllQueues(true);
+  else if (id === 'btn-queues-resume') setAllQueues(false);
+});
