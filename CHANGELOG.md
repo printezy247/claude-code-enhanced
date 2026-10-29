@@ -2,6 +2,12 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.91
+- Fixed: tool calls from local models and proxies that number their calls per reply (`call_0`, `call_1`, or no id at all) now get a unique id each turn. The repeated ids could make the loop guard deny a fresh call based on an old verdict, and made cards and results collide.
+- Fixed: a message typed while the agent is working no longer clears the loop guard, so a looping agent is still caught after you steer it.
+- Fixed: an engine error whose text says "aborted" (a fetch or stream timeout) is now shown instead of the tab ending silently. Only your own Stop stays quiet.
+- Fixed: one connector that fails to switch on or off no longer stops the others from switching, and a connector that drops late in a long session is retried again on your next message (the old retry gave up after the first ~8 minutes).
+
 ## 0.9.90
 - Added: command menu preview — typing `/` shows a list on the left and a preview on the right (description, argument hint, where the command comes from, first 30 lines of its file). Sections: Recent, Built-in, Project & user, Plugins, MCP. Search matches loosely and highlights the matched letters, the 24-item cap is gone (the list is windowed), recently used commands rise to the top, and `/` also opens mid-message. Tab or Enter completes, PageUp/PageDown/Ctrl+Home/Ctrl+End jump, hovering moves the selection.
 - Added: `@` menu preview — files show their first 40 lines, folders list their entries, and `@diff`, `@staged` and `@branch` paste your git state into the message.
