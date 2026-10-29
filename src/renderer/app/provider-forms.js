@@ -42,11 +42,38 @@ export function openNewSessionModal() {
   const typeLabel = el('label', 'fld');
   typeLabel.appendChild(el('span', '', 'Type'));
   const typeSel = el('select');
-  [['chat', 'Chat — desktop-style (Agent SDK)'], ['claude', 'Terminal — claude TUI'], ['codex', 'Terminal — codex TUI'], ['gemini', 'Terminal — gemini TUI'], ['opencode', 'Terminal — opencode TUI'], ['shell', 'Terminal — shell']].forEach(([v, n]) => {
+  // Third element: the external engine an option needs on PATH, if any.
+  const TYPES = [
+    ['chat', 'Chat — desktop-style (Agent SDK)'],
+    ['claude', 'Terminal — claude TUI'],
+    ['codex', 'Terminal — codex TUI', 'codex'],
+    ['gemini', 'Terminal — gemini TUI', 'gemini'],
+    ['opencode', 'Terminal — opencode TUI', 'opencode'],
+    ['shell', 'Terminal — shell'],
+  ];
+  TYPES.forEach(([v, n]) => {
     const o = el('option', '', n); o.value = v; typeSel.appendChild(o);
   });
   typeSel.value = 'chat';
   typeLabel.appendChild(typeSel);
+  // A missing CLI is a state of the machine, not an error the user should only
+  // discover after Launch: grey the option out and say how to install it.
+  const engineHint = el('div', 'hint hidden');
+  typeLabel.appendChild(engineHint);
+  ccx.invoke('engines:list').then((r) => {
+    const found = new Set(((r && r.engines) || []).filter((e) => e && e.found).map((e) => e.id));
+    const missing = ((r && r.engines) || []).filter((e) => e && !e.found);
+    for (const o of [...typeSel.options]) {
+      const engine = (TYPES.find((t) => t[0] === o.value) || [])[2];
+      if (!engine || found.has(engine)) continue;
+      o.disabled = true;
+      o.textContent += ' — not installed';
+    }
+    if (missing.length) {
+      engineHint.classList.remove('hidden');
+      engineHint.textContent = missing.map((e) => `${e.label} not found — ${e.hint}`).join(' · ');
+    }
+  }).catch(() => { /* detection is a nicety: launching still reports the error */ });
   grid.appendChild(typeLabel);
 
   // provider

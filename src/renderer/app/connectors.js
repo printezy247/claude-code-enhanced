@@ -324,7 +324,7 @@ async function renderMarketplace() {
   }
 }
 
-export async function refreshMcpList() {
+export async function refreshMcpList(force = false) {
   if (connectorChecking) return;
   connectorChecking = true;
   const box = $('#mcp-list');
@@ -334,7 +334,7 @@ export async function refreshMcpList() {
   box.textContent = 'Checking every server — a health check can take up to a minute…';
   connectorCards.forEach(ref => { ref.stat.textContent = 'checking…'; ref.stat.className = 'chip mcp-off'; });
   let r;
-  try { r = await ccx.invoke('connectors:status'); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+  try { r = await ccx.invoke(force ? 'connectors:refresh' : 'connectors:status'); } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
   connectorChecking = false;
   btn.disabled = false; btn.textContent = '↻ Refresh';
   if (!r || !r.ok) {

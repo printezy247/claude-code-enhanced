@@ -8,6 +8,9 @@
 // uid, and `envFor`/`publicInstance` consult that store.
 'use strict';
 const crypto = require('crypto');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const catalog = require('./catalog');
 const modelsdev = require('./modelsdev');
 const oauth = require('./oauth');
@@ -145,7 +148,76 @@ function envVarNames(instance) {
   return [...new Set(names)];
 }
 
-function resolveApiKey(instance, auth, env) {
+/**
+ * Parse a dotenv file into a plain object.
+ *
+ * Only `KEY=value` and `export KEY=value` are honoured; `#` comments, blank
+ * lines and anything that does not look like a variable are skipped. A value
+ * may be quoted (quotes stripped) and a trailing ` # comment` is dropped from
+ * an unquoted one.
+ */
+function parseDotenv(text) {
+  const out = {};
+  for (const raw of String(text || '').split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/.exec(line);
+    if (!m) continue;
+    let v = m[2].trim();
+    if ((v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))) {
+      v = v.slice(1, -1);
+    } else {
+      v = v.replace(/\s+#.*$/, '').trim();
+    }
+    out[m[1]] = v;
+  }
+  return out;
+}
+
+/** .env files searched, in increasing priority. */
+function envFiles(home) {
+  return [
+    path.join(home, '.env'),
+    path.join(home, '.config', 'claude-code-enhanced', '.env'),
+  ];
+}
+
+const dotenvCache = new Map();
+
+/**
+ * The variables declared in the user's .env files.
+ *
+ * Read once per mtime: `resolveApiKey` runs on every provider request and the
+ * files rarely change. `~/.config/claude-code-enhanced/.env` wins over `~/.env`
+ * when both set the same name.
+ */
+function envFileValues(home) {
+  const merged = {};
+  for (const file of envFiles(home || os.homedir())) {
+    let stat;
+    try { stat = fs.statSync(file); } catch { continue; }
+    const cached = dotenvCache.get(file);
+    if (cached && cached.mtimeMs === stat.mtimeMs) { Object.assign(merged, cached.values); continue; }
+    let values = {};
+    try { values = parseDotenv(fs.readFileSync(file, 'utf8')); } catch { values = {}; }
+    dotenvCache.set(file, { mtimeMs: stat.mtimeMs, values });
+    Object.assign(merged, values);
+  }
+  return merged;
+}
+
+/** Mask a credential anywhere it appears in text that is about to be shown or logged. */
+function redactKey(text, key) {
+  let out = String(text == null ? '' : text);
+  const keys = Array.isArray(key) ? key : [key];
+  for (const k of keys) {
+    if (typeof k !== 'string' || k.length < 6) continue;
+    out = out.split(k).join('***');
+  }
+  return out;
+}
+
+function resolveApiKey(instance, auth, env, opts = {}) {
   const store = auth || authRef;
   const fromStore = store ? store.resolve(instance.uid) : {};
   if (fromStore.apiKey) return fromStore.apiKey;
@@ -155,6 +227,13 @@ function resolveApiKey(instance, auth, env) {
   const source = env || process.env;
   for (const name of names) {
     if (source[name]) return String(source[name]).trim();
+  }
+  // A key kept in a .env file is still "in the environment" for the user's
+  // purposes; without this the app says "no credential" while the file sits
+  // right there. An explicitly exported variable still wins.
+  const files = envFileValues(opts.home);
+  for (const name of names) {
+    if (files[name]) return String(files[name]).trim();
   }
   return '';
 }
@@ -566,4 +645,5 @@ module.exports = {
   PRESETS, ensureDefaults, envFor, publicInstance, newUid,
   useAuth, catalogEntries, makeInstance, entryFor, resolveApiKey,
   envVarNames, ensureFreshAuth, setRefreshSecretCache, migrateUrls, migrateModels,
+  parseDotenv, envFileValues, redactKey,
 };

@@ -163,7 +163,7 @@ export async function maybeProbeMemory(chat) {
   if (!p || !p.ok) return;
   chat.memProbed = true;
   chat.memProbe = true;
-  console.log('[cce] auto-memory probe started for chat:', chat.id);
+  if (window.__CCE_DEBUG || window.__CCE_SMOKE) console.log('[cce] auto-memory probe started for chat:', chat.id);
   chat.msgs.appendChild(el('div', 'sys-note', '[Auto-memory probe] checking this chat for lasting notes (auto memory is on)…'));
   scrollDownSoft(chat);
   const r = await ccx.invoke('chat:send', { id: chat.id, text: p.prompt });
@@ -257,7 +257,7 @@ async function toggleMemoryPanel(chat) {
   const toggle = el('label', 'mem-auto');
   const cb = el('input');
   cb.type = 'checkbox';
-  ccx.invoke('settings:get').then((st) => { cb.checked = !!(st && st.settings && st.settings.autoMemory); });
+  ccx.invoke('settings:get').then((st) => { cb.checked = !!(st && st.settings && st.settings.autoMemory); }).catch(() => { /* leave unchecked; the switch still works */ });
   cb.addEventListener('change', () => ccx.invoke('settings:set', { settings: { autoMemory: cb.checked } }));
   toggle.appendChild(cb);
   toggle.appendChild(el('span', '', ' Propose lasting notes from my chats (same model; I approve each one)'));
@@ -266,7 +266,7 @@ async function toggleMemoryPanel(chat) {
   const skillToggle = el('label', 'mem-auto');
   const scb = el('input');
   scb.type = 'checkbox';
-  ccx.invoke('settings:get').then((st) => { scb.checked = !!(st && st.settings && st.settings.autoLearnSkills); });
+  ccx.invoke('settings:get').then((st) => { scb.checked = !!(st && st.settings && st.settings.autoLearnSkills); }).catch(() => { /* leave unchecked; the switch still works */ });
   scb.addEventListener('change', () => ccx.invoke('settings:set', { settings: { autoLearnSkills: scb.checked } }));
   skillToggle.appendChild(scb);
   skillToggle.appendChild(el('span', '', ' Propose new skills from my chats (same model; I approve each one)'));

@@ -2,7 +2,7 @@
 // Dependency-free E2E smoke harness for CCE. Drives the real Electron app
 // through the Chrome DevTools Protocol (Node's built-in WebSocket, no deps):
 //   1. boot            2. create a chat    3. switch provider
-//   4. send a message  5. open a terminal
+//   4. send a message  5. open a terminal  6. spawn each installed engine
 // Exits 0 on success, 1 on any failure.
 // Headless: `xvfb-run -a node test/e2e/smoke.mjs`
 //
@@ -153,7 +153,7 @@ async function waitForRenderer(send, timeoutMs) {
 }
 
 const expr = (baseUrl) => `(async () => {
-  const out = { boot: false, chat: null, provider: null, send: null, reply: null, terminal: null, errors: [] };
+  const out = { boot: false, chat: null, provider: null, send: null, reply: null, terminal: null, engines: {}, errors: [] };
   try {
     out.boot = !!window.ccx && document.readyState !== 'loading';
     const cr = await window.ccx.invoke('chat:create', { cwd: '/tmp' });
@@ -207,6 +207,18 @@ const expr = (baseUrl) => `(async () => {
     const tr = await window.ccx.invoke('session:create', { cwd: '/tmp', type: 'shell' });
     out.terminal = tr;
     if (!tr || !tr.id) out.errors.push('session:create ' + ((tr && tr.error) || 'no id'));
+    // External agent engines: spawn whatever is installed and kill it again.
+    // An engine that is absent from PATH is skipped, not failed — CI runners
+    // install none of them, and the point is that detection and the spawn path
+    // agree on whatever machine is running.
+    const eng = await window.ccx.invoke('engines:list');
+    for (const e of ((eng && eng.engines) || [])) {
+      if (!e || !e.found) continue;
+      const t = await window.ccx.invoke('session:create', { cwd: '/tmp', type: e.id });
+      out.engines[e.id] = !!(t && t.id);
+      if (t && t.id) { try { await window.ccx.invoke('session:kill', { id: t.id }); } catch {} }
+      else out.errors.push('engine spawn ' + e.id + ': ' + ((t && t.error) || 'no id'));
+    }
     if (chatId) { try { await window.ccx.invoke('chat:close', { id: chatId }); } catch {} }
     if (tr && tr.id) { try { await window.ccx.invoke('session:kill', { id: tr.id }); } catch {} }
     return JSON.stringify(out);
@@ -290,6 +302,7 @@ async function main() {
     && result.send && result.send.ok
     && result.reply
     && result.terminal && result.terminal.id
+    && result.engines && Object.values(result.engines).every(Boolean)
     && (!result.errors || result.errors.length === 0);
 
   if (!ok) fail('steps not all green');

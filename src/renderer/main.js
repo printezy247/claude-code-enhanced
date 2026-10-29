@@ -52,7 +52,7 @@ function wireChrome() {
   $('#btn-usage-refresh').addEventListener('click', () => renderUsage());
   $('#btn-board-refresh')?.addEventListener('click', () => renderBoard());
   $('#btn-add-provider').addEventListener('click', () => (window.ProvidersUI ? ProvidersUI.openConnect() : openProviderEditor(null)));
-  $('#btn-mcp-refresh').addEventListener('click', refreshMcpList);
+  $('#btn-mcp-refresh').addEventListener('click', () => refreshMcpList(true));
   // (The per-dropdown wiring — search/sort/filter/refresh/close — lives in
   // ensureConvoDrop, which builds that markup. Nothing to wire here.)
   // cce:// deep links (item 24): main pings, we pull the pending link. The
@@ -323,9 +323,7 @@ function wireChrome() {
     invalidateConnectorStatus();
     if (state.view === 'connectors') refreshMcpList();
   });
-  if (window.__CCE_SMOKE) {
-    setTimeout(() => console.log('[monaco]', !!(window.monaco && window.monaco.editor)), 3000);
-  }
+  if (window.__CCE_SMOKE || window.__CCE_DEBUG) setTimeout(() => console.log('[monaco]', !!(window.monaco && window.monaco.editor)), 3000);
   renderConnectors();
   renderSettings();
   switchView('terminal');

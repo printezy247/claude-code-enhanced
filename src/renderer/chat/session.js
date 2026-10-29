@@ -512,7 +512,7 @@ export async function createSession(opts) {
   else if (rid === 'last') {
     ccx.invoke('chat:last', { cwd: chat.cwd }).then(lr => {
       if (lr.ok && lr.sessionId) loadTranscript(chat, lr.sessionId);
-    });
+    }).catch(() => { /* no stored transcript to replay; the chat starts empty */ });
   }
   // A new conversation exists now: the sidebar list must stop saying
   // "No conversations yet".
@@ -598,7 +598,7 @@ export function maybeNudge(chat, msg) {
   // Never overwrite a draft the user is already typing.
   if (chat.composer.value.trim()) return false;
   chat.nudges = (chat.nudges || 0) + 1;
-  console.log('[cce] auto-nudge triggered for chat:', chat.id);
+  if (window.__CCE_DEBUG || window.__CCE_SMOKE) console.log('[cce] auto-nudge triggered for chat:', chat.id);
   chat.msgs.appendChild(el('div', 'sys-note warn', '↻ [Auto-nudge] the model announced a next step but stopped — nudging it to continue (automatic, once)'));
   scrollDownSoft(chat);
   chat.composer.value = NUDGE_TEXT;

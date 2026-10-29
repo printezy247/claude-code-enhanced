@@ -2,6 +2,15 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.93
+- Added: the new-session modal checks which CLIs are installed. Codex, Gemini or OpenCode options whose CLI is missing are greyed out, marked "— not installed", and the install hint is shown under the Type picker.
+- Fixed: IPC calls that change state or touch files are checked against a schema first, so a malformed call gets `{ ok: false, error }` instead of reaching the handler.
+- Fixed: API keys are found in `~/.config/claude-code-enhanced/.env` or `~/.env` when the app is started from a launcher that does not load your shell environment.
+- Fixed: API keys are masked in logs, and file paths go through one shared containment check that refuses `..` and symlink escapes.
+- Changed: routine main-process and renderer logging is off unless `CCE_DEBUG` is set; real errors and warnings still print.
+- Changed: background promises in the chat UI now handle their errors instead of failing silently.
+- Tests: the E2E smoke run now starts and stops every installed engine CLI.
+
 ## 0.9.92
 - Fixed: waiting on something is no longer treated as a loop. Shell commands that start with `sleep`, and connector tools that report status (CI check runs, job status, progress), are never counted, and the same check repeated after a wait is a poll, not a repeat. Before, checking CI three times got the third check blocked.
 - Fixed: ordinary words ("error", "message", "thread", "doc", "page", "workflow") no longer switch on Sentry, Slack, Notion or GitHub when connectors are picked per message.
