@@ -20,7 +20,11 @@ const ALIASES = {
   editfile: 'Edit', replaceinfile: 'Edit', strreplace: 'Edit', strreplaceeditor: 'Edit', fileedit: 'Edit',
   grepsearch: 'Grep', searchfiles: 'Grep', searchcode: 'Grep', ripgrep: 'Grep',
   findfiles: 'Glob', listfiles: 'Glob', globfiles: 'Glob',
+  read: 'Read', write: 'Write', edit: 'Edit', grep: 'Grep', glob: 'Glob', webfetch: 'WebFetch',
 };
+
+/** The built-in tool a loose name stands for, or '' when it is not one. */
+const aliasOf = (name) => ALIASES[norm(name)] || '';
 
 /**
  * The name a call should carry, or null when it is not one of the tools in
@@ -144,4 +148,4 @@ function uniqueToolId(id) {
   return out;
 }
 
-module.exports = { resolveToolName, callSignature, repairToolArgs, requiresArgs, uniqueToolId, ALIASES };
+module.exports = { resolveToolName, callSignature, repairToolArgs, requiresArgs, uniqueToolId, ALIASES, aliasOf };

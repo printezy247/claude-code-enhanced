@@ -7,6 +7,7 @@
 'use strict';
 const { spawn } = require('child_process');
 const { frames } = require('./enginechat');
+const { terminate, appendTail, stubQuery } = require('./procutil');
 
 // "untrusted": Codex asks before any command that is not a known-safe read,
 // which is what the Allow / Deny card is for. ("on-request" let it run
@@ -205,7 +206,7 @@ class CodexChat {
         let i;
         while ((i = buf.indexOf('\n')) !== -1) { const line = buf.slice(0, i); buf = buf.slice(i + 1); if (line.trim()) this._onLine(line); }
       });
-      child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
+      child.stderr.on('data', (d) => { stderr = appendTail(stderr, d); });
       child.stdin.on('error', () => {});
       const gone = (err) => {
         const wasBusy = this.busy;
@@ -307,21 +308,14 @@ class CodexChat {
     this.queue = [];
     const child = this.child;
     if (!child) return;
-    try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } }
-    setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }, 3000).unref();
+    terminate(child);
   }
 
   /** Stand-in for the Agent SDK query object, as EngineChat has. */
   _stub() {
-    const empty = async () => [];
-    const known = {
+    return stubQuery('Codex', {
       interrupt: () => this.interrupt(),
-      supportedCommands: empty, supportedModels: empty, supportedAgents: empty, mcpServerStatus: empty,
-      getContextUsage: async () => ({ totalTokens: this.usage.input_tokens, maxTokens: this.contextWindow || 0, percentage: 0, categories: [] }),
-    };
-    return new Proxy(known, {
-      get: (target, prop) => (prop in target ? target[prop]
-        : (typeof prop === 'string' ? async () => { throw new Error('Codex chats do not support ' + prop); } : undefined)),
+      usage: () => ({ totalTokens: this.usage.input_tokens, maxTokens: this.contextWindow || 0, percentage: 0, categories: [] }),
     });
   }
 }

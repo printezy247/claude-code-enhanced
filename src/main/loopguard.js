@@ -15,6 +15,7 @@
  * corrective message); a second trip with no progress in between is a stop.
  */
 const crypto = require('crypto');
+const { textOf } = require('./procutil');
 
 const NOOP_BASH = /^\s*(echo|printf|true|:|cat\s*<<)/;
 
@@ -51,12 +52,6 @@ function signature(block) {
   let text;
   try { text = JSON.stringify(input); } catch { text = ''; }
   return String(block.name) + ':' + text.slice(0, 300);
-}
-
-function textOf(content) {
-  if (typeof content === 'string') return content;
-  if (Array.isArray(content)) return content.map((b) => (b && typeof b.text === 'string' ? b.text : '')).join('\n');
-  return '';
 }
 
 function hashOf(text) {

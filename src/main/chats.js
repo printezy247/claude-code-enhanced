@@ -1230,25 +1230,21 @@ class ChatManager extends EventEmitter {
    * chat view, Board and window routing need no special case. #feat-engine-chat
    */
   createEngine({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], providerName = '', resumeId = '', onThread, providerUid = '', rawModel = '' }) {
-    const { EngineChat } = require('./enginechat');
+    const { REGISTRY } = require('./engines');
+    const entry = REGISTRY.find((e) => e.id === engine);
+    if (!entry) throw new Error('unknown engine: ' + engine);
     const id = 'c' + this.nextId++;
-    // Codex runs over its app-server so it can ask before acting; the other
-    // CLIs run one headless command per message.
-    const runner = engine === 'codex'
-      ? new (require('./codexchat').CodexChat)({
-        command, cwd, env, yolo, model, extraArgs, sessionId: resumeId || null,
-        emit: (evt) => this.emit('event', id, evt),
-        ask: (req) => this._askEngine(id, req), onThread,
-      })
-      : engine === 'opencode'
-        ? new (require('./opencodechat').OpenCodeChat)({
-          command, cwd, env, yolo, model, sessionId: resumeId || null,
-          emit: (evt) => this.emit('event', id, evt),
-          ask: (req) => this._askEngine(id, req), onThread,
-        })
-        : new EngineChat({ engine, command, cwd, env, yolo, model, extraArgs, sessionId: resumeId || null, onThread, emit: (evt) => this.emit('event', id, evt) });
+    // Each engine names its runner in the registry. All take the same options;
+    // a runner ignores what it has no use for (`ask` for the headless one).
+    const Runner = entry.chat ? require(entry.chat.module)[entry.chat.cls] : require('./enginechat').EngineChat;
+    const runner = new Runner({
+      engine, command, cwd, env, yolo, model, extraArgs, sessionId: resumeId || null, onThread,
+      emit: (evt) => this.emit('event', id, evt),
+      ask: (req) => this._askEngine(id, req),
+    });
     const chat = {
       engine, runner, cwd, q: runner.q, abort: new AbortController(),
+      title: runner.label,   // what a "finished" notification calls this chat
       // No model = the CLI's own default; a CCE model shows with its provider.
       model: model ? runner.label + ' · ' + (providerName ? providerName + ' / ' : '') + model.replace(/^cce\//, '') : runner.label + ' · CLI default',
       permissionMode: yolo ? 'bypassPermissions' : 'default',
@@ -1259,7 +1255,10 @@ class ChatManager extends EventEmitter {
       close: () => runner.close(),
     };
     this.chats.set(id, chat);
-    return { id, cwd, engine, label: runner.label, model: chat.model, permissionMode: chat.permissionMode, provider: null, sandbox: false };
+    return {
+      id, cwd, engine, label: runner.label, model: chat.model, permissionMode: chat.permissionMode, provider: null, sandbox: false,
+      capabilities: { images: entry.images, approvals: entry.approvals },
+    };
   }
 
   /**

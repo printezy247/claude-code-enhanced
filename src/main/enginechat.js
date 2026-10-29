@@ -9,6 +9,8 @@
 const { spawn } = require('child_process');
 const { REGISTRY } = require('./engines');
 const { stripAnsi } = require('./ansi');
+const { aliasOf } = require('./toolcalls');
+const { terminate, appendTail, tail, capOutput, textOf, stubQuery } = require('./procutil');
 
 const labelOf = (engine) => (REGISTRY.find((e) => e.id === engine) || {}).label || engine;
 
@@ -98,7 +100,7 @@ const thinkingMsg = (sid, thinking) => assistant(sid, [{ type: 'thinking', think
 const toolUse = (sid, id, name, input) => assistant(sid, [{ type: 'tool_use', id, name, input: input || {} }]);
 const toolResult = (sid, id, content, isError) => ({
   type: 'user', session_id: sid || '', parent_tool_use_id: null,
-  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: stripAnsi(String(content == null ? '' : content)), is_error: !!isError }] },
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: capOutput(stripAnsi(String(content == null ? '' : content))), is_error: !!isError }] },
 });
 const initMsg = (sid, engine, extra = {}) => ({
   type: 'system', subtype: 'init', session_id: sid || '', engine, model: labelOf(engine),
@@ -113,7 +115,6 @@ const resultMsg = (sid, { ok, text, usage, started }) => ({
 });
 
 const asText = (v) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
-const tail = (s, n = 600) => { const t = String(s || '').trim(); return t.length > n ? '…' + t.slice(-n) : t; };
 
 /* ---- per-engine translators ------------------------------------------------ */
 
@@ -131,7 +132,38 @@ function createTranslator(engine, { sessionId = null, initSent = false } = {}) {
   };
   const text = (t) => { if (t) { st.lastText = t; out.push(textMsg(st.sid, t)); } };
   const use = (id, name, input) => { if (!st.seen.has(id)) { st.seen.add(id); out.push(toolUse(st.sid, id, name, input)); } };
+  // A tool call, plus its result once there is one: res = { body, err }.
+  const tool = (id, name, input, res) => { use(id, name, input); if (res) out.push(toolResult(st.sid, id, res.body, res.err)); };
   const finishWith = (ok, msg) => { if (!st.done) { st.done = true; out.push(resultMsg(st.sid, { ok, text: msg, usage: st.usage, started: st.started })); } };
+
+  const agyStep = (s) => {
+    if (s.conversation_id) init(s.conversation_id);
+    if (s.step_type === 'agent_response') {
+      const acc = (st.agyText.get(s.step_index) || '') + (s.text_delta || '');
+      st.agyText.set(s.step_index, acc);
+      if (s.state === 'DONE' || s.state === 'ERROR') { text(acc); st.agyText.delete(s.step_index); }
+    } else if (s.step_type === 'tool') {
+      const info = s.tool_info || {};
+      const name = s.tool_name || info.name || 'tool';
+      const params = info.parameters || {};
+      const res = s.state === 'DONE' ? { body: asText(info.output != null ? info.output : info.result) }
+        : s.state === 'ERROR' ? { body: (info.error && info.error.message) || 'tool failed', err: true } : null;
+      if (name === 'run_command') tool('agy-' + s.step_index, 'Bash', { command: params.CommandLine || params.command || '' }, res);
+      else tool('agy-' + s.step_index, name, params, res);
+    }
+  };
+  const agyResult = (r) => {
+    if (r.conversation_id) init(r.conversation_id);
+    st.usage = usageOf(r.usage);
+    // Headless agy cannot ask for permission; say why the action did not happen.
+    const denied = Array.isArray(r.denied_actions) ? r.denied_actions : [];
+    if (denied.length) {
+      text(`Antigravity blocked ${denied.length} action(s) that need permission (${denied.map((d) => d.display_name || d.action).join(', ')}). `
+        + 'Headless runs cannot ask you. Start this chat with YOLO on to let it run them.');
+    }
+    const ok = String(r.status || '').toUpperCase() === 'SUCCESS';
+    return finishWith(ok, ok ? (r.response || st.lastText) : asText(r.error || r.message || r.status || 'Antigravity run failed'));
+  };
 
   const handlers = {
     codex(ev) {
@@ -149,33 +181,27 @@ function createTranslator(engine, { sessionId = null, initSent = false } = {}) {
         case 'agent_message': if (done) text(it.text); break;
         case 'reasoning': if (done && it.text) out.push(thinkingMsg(st.sid, it.text)); break;
         case 'command_execution':
-          use(it.id, 'Bash', { command: it.command });
-          if (done) out.push(toolResult(st.sid, it.id, it.aggregated_output, it.exit_code !== 0 && it.exit_code != null));
+          tool(it.id, 'Bash', { command: it.command }, done && { body: it.aggregated_output, err: it.exit_code !== 0 && it.exit_code != null });
           break;
         case 'file_change': {
           const changes = Array.isArray(it.changes) ? it.changes : [];
-          use(it.id, 'Edit', { file_path: changes.map((c) => c.path).join(', '), changes });
-          if (done) out.push(toolResult(st.sid, it.id, changes.map((c) => `${c.kind} ${c.path}`).join('\n'), it.status === 'failed'));
+          tool(it.id, 'Edit', { file_path: changes.map((c) => c.path).join(', '), changes },
+            done && { body: changes.map((c) => `${c.kind} ${c.path}`).join('\n'), err: it.status === 'failed' });
           break;
         }
         case 'mcp_tool_call':
-          use(it.id, `mcp__${it.server}__${it.tool}`, it.arguments);
-          if (done) {
-            const failed = it.status === 'failed' || !!it.error;
-            const body = failed ? (it.error && it.error.message) || 'failed'
-              : ((it.result && Array.isArray(it.result.content)) ? it.result.content.map((c) => c.text || '').join('\n') : asText(it.result));
-            out.push(toolResult(st.sid, it.id, body, failed));
-          }
+        {
+          const failed = it.status === 'failed' || !!it.error;
+          const body = failed ? (it.error && it.error.message) || 'failed'
+            : ((it.result && Array.isArray(it.result.content)) ? textOf(it.result.content) : asText(it.result));
+          tool(it.id, `mcp__${it.server}__${it.tool}`, it.arguments, done && { body, err: failed });
           break;
+        }
         case 'web_search':
-          use(it.id, 'WebSearch', { query: it.query });
-          if (done) out.push(toolResult(st.sid, it.id, '', false));
+          tool(it.id, 'WebSearch', { query: it.query }, done && { body: '' });
           break;
         case 'todo_list':
-          if (done) {
-            use(it.id, 'TodoWrite', { todos: (it.items || []).map((i) => ({ content: i.text, activeForm: i.text, status: i.completed ? 'completed' : 'pending' })) });
-            out.push(toolResult(st.sid, it.id, '', false));
-          }
+          if (done) tool(it.id, 'TodoWrite', { todos: (it.items || []).map((i) => ({ content: i.text, activeForm: i.text, status: i.completed ? 'completed' : 'pending' })) }, { body: '' });
           break;
         // `error` items are warnings (e.g. "skills context budget"); the turn
         // goes on, so they are not shown as failures.
@@ -185,40 +211,8 @@ function createTranslator(engine, { sessionId = null, initSent = false } = {}) {
 
     antigravity(ev) {
       if (ev.event === 'init') return init(ev.conversation_id, { cwd: ev.init && ev.init.cwd });
-      if (ev.event === 'step_update') {
-        const s = ev.step_update || {};
-        if (s.conversation_id) init(s.conversation_id);
-        if (s.step_type === 'agent_response') {
-          const acc = (st.agyText.get(s.step_index) || '') + (s.text_delta || '');
-          st.agyText.set(s.step_index, acc);
-          if (s.state === 'DONE' || s.state === 'ERROR') { text(acc); st.agyText.delete(s.step_index); }
-          return;
-        }
-        if (s.step_type === 'tool') {
-          const info = s.tool_info || {};
-          const name = s.tool_name || info.name || 'tool';
-          const params = info.parameters || {};
-          const id = 'agy-' + s.step_index;
-          if (name === 'run_command') use(id, 'Bash', { command: params.CommandLine || params.command || '' });
-          else use(id, name, params);
-          if (s.state === 'DONE') out.push(toolResult(st.sid, id, asText(info.output != null ? info.output : info.result), false));
-          if (s.state === 'ERROR') out.push(toolResult(st.sid, id, (info.error && info.error.message) || 'tool failed', true));
-        }
-        return;
-      }
-      if (ev.event === 'result') {
-        const r = ev.result || {};
-        if (r.conversation_id) init(r.conversation_id);
-        st.usage = usageOf(r.usage);
-        // Headless agy cannot ask for permission; say why the action did not happen.
-        const denied = Array.isArray(r.denied_actions) ? r.denied_actions : [];
-        if (denied.length) {
-          text(`Antigravity blocked ${denied.length} action(s) that need permission (${denied.map((d) => d.display_name || d.action).join(', ')}). `
-            + 'Headless runs cannot ask you. Start this chat with YOLO on to let it run them.');
-        }
-        const ok = String(r.status || '').toUpperCase() === 'SUCCESS';
-        return finishWith(ok, ok ? (r.response || st.lastText) : asText(r.error || r.message || r.status || 'Antigravity run failed'));
-      }
+      if (ev.event === 'step_update') return agyStep(ev.step_update || {});
+      if (ev.event === 'result') return agyResult(ev.result || {});
     },
 
     opencode(ev) {
@@ -230,11 +224,9 @@ function createTranslator(engine, { sessionId = null, initSent = false } = {}) {
         const s = p.state || {};
         const input = s.input || {};
         const id = p.callID || p.id;
-        const map = { bash: 'Bash', shell: 'Bash', read: 'Read', write: 'Write', edit: 'Edit', grep: 'Grep', glob: 'Glob', webfetch: 'WebFetch' };
-        const name = map[p.tool] || p.tool || 'tool';
-        use(id, name, input.filePath && !input.file_path ? { ...input, file_path: input.filePath } : input);
-        if (s.status === 'completed') out.push(toolResult(st.sid, id, s.output, false));
-        if (s.status === 'error') out.push(toolResult(st.sid, id, s.error || 'tool failed', true));
+        const name = aliasOf(p.tool) || p.tool || 'tool';
+        tool(id, name, input.filePath && !input.file_path ? { ...input, file_path: input.filePath } : input,
+          s.status === 'completed' ? { body: s.output } : s.status === 'error' ? { body: s.error || 'tool failed', err: true } : null);
         return;
       }
       if (ev.type === 'step_finish') {
@@ -279,13 +271,6 @@ function createTranslator(engine, { sessionId = null, initSent = false } = {}) {
 
 /* ---- runner --------------------------------------------------------------- */
 
-function killGroup(child, signal) {
-  child.killedByUser = true;
-  try { process.kill(-child.pid, signal); } catch {
-    try { child.kill(signal); } catch { /* already gone */ }
-  }
-}
-
 /**
  * One engine chat. Emits the same events ChatManager does ({kind:'status'},
  * {kind:'message', msg}, {kind:'interrupted'}, {kind:'error'}), so the chat
@@ -293,7 +278,7 @@ function killGroup(child, signal) {
  */
 class EngineChat {
   constructor({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], sessionId = null, emit, onThread }) {
-    argsFor(engine, { prompt: '' });   // throws on an unknown engine
+    if (!REGISTRY.some((e) => e.id === engine)) throw new Error('unknown engine: ' + engine);
     Object.assign(this, { engine, command, cwd, env, yolo: !!yolo, model: model || '', extraArgs: extraArgs || [], sessionId, emit: emit || (() => {}), onThread: onThread || (() => {}) });
     this.label = labelOf(engine);
     this.busy = false;
@@ -346,7 +331,7 @@ class EngineChat {
       buf = lines.pop();
       for (const line of lines) push(t.feed(line));
     });
-    child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-8000); });
+    child.stderr.on('data', (d) => { stderr = appendTail(stderr, d, 8000); });
     let ended = false;
     const end = (code, err) => {
       if (ended) return;
@@ -375,29 +360,21 @@ class EngineChat {
     this.queue = [];
     const child = this.child;
     if (!child) return;
-    killGroup(child, 'SIGTERM');
-    // A CLI that ignores SIGTERM must not keep the turn alive.
-    setTimeout(() => killGroup(child, 'SIGKILL'), 3000).unref();
+    terminate(child);   // SIGKILL follows for a CLI that ignores SIGTERM
     this.emit({ kind: 'interrupted', stillQueued });
   }
 
   close() {
     this.queue = [];
-    if (this.child) killGroup(this.child, 'SIGTERM');
+    if (this.child) terminate(this.child);
   }
 
   /** Stand-in for the Agent SDK query object, so the chat panels that ask it
    *  for commands, models or context get an empty answer, not a crash. */
   _stub() {
-    const empty = async () => [];
-    const known = {
+    return stubQuery(this.label, {
       interrupt: () => this.interrupt(),
-      supportedCommands: empty, supportedModels: empty, supportedAgents: empty, mcpServerStatus: empty,
-      getContextUsage: async () => ({ totalTokens: Number(this.lastUsage.input_tokens) || 0, maxTokens: 0, percentage: 0, categories: [] }),
-    };
-    return new Proxy(known, {
-      get: (target, prop) => (prop in target ? target[prop]
-        : (typeof prop === 'string' ? async () => { throw new Error(`${this.label} chats do not support ${prop}`); } : undefined)),
+      usage: () => ({ totalTokens: Number(this.lastUsage.input_tokens) || 0, maxTokens: 0, percentage: 0, categories: [] }),
     });
   }
 }

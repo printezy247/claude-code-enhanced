@@ -1555,7 +1555,7 @@ function registerIpc() {
       if (owner && !owner.isDestroyed() && !focused && !finished.has(id)) {
         finished.add(id);
         const fin = chats.chats.get(id);
-        notify(((fin && fin.engine) ? fin.model : 'Claude') + ' finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.', owner);
+        notify(((fin && fin.title) || 'Claude') + ' finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.', owner);
       }
     }
     if (evt && evt.kind === 'status' && evt.busy === true) finished.delete(id);

@@ -6,10 +6,18 @@ const fs = require('fs');
 const path = require('path');
 const { execFile } = require('child_process');
 
+// Per engine: what it is called and installed as, and how its chat runs.
+// `chat` names the runner class (null = enginechat.EngineChat, one headless CLI
+// run per message); `images` and `approvals` say whether that runner takes
+// images and asks before acting; `providers`, whether it can run on a CCE
+// provider through the local proxy. The chat view reads these, not the engine id.
 const REGISTRY = [
-  { id: 'codex', label: 'Codex', bin: 'codex', hint: 'install: npm install -g @openai/codex' },
-  { id: 'antigravity', label: 'Antigravity CLI', bin: 'agy', hint: 'install: see https://antigravity.google/docs/overview' },
-  { id: 'opencode', label: 'OpenCode', bin: 'opencode', hint: 'install: npm install -g opencode-ai' },
+  { id: 'codex', label: 'Codex', bin: 'codex', hint: 'install: npm install -g @openai/codex',
+    chat: { module: './codexchat', cls: 'CodexChat' }, images: true, approvals: true, providers: true },
+  { id: 'antigravity', label: 'Antigravity CLI', bin: 'agy', hint: 'install: see https://antigravity.google/docs/overview',
+    chat: null, images: false, approvals: false, providers: false },
+  { id: 'opencode', label: 'OpenCode', bin: 'opencode', hint: 'install: npm install -g opencode-ai',
+    chat: { module: './opencodechat', cls: 'OpenCodeChat' }, images: true, approvals: true, providers: true },
 ];
 
 function which(bin, pathVar) {

@@ -4,7 +4,10 @@ import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import path from 'node:path';
-import { modelGroups, CHAT_CLIS, TERMINAL_CLIS } from '../src/renderer/app/session-models.js';
+import { modelGroups as groups, chatClis, terminalClis } from '../src/renderer/app/session-models.js';
+import { REGISTRY } from '../src/main/engines.js';
+
+const modelGroups = (cli, provs) => groups(cli, provs, REGISTRY);
 
 const require = createRequire(import.meta.url);
 const { providerSetup, argsFor, PROVIDER_KEY_ENV } = require('../src/main/enginechat.js');
@@ -30,8 +33,8 @@ describe('model list per CLI', () => {
     expect(modelGroups('opencode', PROVS)[1].models).toEqual(['claude-sonnet-5']);
   });
   it('one Chat entry per CLI, Claude first; Terminal adds shell', () => {
-    expect(CHAT_CLIS.map((c) => c.id)).toEqual(['claude', 'codex', 'opencode', 'antigravity']);
-    expect(TERMINAL_CLIS.map((c) => c.id)).toContain('shell');
+    expect(chatClis(REGISTRY).map((c) => c.id)).toEqual(['claude', ...REGISTRY.map((e) => e.id)]);
+    expect(terminalClis(REGISTRY).map((c) => c.id)).toContain('shell');
   });
 });
 

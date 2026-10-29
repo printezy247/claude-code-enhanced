@@ -4,7 +4,7 @@ import { fillModeSelect } from './modes.js';
 import { createSession } from './tabs.js';
 import { Chat } from '../chat/index.js';
 import { ProvidersUI } from '../providers/ui.js';
-import { CHAT_CLIS, TERMINAL_CLIS, modelGroups } from './session-models.js';
+import { chatClis, terminalClis, modelGroups } from './session-models.js';
 
 /* ================= new-session modal ================= */
 
@@ -68,11 +68,12 @@ export function openNewSessionModal() {
   modelLabel.appendChild(modelHint);
   grid.appendChild(modelLabel);
 
-  let found = null;   // engine ids on PATH, once detection answers
+  let engineList = [];   // every registered engine (engines:list), once detection answers
+  let found = null;      // engine ids on PATH
   const fillCli = () => {
     const keep = cliSel.value;
     cliSel.innerHTML = '';
-    const list = typeSel.value === 'chat' ? CHAT_CLIS : TERMINAL_CLIS;
+    const list = (typeSel.value === 'chat' ? chatClis : terminalClis)(engineList);
     for (const c of list) {
       const o = el('option', '', (c.id === 'claude' ? '★ ' : '') + c.label);
       o.value = c.id;
@@ -87,7 +88,7 @@ export function openNewSessionModal() {
     const def = el('option', '', 'CLI default — ' + (cli === 'claude' ? 'claude’s own login and model' : 'the CLI’s own login and model'));
     def.value = '';
     modelSel.appendChild(def);
-    for (const g of modelGroups(cli, state.providers.instances)) {
+    for (const g of modelGroups(cli, state.providers.instances, engineList)) {
       const og = el('optgroup');
       og.label = g.provider.name;
       for (const m of g.models) {
@@ -98,13 +99,14 @@ export function openNewSessionModal() {
       modelSel.appendChild(og);
     }
     modelSel.value = '';
-    modelHint.textContent = cli === 'antigravity'
-      ? 'Antigravity runs with its own login and models only.'
+    const eng = engineList.find((e) => e.id === cli);
+    modelHint.textContent = eng && !eng.providers
+      ? eng.label + ' runs with its own login and models only.'
       : cli === 'claude' ? 'Or run Claude Code through one of your CCE providers.'
         : 'Or run it on any CCE provider (through CCE’s local proxy).';
   };
   ccx.invoke('engines:list').then((r) => {
-    const all = (r && r.engines) || [];
+    const all = engineList = (r && r.engines) || [];
     found = new Set(all.filter((e) => e && e.found).map((e) => e.id));
     const missing = all.filter((e) => e && !e.found);
     fillCli(); sync();
