@@ -33,6 +33,7 @@ process.on('uncaughtException', (err) => {
 
 const { Store } = require('./store');
 const providers = require('./providers');
+const enginechat = require('./enginechat');
 const catalog = require('./catalog');
 const modelsdev = require('./modelsdev');
 const { AuthStore } = require('./authstore');
@@ -1423,7 +1424,7 @@ function registerIpc() {
   });
 
   // ----- sessions -----
-  handle('session:create', async ({ cwd, type = 'claude', providerUid, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '', hostId = '' }, e) => {
+  handle('session:create', async ({ cwd, type = 'claude', providerUid, model = '', cliDefault = false, continueLast = false, yolo = false, cols = 110, rows = 28, initText = '', hostId = '' }, e) => {
     const dir = (cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
     if (!fs.existsSync(dir)) throw new Error(`directory not found: ${dir}`);
 
@@ -1451,10 +1452,11 @@ function registerIpc() {
       if (continueLast) args.push('--continue');
       if (yolo) args.push('--dangerously-skip-permissions');
     }
-    const provider = store.providers.find(p => p.uid === providerUid)
+    const provider = cliDefault ? null : (store.providers.find(p => p.uid === providerUid)
       || store.providers.find(p => p.uid === store.settings.defaultProviderUid)
-      || null;
+      || null);
     const env = envWithLoginPath({ ...process.env, ...providers.envFor(provider, store.settings) });
+    if (type === 'claude' && provider && model) env.ANTHROPIC_MODEL = sanitizeModel(model);
     // OpenAI-protocol providers only work through the built-in translator; the
     // terminal CLI gets the same ANTHROPIC_BASE_URL override as SDK chats.
     if (usesProxy(provider)) {
@@ -1588,7 +1590,7 @@ function registerIpc() {
   }
 
   // Local-model pre-warm helpers live in ./localmodels (tested by scripts/check.js).
-  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree, engine }, e) => {
+  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree, engine, cliDefault }, e) => {
     // A stale or renamed cwd otherwise reaches the engine, which dies with the
     // misleading "CLI path wrong / auth expired" watchdog message.
     if (cwd) {
@@ -1602,11 +1604,29 @@ function registerIpc() {
     if (engine) {
       const resolved = await engines.commandFor(String(engine), { PATH: (await loginEnvReady()).PATH || process.env.PATH });
       if (resolved.error) return { ok: false, error: resolved.error };
-      const dir = path.resolve(String(cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir()));
+      let dir = path.resolve(String(cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir()));
+      // A CCE provider instead of the CLI's own login (Codex, OpenCode).
+      let prov = null;
+      if (providerUid) {
+        const inst = store.providers.find((p) => p.uid === providerUid);
+        if (!inst) return { ok: false, error: 'provider not found' };
+        await ensureFreshAuth(inst);
+        prov = { name: inst.name, baseUrl: inst.baseUrl, protocol: inst.protocol, apiKey: providers.resolveApiKey(inst) };
+      }
+      const setup = enginechat.providerSetup(String(engine), prov, sanitizeModel(model || ''));
+      if (setup.error) return { ok: false, error: setup.error };
+      let wt = null;
+      if (wantWorktree) {
+        wt = worktrees.add(dir);
+        if (wt.error) return { ok: false, error: wt.error };
+        dir = wt.path;
+      }
       const created = chats.createEngine({
         engine: String(engine), command: resolved.command, cwd: dir,
-        env: envWithLoginPath({ ...process.env }), yolo: !!yolo, model: sanitizeModel(model || ''),
+        env: envWithLoginPath({ ...process.env, ...setup.env }), yolo: !!yolo, model: setup.model,
+        extraArgs: setup.args, providerName: prov ? prov.name : '',
       });
+      if (wt) created.worktree = wt;
       const owner = senderWindowId(e);
       if (owner != null) windowRegistry.claim(owner, 'chats', created.id);
       return created;
@@ -1623,8 +1643,10 @@ function registerIpc() {
     // A worktree made for a chat that then fails to start is removed again,
     // branch and all, instead of piling up under .claude/worktrees.
     try {
-    const provider = store.providers.find(p => p.uid === providerUid)
-      || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null;
+    // "CLI default": no CCE provider at all, so the claude CLI uses its own
+    // login and its own default model.
+    const provider = cliDefault ? null : (store.providers.find(p => p.uid === providerUid)
+      || store.providers.find(p => p.uid === store.settings.defaultProviderUid) || null);
     if (provider) await ensureFreshAuth(provider);
     const useProxy = usesProxy(provider);
     // Local Ollama providers: pre-warm the model at a context size that fits the

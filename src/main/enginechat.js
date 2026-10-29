@@ -11,13 +11,53 @@ const { REGISTRY } = require('./engines');
 
 const labelOf = (engine) => (REGISTRY.find((e) => e.id === engine) || {}).label || engine;
 
+const PROVIDER_KEY_ENV = 'CCE_PROVIDER_KEY';
+
+/**
+ * Point an engine at a CCE provider instead of its own login: extra argv,
+ * extra env and the model id to pass. `prov` is { name, baseUrl, protocol,
+ * apiKey }. Codex takes an OpenAI-format endpoint through `-c model_providers`
+ * config; OpenCode takes an inline config (OPENCODE_CONFIG_CONTENT) with an
+ * OpenAI-compatible or Anthropic provider. Antigravity has no custom
+ * providers. The key goes in the env, never on the command line.
+ */
+function providerSetup(engine, prov, model) {
+  if (!prov) return { args: [], env: {}, model: model || '' };
+  const baseUrl = String(prov.baseUrl || '').replace(/\/+$/, '');
+  const protocol = prov.protocol || 'openai';
+  if (!baseUrl) return { error: 'this provider has no base URL to hand to ' + labelOf(engine) };
+  if (!model) return { error: 'pick a model of this provider for ' + labelOf(engine) };
+  const env = prov.apiKey ? { [PROVIDER_KEY_ENV]: prov.apiKey } : {};
+  if (engine === 'codex') {
+    if (protocol === 'anthropic' || protocol === 'gemini') return { error: 'Codex needs an OpenAI-format provider' };
+    const q = (v) => JSON.stringify(String(v));   // a TOML basic string
+    const args = ['-c', 'model_provider="cce"',
+      '-c', 'model_providers.cce.name=' + q(prov.name || 'CCE'),
+      '-c', 'model_providers.cce.base_url=' + q(baseUrl),
+      '-c', 'model_providers.cce.wire_api=' + q(protocol === 'responses' ? 'responses' : 'chat'),
+      ...(prov.apiKey ? ['-c', 'model_providers.cce.env_key=' + q(PROVIDER_KEY_ENV)] : [])];
+    return { args, env, model };
+  }
+  if (engine === 'opencode') {
+    if (protocol === 'gemini') return { error: 'OpenCode chats take an OpenAI-format or Anthropic provider here' };
+    const options = { baseURL: baseUrl, ...(prov.apiKey ? { apiKey: '{env:' + PROVIDER_KEY_ENV + '}' } : {}) };
+    const config = { provider: { cce: {
+      npm: protocol === 'anthropic' ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible',
+      name: prov.name || 'CCE', options, models: { [model]: {} },
+    } } };
+    return { args: [], env: { ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify(config) }, model: 'cce/' + model };
+  }
+  return { error: labelOf(engine) + ' uses its own login and models only' };
+}
+
 /** argv (and stdin) for one turn. The prompt never goes through a shell. */
-function argsFor(engine, { prompt, sessionId = null, yolo = false, model = '' } = {}) {
+function argsFor(engine, { prompt, sessionId = null, yolo = false, model = '', extraArgs = [] } = {}) {
   const text = String(prompt || '');
   if (engine === 'codex') {
     // `exec resume` takes no -s, so the sandbox is set through config on both.
     const common = ['--json', '--skip-git-repo-check',
       ...(yolo ? ['--dangerously-bypass-approvals-and-sandbox'] : ['-c', 'sandbox_mode="workspace-write"']),
+      ...extraArgs,
       ...(model ? ['-m', model] : [])];
     // "-" reads the prompt from stdin: no argv length limit, no flag confusion.
     const args = sessionId ? ['exec', 'resume', ...common, sessionId, '-'] : ['exec', ...common, '-'];
@@ -251,9 +291,9 @@ function killGroup(child, signal) {
  * view and the Board treat it like any other chat.
  */
 class EngineChat {
-  constructor({ engine, command, cwd, env, yolo = false, model = '', sessionId = null, emit }) {
+  constructor({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], sessionId = null, emit }) {
     argsFor(engine, { prompt: '' });   // throws on an unknown engine
-    Object.assign(this, { engine, command, cwd, env, yolo: !!yolo, model: model || '', sessionId, emit: emit || (() => {}) });
+    Object.assign(this, { engine, command, cwd, env, yolo: !!yolo, model: model || '', extraArgs: extraArgs || [], sessionId, emit: emit || (() => {}) });
     this.label = labelOf(engine);
     this.busy = false;
     this.queue = [];
@@ -278,7 +318,7 @@ class EngineChat {
     this.busy = true;
     this.emit({ kind: 'status', busy: true });
     const t = createTranslator(this.engine, { sessionId: this.sessionId, initSent: this.initSent });
-    const { args, stdin } = argsFor(this.engine, { prompt, sessionId: this.sessionId, yolo: this.yolo, model: this.model });
+    const { args, stdin } = argsFor(this.engine, { prompt, sessionId: this.sessionId, yolo: this.yolo, model: this.model, extraArgs: this.extraArgs });
     const push = (msgs) => {
       for (const msg of msgs) {
         if (msg.type === 'result') this.lastUsage = msg.usage;
@@ -360,4 +400,4 @@ class EngineChat {
   }
 }
 
-module.exports = { argsFor, createTranslator, EngineChat, labelOf };
+module.exports = { argsFor, createTranslator, EngineChat, labelOf, providerSetup, PROVIDER_KEY_ENV };

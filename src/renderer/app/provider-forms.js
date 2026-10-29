@@ -4,6 +4,7 @@ import { fillModeSelect } from './modes.js';
 import { createSession } from './tabs.js';
 import { Chat } from '../chat/index.js';
 import { ProvidersUI } from '../providers/ui.js';
+import { CHAT_CLIS, TERMINAL_CLIS, modelGroups } from './session-models.js';
 
 /* ================= new-session modal ================= */
 
@@ -38,59 +39,80 @@ export function openNewSessionModal() {
   dirLabel.appendChild(dirRow);
   grid.appendChild(dirLabel);
 
-  // type
+  // type: one Chat and one Terminal; the CLI picks which binary runs it.
   const typeLabel = el('label', 'fld');
   typeLabel.appendChild(el('span', '', 'Type'));
   const typeSel = el('select');
-  // Third element: the external engine an option needs on PATH, if any.
-  const TYPES = [
-    ['chat', 'Chat — desktop-style (Agent SDK)'],
-    ['engine:codex', 'Chat — Codex', 'codex'],
-    ['engine:antigravity', 'Chat — Antigravity', 'antigravity'],
-    ['engine:opencode', 'Chat — OpenCode', 'opencode'],
-    ['claude', 'Terminal — claude TUI'],
-    ['codex', 'Terminal — codex TUI', 'codex'],
-    ['antigravity', 'Terminal — antigravity TUI (agy)', 'antigravity'],
-    ['opencode', 'Terminal — opencode TUI', 'opencode'],
-    ['shell', 'Terminal — shell'],
-  ];
-  TYPES.forEach(([v, n]) => {
+  for (const [v, n] of [['chat', 'Chat'], ['terminal', 'Terminal']]) {
     const o = el('option', '', n); o.value = v; typeSel.appendChild(o);
-  });
-  typeSel.value = 'chat';
+  }
   typeLabel.appendChild(typeSel);
+  grid.appendChild(typeLabel);
+
+  const cliLabel = el('label', 'fld');
+  cliLabel.appendChild(el('span', '', 'CLI'));
+  const cliSel = el('select');
+  cliLabel.appendChild(cliSel);
   // A missing CLI is a state of the machine, not an error the user should only
   // discover after Launch: grey the option out and say how to install it.
   const engineHint = el('div', 'hint hidden');
-  typeLabel.appendChild(engineHint);
-  ccx.invoke('engines:list').then((r) => {
-    const found = new Set(((r && r.engines) || []).filter((e) => e && e.found).map((e) => e.id));
-    const missing = ((r && r.engines) || []).filter((e) => e && !e.found);
-    for (const o of [...typeSel.options]) {
-      const engine = (TYPES.find((t) => t[0] === o.value) || [])[2];
-      if (!engine || found.has(engine)) continue;
-      o.disabled = true;
-      o.textContent += ' — not installed';
+  cliLabel.appendChild(engineHint);
+  grid.appendChild(cliLabel);
+
+  // model: the CLI's own default first, then the CCE providers it can run
+  const modelLabel = el('label', 'fld wide');
+  modelLabel.appendChild(el('span', '', 'Model'));
+  const modelSel = el('select');
+  modelLabel.appendChild(modelSel);
+  const modelHint = el('div', 'hint');
+  modelLabel.appendChild(modelHint);
+  grid.appendChild(modelLabel);
+
+  let found = null;   // engine ids on PATH, once detection answers
+  const fillCli = () => {
+    const keep = cliSel.value;
+    cliSel.innerHTML = '';
+    const list = typeSel.value === 'chat' ? CHAT_CLIS : TERMINAL_CLIS;
+    for (const c of list) {
+      const o = el('option', '', (c.id === 'claude' ? '★ ' : '') + c.label);
+      o.value = c.id;
+      if (c.engine && found && !found.has(c.engine)) { o.disabled = true; o.textContent += ' — not installed'; }
+      cliSel.appendChild(o);
     }
+    cliSel.value = list.some((c) => c.id === keep) ? keep : 'claude';
+  };
+  const fillModels = () => {
+    const cli = cliSel.value;
+    modelSel.innerHTML = '';
+    const def = el('option', '', 'CLI default — ' + (cli === 'claude' ? 'claude’s own login and model' : 'the CLI’s own login and model'));
+    def.value = '';
+    modelSel.appendChild(def);
+    for (const g of modelGroups(cli, state.providers.instances)) {
+      const og = el('optgroup');
+      og.label = g.provider.name;
+      for (const m of g.models) {
+        const o = el('option', '', m || 'provider default');
+        o.value = JSON.stringify({ uid: g.provider.uid, model: m });
+        og.appendChild(o);
+      }
+      modelSel.appendChild(og);
+    }
+    modelSel.value = '';
+    modelHint.textContent = cli === 'antigravity'
+      ? 'Antigravity runs with its own login and models only.'
+      : cli === 'claude' ? 'Or run Claude Code through one of your CCE providers.'
+        : 'Or run it through a CCE provider (' + (cli === 'codex' ? 'OpenAI-format' : 'OpenAI-format or Anthropic') + ').';
+  };
+  ccx.invoke('engines:list').then((r) => {
+    const all = (r && r.engines) || [];
+    found = new Set(all.filter((e) => e && e.found).map((e) => e.id));
+    const missing = all.filter((e) => e && !e.found);
+    fillCli(); sync();
     if (missing.length) {
       engineHint.classList.remove('hidden');
       engineHint.textContent = missing.map((e) => `${e.label} not found — ${e.hint}`).join(' · ');
     }
   }).catch(() => { /* detection is a nicety: launching still reports the error */ });
-  grid.appendChild(typeLabel);
-
-  // provider
-  const provLabel = el('label', 'fld');
-  provLabel.appendChild(el('span', '', 'Provider'));
-  const provSel = el('select');
-  state.providers.instances.forEach(p => {
-    const o = el('option', '', (p.uid === state.providers.defaultUid ? '★ ' : '') + p.name);
-    o.value = p.uid;
-    provSel.appendChild(o);
-  });
-  if (state.providers.defaultUid) provSel.value = state.providers.defaultUid;
-  provLabel.appendChild(provSel);
-  grid.appendChild(provLabel);
 
   // options
   const optRow = el('div', 'wide');
@@ -98,53 +120,56 @@ export function openNewSessionModal() {
   optRow.style.flexDirection = 'column';
   optRow.style.gap = '8px';
 
-  // permission mode (chat)
+  // permission mode (Claude chat)
   const modeRow = el('div', 'inline');
   modeRow.appendChild(el('span', 'hint', 'Permission mode'));
   const modeSel = el('select');
   modeSel.style.width = '200px';
-  const provOf = () => state.providers.instances.find(p => p.uid === provSel.value) || null;
-  fillModeSelect(modeSel, provOf());
-  modeSel.value = 'acceptEdits';
-  provSel.addEventListener('change', () => fillModeSelect(modeSel, provOf()));
+  const pick = () => { try { return modelSel.value ? JSON.parse(modelSel.value) : null; } catch { return null; } };
+  const provOf = () => { const p = pick(); return p ? (state.providers.instances.find((i) => i.uid === p.uid) || null) : null; };
+  const fillMode = () => { const keep = modeSel.value; fillModeSelect(modeSel, provOf()); modeSel.value = keep || 'acceptEdits'; if (!modeSel.value) modeSel.value = 'acceptEdits'; };
   modeRow.appendChild(modeSel);
   optRow.appendChild(modeRow);
 
-  const contCheck = el('input'); contCheck.type = 'checkbox'; contCheck.id = 'opt-continue';
-  const contLabel = el('label', 'check');
-  contLabel.appendChild(contCheck);
-  contLabel.appendChild(el('span', '', 'Terminal: continue most recent conversation (--continue)'));
-  optRow.appendChild(contLabel);
-
-  const resumeCheck = el('input'); resumeCheck.type = 'checkbox'; resumeCheck.id = 'opt-resume';
-  const resumeLabel = el('label', 'check');
-  resumeLabel.appendChild(resumeCheck);
-  resumeLabel.appendChild(el('span', '', 'Chat: resume this folder\u2019s previous conversation'));
-  optRow.appendChild(resumeLabel);
-
-  const wtCheck = el('input'); wtCheck.type = 'checkbox'; wtCheck.id = 'opt-worktree';
-  const wtLabel = el('label', 'check');
-  wtLabel.appendChild(wtCheck);
-  wtLabel.appendChild(el('span', '', 'Chat: isolated git worktree (new branch under .claude/worktrees)'));
-  optRow.appendChild(wtLabel);
-
-  const yoloCheck = el('input'); yoloCheck.type = 'checkbox'; yoloCheck.id = 'opt-yolo';
-  const yoloLabel = el('label', 'check');
-  yoloLabel.appendChild(yoloCheck);
-  yoloLabel.appendChild(el('span', '', 'Skip ALL permission prompts (--dangerously-skip-permissions)'));
-  optRow.appendChild(yoloLabel);
-
-  const loginCheck = el('input'); loginCheck.type = 'checkbox'; loginCheck.id = 'opt-login';
-  const loginLabel = el('label', 'check');
-  loginLabel.appendChild(loginCheck);
-  loginLabel.appendChild(el('span', '', 'Terminal: send /login after launch (first-time OAuth)'));
-  optRow.appendChild(loginLabel);
+  const mkCheck = (id, text) => {
+    const input = el('input'); input.type = 'checkbox'; input.id = id;
+    const label = el('label', 'check');
+    label.appendChild(input);
+    label.appendChild(el('span', '', text));
+    optRow.appendChild(label);
+    return { input, label };
+  };
+  const cont = mkCheck('opt-continue', 'Continue most recent conversation (--continue)');
+  const resume = mkCheck('opt-resume', 'Resume this folder’s previous conversation');
+  const wt = mkCheck('opt-worktree', 'Isolated git worktree (new branch under .claude/worktrees)');
+  const yolo = mkCheck('opt-yolo', 'Skip ALL permission prompts');
+  const login = mkCheck('opt-login', 'Send /login after launch (first-time OAuth)');
 
   const warn = el('div', 'warn-box hidden');
-  yoloCheck.addEventListener('change', () => warn.classList.toggle('hidden', !yoloCheck.checked));
+  yolo.input.addEventListener('change', () => warn.classList.toggle('hidden', !yolo.input.checked));
   warn.textContent = 'YOLO mode lets the agent run any command without asking — use only in disposable environments.';
   optRow.appendChild(warn);
   grid.appendChild(optRow);
+
+  // Show only what the chosen type + CLI understands.
+  const show = (node, on) => node.classList.toggle('hidden', !on);
+  function sync() {
+    const chat = typeSel.value === 'chat';
+    const cli = cliSel.value;
+    show(modelLabel, (chat || cli === 'claude') && cli !== 'shell');
+    show(modeRow, chat && cli === 'claude');
+    show(resume.label, chat && cli === 'claude');
+    show(wt.label, chat);
+    show(cont.label, !chat && cli === 'claude');
+    show(login.label, !chat && cli === 'claude');
+    show(yolo.label, cli !== 'shell');
+    if (cli === 'shell') { yolo.input.checked = false; warn.classList.add('hidden'); }
+    fillMode();
+  }
+  typeSel.addEventListener('change', () => { fillCli(); fillModels(); sync(); });
+  cliSel.addEventListener('change', () => { fillModels(); sync(); });
+  modelSel.addEventListener('change', fillMode);
+  fillCli(); fillModels(); sync();
 
   modal.appendChild(grid);
   const actions = el('div', 'actions');
@@ -152,28 +177,29 @@ export function openNewSessionModal() {
   cancel.addEventListener('click', () => overlay.remove());
   const launch = el('button', 'btn primary', 'Launch');
   launch.addEventListener('click', () => {
-    const opts = {
-      cwd: dirInput.value.trim(),
-      providerUid: provSel.value || null,
-      yolo: yoloCheck.checked,
-    };
+    const cwd = dirInput.value.trim();
+    const cli = cliSel.value;
+    const p = pick();
+    // No pick = "CLI default": no CCE provider, the CLI's own login and model.
+    const target = p ? { providerUid: p.uid, model: p.model || undefined } : { cliDefault: true };
     overlay.remove();
-    if (typeSel.value.startsWith('engine:')) {
-      // The CLI brings its own login and models: no provider, mode or worktree.
-      Chat.createSession({ cwd: opts.cwd, yolo: opts.yolo, engine: typeSel.value.slice('engine:'.length) });
-    } else if (typeSel.value === 'chat') {
-      Chat.createSession({
-        ...opts,
-        permissionMode: modeSel.value,
-        resume: resumeCheck.checked ? 'last' : null,
-        worktree: wtCheck.checked,
-      });
+    if (typeSel.value === 'chat') {
+      if (cli === 'claude') {
+        Chat.createSession({
+          cwd, yolo: yolo.input.checked, ...target,
+          permissionMode: modeSel.value,
+          resume: resume.input.checked ? 'last' : null,
+          worktree: wt.input.checked,
+        });
+      } else {
+        Chat.createSession({ cwd, yolo: yolo.input.checked, engine: cli, worktree: wt.input.checked, ...(p ? target : {}) });
+      }
     } else {
       createSession({
-        ...opts,
-        type: typeSel.value,
-        continueLast: contCheck.checked,
-        initText: loginCheck.checked && typeSel.value === 'claude' ? '/login\r' : '',
+        cwd, type: cli, yolo: yolo.input.checked,
+        ...(cli === 'claude' ? target : {}),
+        continueLast: cont.input.checked && cli === 'claude',
+        initText: login.input.checked && cli === 'claude' ? '/login\r' : '',
       });
     }
   });

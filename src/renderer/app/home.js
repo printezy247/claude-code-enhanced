@@ -12,7 +12,8 @@ const base = (p) => String(p || '').replace(/\/+$/, '').split('/').pop() || p;
 
 function start(cwd) {
   if (!cwd) return;
-  Chat.createSession({ cwd, providerUid: state.providers && state.providers.defaultUid })
+  // New chats run the CLI's own default; CCE providers are picked per chat.
+  Chat.createSession({ cwd, cliDefault: true })
     .catch((err) => toast(String((err && err.message) || err), 'err'));
 }
 

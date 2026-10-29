@@ -282,7 +282,7 @@ describe('ChatManager engine chats', () => {
       const events = [];
       mgr.on('event', (id, e) => events.push({ id, ...e }));
       const created = mgr.createEngine({ engine: 'codex', command: bin, cwd: dir, env: process.env });
-      expect(created).toMatchObject({ engine: 'codex', cwd: dir, model: 'Codex' });
+      expect(created).toMatchObject({ engine: 'codex', cwd: dir, model: 'Codex · CLI default' });
       expect(mgr.chats.get(created.id).engine).toBe('codex');
       expect(mgr.send(created.id, 'hello')).toMatchObject({ ok: true });
       const end = Date.now() + 4000;
