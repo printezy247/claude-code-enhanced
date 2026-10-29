@@ -43,14 +43,19 @@ function words(text) {
   return out;
 }
 
-/** Words that mean a well-known connector, when the user does not say its name. */
+/**
+ * Words that mean a well-known connector, when the user does not say its name.
+ * Only words that point at the service. "error", "message", "thread", "doc"
+ * and "workflow" turn up in ordinary coding prompts and used to switch on
+ * Sentry, Slack, Notion or GitHub for no reason.
+ */
 const TOPICS = {
-  github: ['git', 'ops', 'pull', 'request', 'merge', 'commit', 'push', 'branch', 'repo', 'repository', 'issue', 'issues', 'release', 'workflow', 'actions'],
+  github: ['git', 'ops', 'pull', 'request', 'merge', 'commit', 'push', 'branch', 'repo', 'repository', 'issue', 'issues', 'release', 'actions'],
   gitlab: ['git', 'ops', 'merge', 'commit', 'push', 'branch', 'repo', 'repository', 'issue', 'issues', 'pipeline'],
-  linear: ['ticket', 'tickets', 'sprint', 'cycle', 'backlog'],
-  sentry: ['error', 'errors', 'crash', 'stacktrace', 'exception'],
-  slack: ['channel', 'message', 'thread'],
-  notion: ['page', 'pages', 'wiki', 'doc', 'docs'],
+  linear: ['ticket', 'tickets', 'sprint', 'backlog'],
+  sentry: ['crash', 'crashes', 'stacktrace', 'exception'],
+  slack: ['channel', 'channels'],
+  notion: ['wiki'],
 };
 
 /**
@@ -232,17 +237,22 @@ function duplicatePairs(servers) {
  * @param {Set<string>|string[]} [p.recent] servers used in the last few turns
  * @param {boolean} [p.pick]         picking is active
  * @param {number} [p.toolBudget]    0 = no limit
+ * @param {Set<string>|string[]} [p.sticky] servers picked as relevant for the last messages
  * @returns {{show: Set<string>, hide: Set<string>, scores: Object<string, number>, why: Object<string, string>}}
  */
-function plan({ servers, prompt = '', cwd = '', modes = null, projectUsage = {}, chatUses = {}, recent = [], pick = false, toolBudget = 0 }) {
+function plan({ servers, prompt = '', cwd = '', modes = null, projectUsage = {}, chatUses = {}, recent = [], pick = false, toolBudget = 0, sticky = [] }) {
   const want = words(prompt);
   const recentSet = new Set(recent || []);
+  // "Plan it" picks Linear, "go ahead" says nothing about Linear: a connector
+  // picked a message ago stays relevant for the follow-up.
+  const stickySet = new Set(sticky || []);
   // Only a connector that is up (or that we switched off ourselves) can be switched.
   const switchable = (servers || []).filter((s) => s && (s.status === 'connected' || s.status === 'disabled'));
   const scores = {};
   const why = {};
   for (const s of switchable) {
-    scores[s.name] = scoreServer(s, want, { projectUses: projectUsage[s.name], chatUses: chatUses[s.name], recent: recentSet.has(s.name) });
+    scores[s.name] = scoreServer(s, want, { projectUses: projectUsage[s.name], chatUses: chatUses[s.name], recent: recentSet.has(s.name) })
+      + (stickySet.has(s.name) ? 2 : 0);
   }
   const show = new Set();
   const hide = new Set();

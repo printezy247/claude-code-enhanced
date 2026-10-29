@@ -373,6 +373,7 @@ export function wireWorkflowPicker(chat, send) {
     const syncPaths = () => { paths.parentNode.classList.toggle('hidden', scope.value !== 'files'); };
     scope.addEventListener('change', syncPaths);
     syncPaths();
+    const finish = field('Finish with', select([['', 'Nothing extra'], ['test', 'Run the tests and show the result'], ['summary', 'A short summary of what changed']], cur.finish));
     const checks = el('div', 'wfo-checks');
     const check = (label, on) => { const l = el('label', 'check'); const c = el('input'); c.type = 'checkbox'; c.checked = on; l.appendChild(c); l.appendChild(el('span', '', label)); checks.appendChild(l); return c; };
     const ro = check('Read-only: no file changes (forces plan mode)', cur.readOnly);
@@ -412,7 +413,7 @@ export function wireWorkflowPicker(chat, send) {
 
     const collect = () => cleanOptions({
       run: run.value, command: command.value, mode: mode.value, model: model.value.trim(), effort: effort.value,
-      scope: scope.value, scopePaths: paths.value, readOnly: ro.checked, restoreMode: restore.checked, then: thenList,
+      scope: scope.value, scopePaths: paths.value, finish: finish.value, readOnly: ro.checked, restoreMode: restore.checked, then: thenList,
     });
 
     // Prompt: shown as text, editable per project

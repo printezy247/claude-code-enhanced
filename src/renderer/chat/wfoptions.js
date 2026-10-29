@@ -5,13 +5,20 @@ export const RUN_MODES = ['wait', 'now', 'queue'];
 export const SCOPES = ['repo', 'diff', 'staged', 'files'];
 export const MODES = ['', 'plan', 'acceptEdits', 'auto'];
 export const GROUPS = ['Understand', 'Plan', 'Build', 'Verify', 'Ship'];
+export const FINISHES = ['', 'test', 'summary'];
+
+/** The last step a workflow adds to its prompt, so the run ends by proving its result. */
+export const FINISH_LINES = {
+  test: 'When you are done: run the project\'s tests and checks, and show the result. If something fails, say so plainly.',
+  summary: 'When you are done: give a short summary of what changed, which files, and anything left to do.',
+};
 
 const MAX_CHAIN = 4;
 const MAX_HISTORY = 50;
 
 export const BASE_OPTIONS = {
   run: '', mode: '', model: '', effort: '', scope: 'repo', scopePaths: '',
-  command: '', readOnly: false, restoreMode: true, then: [],
+  command: '', readOnly: false, restoreMode: true, finish: '', then: [],
 };
 
 export function emptyStore() {
@@ -50,6 +57,7 @@ export function cleanOptions(o = {}) {
   if (typeof o.command === 'string' && o.command.trim()) out.command = o.command.slice(0, 4000);
   if (typeof o.readOnly === 'boolean') out.readOnly = o.readOnly;
   if (typeof o.restoreMode === 'boolean') out.restoreMode = o.restoreMode;
+  if (FINISHES.includes(o.finish) && o.finish) out.finish = o.finish;
   if (Array.isArray(o.then)) {
     out.then = o.then.filter((t) => t && typeof t.key === 'string').slice(0, MAX_CHAIN)
       .map((t) => ({ key: t.key, gate: t.gate === 'ask' ? 'ask' : 'auto' }));
@@ -89,7 +97,7 @@ export const READ_ONLY_LINE = 'Read-only: do not create, edit or delete any file
  */
 export function buildPrompt(base, wf, o, command = '') {
   const cmd = String(command || '').trim();
-  const lines = [scopeLine(o), o.readOnly ? READ_ONLY_LINE : ''].filter(Boolean);
+  const lines = [scopeLine(o), o.readOnly ? READ_ONLY_LINE : '', FINISH_LINES[o.finish] || ''].filter(Boolean);
   let text = String(base);
   if (wf.fill) {
     text += cmd;

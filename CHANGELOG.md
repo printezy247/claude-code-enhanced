@@ -2,6 +2,12 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.92
+- Fixed: waiting on something is no longer treated as a loop. Shell commands that start with `sleep`, and connector tools that report status (CI check runs, job status, progress), are never counted, and the same check repeated after a wait is a poll, not a repeat. Before, checking CI three times got the third check blocked.
+- Fixed: ordinary words ("error", "message", "thread", "doc", "page", "workflow") no longer switch on Sentry, Slack, Notion or GitHub when connectors are picked per message.
+- Fixed: a connector picked for one message stays available for the next two, so "plan it" followed by "go ahead" keeps the tools the plan was about.
+- Added: workflow option "Finish with" in the `⋯` options panel: run the tests and show the result, or give a short summary of what changed.
+
 ## 0.9.91
 - Fixed: tool calls from local models and proxies that number their calls per reply (`call_0`, `call_1`, or no id at all) now get a unique id each turn. The repeated ids could make the loop guard deny a fresh call based on an old verdict, and made cards and results collide.
 - Fixed: a message typed while the agent is working no longer clears the loop guard, so a looping agent is still caught after you steer it.

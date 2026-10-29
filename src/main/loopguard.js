@@ -7,7 +7,8 @@
  *  - a run of no-op "status echo" shell calls.
  * Anything that changes a file (Write/Edit, or a shell `>`, `sed -i`, `tee`,
  * `mv`) is progress and clears the slate, so test, edit, test is a fix cycle.
- * Polling tools are waiting, not looping, and are never counted.
+ * Polling tools are waiting, not looping, and are never counted: task output,
+ * connector status checks, and shell commands that start with `sleep`.
  *
  * Each scope (the main agent, and each subagent) keeps its own history.
  * The first trip in a scope is a redirect (the caller denies the call with a
@@ -21,6 +22,23 @@ const WRITE_TOOLS = new Set(['Write', 'Edit', 'MultiEdit', 'NotebookEdit']);
 
 // Reading a task's output again is waiting for it, not repeating oneself.
 const POLL_TOOLS = new Set(['TaskOutput', 'BashOutput', 'TaskGet', 'TaskList', 'TodoWrite', 'ToolSearch']);
+
+// A shell command that starts by sleeping is waiting for something (CI, a
+// deploy, a server), and so is everything after a sleep: the same check again
+// after a wait is a poll, not a repeat.
+const WAIT_BASH = /^\s*sleep\s+\d/;
+
+// Connector tools (or their `method`) that report on something still running.
+const POLL_WORDS = /(?:^|_)(?:status|check_runs|checks|poll|wait|progress)(?:$|_)/i;
+
+function isPollCall(block) {
+  if (POLL_TOOLS.has(block.name)) return true;
+  if (block.name === 'Bash') return WAIT_BASH.test(String((block.input && block.input.command) || ''));
+  const m = /^mcp__.+?__(.+)$/.exec(String(block.name));
+  if (!m) return false;
+  const method = block.input && typeof block.input.method === 'string' ? block.input.method : '';
+  return POLL_WORDS.test(m[1]) || (!!method && POLL_WORDS.test(method));
+}
 
 // A shell command that changes files: a redirect to a file (not 2>&1 or
 // /dev/null), tee, sed -i, mv/cp/patch/truncate, or a git command that edits.
@@ -58,7 +76,7 @@ function createLoopGuard({ window = 24, repeat = 3, noopRun = 5, errorRepeat = 3
     const k = key || '';
     let s = scopes.get(k);
     if (!s) {
-      s = { recent: [], noops: 0, strikes: 0, errHash: '', errStreak: 0, armed: null, edits: new Map(), shellEdits: new Map() };
+      s = { recent: [], noops: 0, strikes: 0, errHash: '', errStreak: 0, armed: null, edits: new Map(), shellEdits: new Map(), waits: 0 };
       scopes.set(k, s);
     }
     return s;
@@ -72,7 +90,10 @@ function createLoopGuard({ window = 24, repeat = 3, noopRun = 5, errorRepeat = 3
 
   function decide(block, s) {
     const none = { trip: { tripped: false } };
-    if (POLL_TOOLS.has(block.name)) return none;
+    if (isPollCall(block)) {
+      if (block.name === 'Bash') s.waits += 1;
+      return none;
+    }
     // Three identical errors in a row: whatever comes next is stopped, an edit included.
     if (s.armed) return { trip: trip(s, s.armed), tracked: true };
     if (WRITE_TOOLS.has(block.name)) {
@@ -99,9 +120,10 @@ function createLoopGuard({ window = 24, repeat = 3, noopRun = 5, errorRepeat = 3
       return { trip: { tripped: false }, progress: true, tracked: true };
     }
     const sig = signature(block);
-    const entry = { sig, hash: undefined };
-    // Calls only count as repeats while they keep getting the same result.
-    const prior = s.recent.filter((e) => e.sig === sig);
+    const entry = { sig, hash: undefined, wait: s.waits };
+    // Calls only count as repeats while they keep getting the same result, and
+    // only since the last wait: check, sleep, check is polling.
+    const prior = s.recent.filter((e) => e.sig === sig && e.wait === s.waits);
     let ref;
     for (let i = prior.length - 1; i >= 0; i--) if (prior[i].hash !== undefined) { ref = prior[i].hash; break; }
     const same = prior.filter((e) => e.hash === undefined || e.hash === ref).length;
@@ -194,6 +216,8 @@ function createBudget(limit) {
   let count = 0;
   return {
     note(block) {
+      // Only the engine's own polling is free here: a yolo turn that sleeps
+      // and checks forever must still hit the budget.
       if (!limit || !block || POLL_TOOLS.has(block.name)) return false;
       if (isEditCall(block)) { count = 0; return false; }
       count += 1;

@@ -1421,12 +1421,20 @@ class ChatManager extends EventEmitter {
       const pick = this._pickActive(chat);
       const recent = new Set([...chat.usedByTurn.flatMap((s) => [...s]), ...chat.turnUses]);
       const modes = chat.settings && chat.settings.connectorModes;
+      chat.pickedByTick = chat.pickedByTick || [];
+      const sticky = new Set(chat.pickedByTick.flatMap((s) => [...s]));
       const d = connectorauto.plan({
-        servers, prompt, cwd: chat.cwd, modes, pick,
+        servers, prompt, cwd: chat.cwd, modes, pick, sticky,
         toolBudget: connectorauto.toolBudgetFor(ctx, chat.toolSearchOn),
         projectUsage: this.connectorMemory.usage(chat.cwd) || {}, chatUses: chat.connectorUses, recent,
       });
       chat.picked = d;
+      // Remember what this message picked on its own merits (not by being
+      // sticky), so a connector is carried for two follow-ups and no longer.
+      if (prompt) {
+        const fresh = Object.keys(d.why).filter((n) => d.why[n] === 'relevant' && d.scores[n] - (sticky.has(n) ? 2 : 0) > 0);
+        chat.pickedByTick = chat.pickedByTick.concat([new Set(fresh)]).slice(-2);
+      }
       // A connector that dropped after the first recovery round ran out is
       // picked up again here, on the next message.
       if (!chat.recoverTimer && servers.some((s) => s.status === 'failed')) this._scheduleRecovery(id, 0);
