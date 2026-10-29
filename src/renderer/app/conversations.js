@@ -399,7 +399,7 @@ function openConvoMenu(anchor, s, cwd) {
     else if (!r.ok) toast(r.error, 'err');
   });
   add('New chat in this folder', basenameOf(cwd), () => {
-    Chat.createSession({ cwd });
+    Chat.createSession({ cwd, cliDefault: true });
     toggleConversations(false);
     switchView('conversations');
   });

@@ -598,7 +598,7 @@ function renderTasks(target, cwd, only) {
     const rows = [
       ['status', chat.busy ? 'working…' : (chat.alive ? 'idle' : 'ended')],
       ['provider', chat.provider ? chat.provider.name : 'default (Claude account)'],
-      ['model', chat.model || (chat.init && chat.init.model) || 'provider default'],
+      ['model', chat.model || (chat.init && chat.init.model) || (chat.provider ? 'provider default' : 'CLI default')],
     ];
     for (const [k, v] of rows) {
       const row = el('div', 'kv-row');

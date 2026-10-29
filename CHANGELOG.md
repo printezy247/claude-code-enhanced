@@ -4,6 +4,13 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.9.96
+- Changed: the New session dialog has one **Chat** and one **Terminal** type. A **CLI** picker chooses what runs it (Claude Code by default, Codex, OpenCode, Antigravity; Terminal also offers a shell). Each CLI runs its own binary; CLIs that aren't installed are greyed out.
+- Changed: a new chat uses the CLI's own login and default model ("CLI default"). The **Model** picker offers your CCE providers instead: any provider for Claude Code, OpenAI-format providers for Codex, OpenAI-format or Anthropic providers for OpenCode. Antigravity uses its own login only. "New chat here" and "New chat in this folder" use CLI default too.
+- New: Codex and OpenCode chats can run on a CCE provider. Codex gets it through `-c model_providers` config, OpenCode through an inline config; the API key goes in the environment, never on the command line.
+- New: Codex, OpenCode and Antigravity chats can start in an isolated git worktree.
+- The dialog shows only the options the chosen type and CLI support.
 ## 0.9.95
 - Fixed: chats failed to start in the installed app with "Cannot find module 'zod'". The Agent SDK's peer dependencies (`zod`, `@modelcontextprotocol/sdk`, `@anthropic-ai/sdk`) are now direct dependencies, so the package includes them.
 ## 0.9.95

@@ -161,18 +161,18 @@ export async function createSession(opts) {
   // Engine chats (Codex / Antigravity / OpenCode): the CLI owns its model,
   // permissions and context, so the Claude-only controls are hidden. #feat-engine-chat
   if (res.engine) {
-    const name = res.model || res.engine;
+    const name = res.label || res.model || res.engine;
     chat.engine = res.engine;
     chat.memProbed = true;   // the memory / skill probes are Claude prompts
     pane.classList.add('engine-chat');
     tab.firstChild.textContent = '◆ ' + basename(res.cwd) + ' · ' + name;
-    if (chat.providerEl) chat.providerEl.textContent = name;
+    if (chat.providerEl) chat.providerEl.textContent = res.model || name;
     chat.composer.placeholder = 'Message ' + name + '…  (text only)';
     const h = pane.querySelector('.chat-empty h3');
     if (h) h.textContent = name;
     const p = pane.querySelector('.chat-empty p');
     if (p) {
-      p.textContent = name + ' runs headless in this project: one CLI run per message, with its own login and models. '
+      p.textContent = name + ' runs headless in this project: one CLI run per message, ' + (/CLI default$/.test(res.model || '') ? 'with its own login and models. ' : 'on ' + String(res.model || '').replace(/^[^·]*·\s*/, '') + '. ')
         + (res.permissionMode === 'bypassPermissions'
           ? 'YOLO is on: it runs commands and edits files without asking.'
           : 'It cannot stop to ask you, so actions that need approval are blocked (Codex may still edit files inside this folder).');

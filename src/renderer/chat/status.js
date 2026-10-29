@@ -148,7 +148,7 @@ export function setStatusLine(chat) {
   // A local or relayed provider reports Anthropic-derived cost for work it
   // never billed, so "$0.0204" against Ollama was actively misleading. #15
   const metered = !chat.provider || !chat.provider.baseUrl;
-  const parts = [chat.model ? 'model: ' + chat.model : 'model: provider default', 'mode: ' + modeLabel(chat.mode)];
+  const parts = [chat.model ? 'model: ' + chat.model : (chat.provider ? 'model: provider default' : 'model: CLI default' + (chat.init && chat.init.model ? ' (' + chat.init.model + ')' : '')), 'mode: ' + modeLabel(chat.mode)];
   if (metered && chat.spent > 0.0001) parts.push('session $' + chat.spent.toFixed(4));
   if (chat.lastResult) {
     const r = chat.lastResult;
