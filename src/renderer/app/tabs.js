@@ -187,6 +187,30 @@ export async function createSession(opts) {
   return id;
 }
 
+/**
+ * Paste text into a terminal tab without running it (bracketed paste, so a
+ * multi-line block waits for Enter). Uses the active terminal, else the most
+ * recent one, else opens a shell in the active chat's folder.
+ */
+export async function sendToTerminal(text) {
+  const live = (id) => { const s = state.sessions.get(id); return !!(s && s.term && s.alive && !s.placeholder); };
+  let id = live(state.activeId) ? state.activeId : [...state.sessions.keys()].filter(live).pop();
+  let fresh = false;
+  if (!id) {
+    const meta = tabRegistry.get(state.activeId);
+    id = await createSession({ cwd: (meta && meta.cwd) || state.settings.defaultCwd || '', type: 'shell' });
+    fresh = true;
+    if (!id) return false;
+  } else {
+    activateSession(id);
+    switchView('terminal');
+  }
+  const sess = state.sessions.get(id);
+  const paste = () => { sess.term.paste(String(text)); sess.term.focus(); };
+  if (fresh) setTimeout(paste, 1200); else paste();
+  return true;
+}
+
 export async function killSession(id) {
   const meta = tabRegistry.get(id);
   if (meta && meta.kind === 'chat') {

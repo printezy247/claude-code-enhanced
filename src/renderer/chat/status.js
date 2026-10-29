@@ -114,6 +114,7 @@ export async function drainQueue(chat) {
     lastTurnError: chat.lastTurnError && !chat.queueOverride,
     permWaiting: chat.permCount > 0 && !chat.queueOverride,
     spendWarn: chat.spendWarn && !chat.queueOverride,
+    testsFailed: chat.lastTurnTests && !chat.queueOverride,
     rules: queueRules(),
   });
   if (!act) {
@@ -138,6 +139,7 @@ export async function drainQueue(chat) {
   setTimeout(() => {
     if (!chat.alive) return;
     chat.lastTurnError = false;
+    chat.lastTurnTests = false;
     ccx.invoke('chat:send', { id: chat.id, text: next.text, blocks: next.blocks })
       .then((r) => { if (!r || !r.ok) setBusy(chat, false); })
       .catch(() => setBusy(chat, false));

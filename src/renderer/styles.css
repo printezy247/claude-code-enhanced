@@ -1923,3 +1923,13 @@ pre > .code-head ~ .pre-copy { opacity: 1; }
 pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .req-tip { white-space: pre-wrap; }
+
+/* Queue row: model and effort popover */
+.q-pop { position: absolute; z-index: 30; right: 8px; margin-top: 4px; padding: 10px 12px; min-width: 240px; display: flex; flex-direction: column; gap: 8px; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.35); }
+.q-pop-fld { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.q-pop-fld select { width: 100%; }
+.q-pop-actions { display: flex; gap: 6px; justify-content: flex-end; }
+
+.sp-thumb { display: block; max-width: 100%; max-height: 180px; margin-top: 8px; border-radius: 6px; object-fit: contain; background: var(--bg2, rgba(255,255,255,.04)); }
+.chat-mention { color: var(--accent); text-decoration: none; border-bottom: 1px dotted currentColor; cursor: pointer; }
+.chat-mention:hover { text-decoration: underline; }

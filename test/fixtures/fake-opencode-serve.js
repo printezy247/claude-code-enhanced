@@ -6,8 +6,9 @@
 const http = require('http');
 const fs = require('fs');
 const STATE = process.env.FAKE_OC_STATE || '';
-const sessions = new Map(STATE && fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : []);
-const save = () => { if (STATE) fs.writeFileSync(STATE, JSON.stringify([...sessions])); };
+const load = () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return []; } };
+const sessions = new Map(STATE && fs.existsSync(STATE) ? load() : []);
+const save = () => { if (!STATE) return; const tmp = STATE + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify([...sessions])); fs.renameSync(tmp, STATE); };
 const port = Number(process.argv[process.argv.indexOf('--port') + 1]);
 const expect = 'Basic ' + Buffer.from('opencode:' + (process.env.OPENCODE_SERVER_PASSWORD || '')).toString('base64');
 let n = 0;

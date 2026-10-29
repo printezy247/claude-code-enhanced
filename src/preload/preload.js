@@ -42,7 +42,7 @@ const INVOKE_CHANNELS = new Set([
   'marketplace:list', 'marketplace:install',
   'deeplink:pending', 'file:saveText',
   'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
-  'file:read', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
+  'file:read', 'file:thumb', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
   'git:status', 'git:cache-invalidate', 'project:files', 'project:scripts', 'skill:import',
   'skills:list', 'skills:read', 'cmd:detail', 'skills:set-enabled',
   'plugins:list', 'plugins:pick', 'plugins:install', 'plugins:uninstall',
