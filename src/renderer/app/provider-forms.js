@@ -45,6 +45,9 @@ export function openNewSessionModal() {
   // Third element: the external engine an option needs on PATH, if any.
   const TYPES = [
     ['chat', 'Chat — desktop-style (Agent SDK)'],
+    ['engine:codex', 'Chat — Codex', 'codex'],
+    ['engine:antigravity', 'Chat — Antigravity', 'antigravity'],
+    ['engine:opencode', 'Chat — OpenCode', 'opencode'],
     ['claude', 'Terminal — claude TUI'],
     ['codex', 'Terminal — codex TUI', 'codex'],
     ['antigravity', 'Terminal — antigravity TUI (agy)', 'antigravity'],
@@ -155,7 +158,10 @@ export function openNewSessionModal() {
       yolo: yoloCheck.checked,
     };
     overlay.remove();
-    if (typeSel.value === 'chat') {
+    if (typeSel.value.startsWith('engine:')) {
+      // The CLI brings its own login and models: no provider, mode or worktree.
+      Chat.createSession({ cwd: opts.cwd, yolo: opts.yolo, engine: typeSel.value.slice('engine:'.length) });
+    } else if (typeSel.value === 'chat') {
       Chat.createSession({
         ...opts,
         permissionMode: modeSel.value,

@@ -69,7 +69,7 @@ function runRow(run) {
   return row;
 }
 
-// Engine tabs (item 11): Codex / Antigravity / OpenCode as terminal tabs. Only
+// Engine tabs (item 11): Codex / Antigravity / OpenCode as chats or terminal tabs. Only
 // engines found on PATH get a button; a missing one shows its install hint.
 function engineRow(e) {
   const row = el('div', 'mcp-row');
@@ -77,6 +77,15 @@ function engineRow(e) {
   row.appendChild(el('b', '', e.label));
   if (e.found && e.version) row.appendChild(el('span', 'meta', e.version));
   if (e.found) {
+    // The same CLI in the chat view, run headless one message at a time. #feat-engine-chat
+    const chatBtn = el('button', 'btn small', 'Open chat');
+    chatBtn.addEventListener('click', async () => {
+      chatBtn.disabled = true;
+      try { await Chat.createSession({ cwd: state.settings && state.settings.defaultCwd, engine: e.id }); }
+      catch (err) { toast(String(err && err.message || err), 'err'); }
+      chatBtn.disabled = false;
+    });
+    row.appendChild(chatBtn);
     const open = el('button', 'btn small', 'Open tab');
     open.addEventListener('click', async () => {
       open.disabled = true;

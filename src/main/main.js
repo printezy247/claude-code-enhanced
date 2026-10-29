@@ -1529,7 +1529,8 @@ function registerIpc() {
     // that ends is forgotten. Whatever survives a restart is offered back.
     if (evt && evt.kind === 'status') {
       const live = chats.chats.get(id);
-      if (evt.busy === true && live) {
+      // Engine chats are not Claude sessions: "resume interrupted run" cannot reopen them.
+      if (evt.busy === true && live && !live.engine) {
         interrupted.record({ id, cwd: live.cwd || '', sessionId: live.sessionId || null, model: live.model || '' });
       } else if (evt.busy === false) {
         interrupted.forget(id);
@@ -1545,7 +1546,8 @@ function registerIpc() {
       // its window — has nobody to raise: the notification would be a ghost. #R1
       if (owner && !owner.isDestroyed() && !focused && !finished.has(id)) {
         finished.add(id);
-        notify('Claude finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.', owner);
+        const fin = chats.chats.get(id);
+        notify(((fin && fin.engine) ? fin.model : 'Claude') + ' finished', 'A turn in ' + path.basename(chats.chats.get(id)?.cwd || 'a session') + ' is ready.', owner);
       }
     }
     if (evt && evt.kind === 'status' && evt.busy === true) finished.delete(id);
@@ -1586,7 +1588,7 @@ function registerIpc() {
   }
 
   // Local-model pre-warm helpers live in ./localmodels (tested by scripts/check.js).
-  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree }, e) => {
+  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree, engine }, e) => {
     // A stale or renamed cwd otherwise reaches the engine, which dies with the
     // misleading "CLI path wrong / auth expired" watchdog message.
     if (cwd) {
@@ -1594,6 +1596,20 @@ function registerIpc() {
       try {
         if (!fs.statSync(dir).isDirectory()) return { ok: false, error: 'not a directory: ' + dir };
       } catch { return { ok: false, error: 'directory not found: ' + dir }; }
+    }
+    // Codex / Antigravity / OpenCode in the chat view: the CLI runs headless,
+    // one process per turn, with its own login and models. #feat-engine-chat
+    if (engine) {
+      const resolved = await engines.commandFor(String(engine), { PATH: (await loginEnvReady()).PATH || process.env.PATH });
+      if (resolved.error) return { ok: false, error: resolved.error };
+      const dir = path.resolve(String(cwd || store.settings.defaultCwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir()));
+      const created = chats.createEngine({
+        engine: String(engine), command: resolved.command, cwd: dir,
+        env: envWithLoginPath({ ...process.env }), yolo: !!yolo, model: sanitizeModel(model || ''),
+      });
+      const owner = senderWindowId(e);
+      if (owner != null) windowRegistry.claim(owner, 'chats', created.id);
+      return created;
     }
     // Isolated git worktree per chat (desktop scratch-workspace parity). The
     // session then runs inside the worktree, not the shared checkout. #feat-worktree

@@ -1211,9 +1211,30 @@ class ChatManager extends EventEmitter {
     }, 20_000);
   }
 
+  /**
+   * A chat driven by an external CLI (Codex, Antigravity, OpenCode) instead of
+   * the Agent SDK. It lives in the same map and emits the same events, so the
+   * chat view, Board and window routing need no special case. #feat-engine-chat
+   */
+  createEngine({ engine, command, cwd, env, yolo = false, model = '' }) {
+    const { EngineChat } = require('./enginechat');
+    const id = 'c' + this.nextId++;
+    const runner = new EngineChat({ engine, command, cwd, env, yolo, model, emit: (evt) => this.emit('event', id, evt) });
+    const chat = {
+      engine, runner, cwd, q: runner.q, abort: new AbortController(),
+      model: runner.label, permissionMode: yolo ? 'bypassPermissions' : 'default',
+      get busy() { return runner.busy; },
+      get sessionId() { return runner.sessionId; },
+      close: () => runner.close(),
+    };
+    this.chats.set(id, chat);
+    return { id, cwd, engine, model: chat.model, permissionMode: chat.permissionMode, provider: null, sandbox: false };
+  }
+
   send(id, text, blocks, opts = {}) {
     const chat = this.chats.get(id);
     if (!chat || (!text && !(blocks && blocks.length))) return { ok: false };
+    if (chat.engine) return chat.runner.send(text, blocks);
     // Check the task against the selected model. Only an explicit "no" blocks,
     // and the model is never switched for the user.
     const verdict = capabilities.gate(chat.providerInstance, chat.model, capabilities.needsOf({ blocks }),
@@ -1274,6 +1295,7 @@ class ChatManager extends EventEmitter {
   async interrupt(id) {
     const chat = this.chats.get(id);
     if (!chat) return;
+    if (chat.engine) return chat.runner.interrupt();
     // The Stop button ends the turn: the live tail must stop with it, or the
     // card keeps updating and the engine is polled every 700 ms for a turn
     // the user already ended. #F2
@@ -2030,6 +2052,7 @@ class ChatManager extends EventEmitter {
     this._stopTasksForChat(id, false);
     this._settlePending(id);
     if (!chat) return;
+    if (chat.engine) { chat.runner.close(); this.chats.delete(id); return; }
     clearTimeout(chat.watchdog);       // never fire "engine did not start" on a closed tab
     clearTimeout(chat.recoverTimer);
     try { chat.close && chat.close(); } catch { /* stream already ended */ }
