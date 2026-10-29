@@ -56,7 +56,8 @@ export function rememberOpenChats() {
   const tabs = window.__tabs;
   if (!tabs) return;
   const list = [...tabs.values()]
-    .filter((m) => m && m.kind === 'chat' && m.sessionId && m.cwd)
+    // Engine chats are not Claude sessions: reopening them as one would fail.
+    .filter((m) => m && m.kind === 'chat' && !m.engine && m.sessionId && m.cwd)
     .map((m) => ({ cwd: m.cwd, sessionId: m.sessionId }))
     .slice(0, 12);
   try { localStorage.setItem(OPEN_KEY, JSON.stringify(list)); } catch { /* private mode */ }

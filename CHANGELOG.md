@@ -2,6 +2,10 @@
 
 All notable changes to Claude Code Enhanced are documented here.
 
+## 0.9.94
+- Added: Codex, Antigravity and OpenCode can run as chats, not only as terminal tabs. Pick "Chat — Codex / Antigravity / OpenCode" in the new-session modal, or "Open chat" on the Board. Each message is one headless CLI run (`codex exec --json`, `agy -p --output-format stream-json`, `opencode run --format json`), the next message resumes the same CLI session, and the output shows as normal chat text, thinking and tool cards. Stop ends the run and the commands it started. The YOLO box maps to each CLI's own skip-permissions flag. Without it, Codex keeps to its workspace sandbox, and actions that need approval are blocked in Antigravity and OpenCode (the chat says so). Engine chats take text only and hide the Claude-only model, mode and context controls.
+- Changed: Gemini CLI is replaced by Antigravity CLI (`agy`) in the Board engine tabs, the new-session modal and Settings.
+
 ## 0.9.93
 - Added: the new-session modal checks which CLIs are installed. Codex, Gemini or OpenCode options whose CLI is missing are greyed out, marked "— not installed", and the install hint is shown under the Type picker.
 - Fixed: IPC calls that change state or touch files are checked against a schema first, so a malformed call gets `{ ok: false, error }` instead of reaching the handler.

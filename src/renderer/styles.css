@@ -952,6 +952,12 @@ body.split-open #splitpane { display: flex; }
 :root[data-theme="light"] .perm-path,
 :root[data-theme="light"] .tool-group { background: var(--bg3); }
 
+/* Engine chats (Codex / Antigravity / OpenCode): the CLI owns model, mode,
+   effort and context, and takes text only. #feat-engine-chat */
+.engine-chat .chat-footbar,
+.engine-chat .chat-attach,
+.engine-chat .chat-mgr-btn { display: none !important; }
+
 /* ---------- composer footer (#32) ---------- */
 .chat-footbar {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
