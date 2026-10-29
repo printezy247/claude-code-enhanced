@@ -447,6 +447,38 @@ function reconnectStatus(name) { return reconnectBackoff.status(name); }
 /** Clear the module-level backoff state for every connector. */
 function clearReconnectBackoff() { reconnectBackoff.clearAll(); }
 
+/**
+ * A small TTL cache around a status scan.
+ *
+ * `claude mcp list` spawns a process and health-checks every server, so the
+ * renderer must not pay for it on every repaint. A failure is never cached:
+ * the next call re-scans instead of pinning an error for half a minute.
+ * Every mutation (add / remove / reconnect) calls `invalidate()`.
+ */
+function createStatusCache({ ttl = 30_000, now = Date.now, load } = {}) {
+  if (typeof load !== 'function') throw new Error('createStatusCache needs a load function');
+  let at = 0;
+  let value = null;
+  let pending = null;
+  return {
+    async get() {
+      if (value && now() - at < ttl) return value;
+      if (!pending) {
+        pending = Promise.resolve()
+          .then(load)
+          .then((res) => {
+            if (res && res.ok !== false) { value = res; at = now(); }
+            return res;
+          })
+          .finally(() => { pending = null; });
+      }
+      return pending;
+    },
+    invalidate() { value = null; at = 0; },
+    peek() { return value; },
+  };
+}
+
 module.exports = {
   PRESETS, add, addCustom, remove, list, status, parseMcpList, parseMcpGet, normalizeHeader,
   parseMcpDefinition, definition, definitions,
@@ -457,4 +489,5 @@ module.exports = {
   McpReconnectBackoff, reconnectBackoff, reconnectDelay, recordReconnectFailure,
   recordReconnectSuccess, reconnectStatus, clearReconnectBackoff,
   RECONNECT_BASE_DELAY_MS, RECONNECT_MAX_DELAY_MS, RECONNECT_MAX_ATTEMPTS,
+  createStatusCache,
 };

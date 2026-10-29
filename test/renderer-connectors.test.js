@@ -26,6 +26,7 @@ async function open(extra = {}) {
       'settings:get': { ok: true, settings: { defaultCwd: '/tmp', fontSize: 14, scrollback: 1000 }, claude: { found: true, path: '', version: '' } },
       'connectors:presets': { ok: true, presets: PRESETS },
       'connectors:status': { ok: true, servers: SERVERS, output: '' },
+      'connectors:refresh': { ok: true, servers: SERVERS, output: '' },
       'chat:create': { ok: true, id: 'c1', cwd: '/tmp', model: '', permissionMode: 'default', provider: null },
       ...extra,
     },
@@ -110,7 +111,7 @@ describe('plugin services that only need a sign-in', () => {
     { name: 'plugin:data:definite', target: 'd (HTTP)', state: 'failed', detail: 'MCP endpoint not found', kind: 'managed' },
     ...['paypal', 'stripe', 'zapier'].map(n => ({ name: 'plugin:sb:' + n, target: n + ' (HTTP)', state: 'auth', detail: 'Needs authentication', kind: 'managed' })),
   ];
-  const openMany = () => open({ 'connectors:status': { ok: true, servers: many, output: '' } });
+  const openMany = () => open({ 'connectors:status': { ok: true, servers: many, output: '' }, 'connectors:refresh': { ok: true, servers: many, output: '' } });
 
   it('fold into one closed group, below the connected and failing ones', async () => {
     const h = await openMany();

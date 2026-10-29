@@ -18,7 +18,7 @@ const INVOKE_CHANNELS = new Set([
   'localruntimes:scan', 'localruntimes:models', 'localruntimes:manage',
   'ollama:tags', 'ollama:ps', 'ollama:manage',
   'connectors:list', 'connectors:add', 'connectors:addCustom', 'connectors:remove',
-  'connectors:presets', 'connectors:status',
+  'connectors:presets', 'connectors:status', 'connectors:refresh',
   'settings:get', 'settings:set', 'env:refresh', 'tools:check', 'usage:scan',
   'window:new',
   'chat:create', 'chat:send', 'chat:steer', 'chat:interrupt', 'chat:close', 'chat:history',

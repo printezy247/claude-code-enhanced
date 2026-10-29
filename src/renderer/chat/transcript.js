@@ -389,7 +389,7 @@ export function appendError(chat, text) {
           chat.modelSel.insertBefore(o, chat.modelSel.querySelector('[value="__custom"]'));
         }
         chat.modelSel.value = 'gpt-oss:120b-cloud';
-      });
+      }).catch((err) => toast(String(err && err.message || err), 'err'));
     });
     row.appendChild(sw);
     const mgr = el('button', 'btn small', '⚙ model manager');
@@ -407,7 +407,7 @@ export function appendError(chat, text) {
     g.appendChild(el('div', 'hint', (pick ? '"' + pick + '"' : 'That model') + ' is not available to this provider. Opus, Sonnet and Haiku are only names: the engine swaps in whatever your Claude settings map them to. Pick one of the provider\'s own models in the model menu, or go back to its default.'));
     const row = el('div', 'perm-actions');
     const def = el('button', 'btn small primary', 'Use the provider default');
-    def.addEventListener('click', () => { switchModel(chat, '').then(() => { chat.modelSel.value = ''; }); });
+    def.addEventListener('click', () => { switchModel(chat, '').then(() => { chat.modelSel.value = ''; }).catch((err) => toast(String(err && err.message || err), 'err')); });
     row.appendChild(def);
     g.appendChild(row);
     e.appendChild(g);

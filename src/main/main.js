@@ -7,6 +7,7 @@ const fs = require('fs');
 const { fileURLToPath } = require('url');
 const { execFile } = require('child_process');
 const { probeLoginEnv } = require('./loginenv');
+const { debugLog } = require('./debug');
 const { swapChat } = require('./failover');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
@@ -72,6 +73,7 @@ const ChatManager = require('./chats');
 const { modelContext } = require('./modelcontext');
 const { WindowRegistry, route } = require('./windows');
 const ipcguard = require('./ipcguard');
+const ipcschemas = require('./ipcschemas');
 const { createDraftStore } = require('./drafts');
 const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
 const { normalizeDomains } = require('./webdomains');
@@ -531,13 +533,13 @@ function createWindow(initialState) {
 
   if (process.env.CCE_SMOKE) {
     w.webContents.on('did-fail-load', (_e, code, desc) =>
-      console.log('CCE_SMOKE: did-fail-load', code, desc));
+      debugLog('CCE_SMOKE: did-fail-load', code, desc));
     w.webContents.on('render-process-gone', (_e, details) =>
-      console.log('CCE_SMOKE: render-process-gone', JSON.stringify(details)));
+      debugLog('CCE_SMOKE: render-process-gone', JSON.stringify(details)));
     w.webContents.on('console-message', (_e, level, msg, line, source) =>
-      console.log(`CCE_SMOKE: renderer[${level}] ${source}:${line} ${msg}`));
+      debugLog(`CCE_SMOKE: renderer[${level}] ${source}:${line} ${msg}`));
     w.webContents.once('did-finish-load', () => {
-      console.log('CCE_SMOKE: page loaded');
+      debugLog('CCE_SMOKE: page loaded');
       w.webContents.executeJavaScript('window.__CCE_SMOKE = true').catch(() => {});
       setTimeout(() => {
         if (!w || w.isDestroyed()) return;
@@ -578,8 +580,8 @@ function createWindow(initialState) {
           + ' out.convoMeta = (document.querySelector(".convo-meta") || {}).textContent || "";'
           + ' } catch (err) { out.convoRows = "error: " + err.message; }'
           + ' return JSON.stringify(out); })()'
-        ).then(r => console.log('CCE_SMOKE: probe ' + r))
-          .catch(e => console.log('CCE_SMOKE: probe failed ' + e));
+        ).then(r => debugLog('CCE_SMOKE: probe ' + r))
+          .catch(e => debugLog('CCE_SMOKE: probe failed ' + e));
       }, 4000);
       const shoot2 = async (file) => {
         try {
@@ -591,7 +593,7 @@ function createWindow(initialState) {
           await new Promise(r => setTimeout(r, 300));
           const img = await w.webContents.capturePage();
           fs.writeFileSync(file, img.toPNG());
-          console.log('CCE_SMOKE: shot2', file);
+          debugLog('CCE_SMOKE: shot2', file);
         } catch (e) { console.error('CCE_SMOKE: capture2 failed:', e); }
       };
       const shootNarrow = async (file) => {
@@ -601,7 +603,7 @@ function createWindow(initialState) {
           await new Promise(r => setTimeout(r, 500));
           fs.writeFileSync(file, (await w.webContents.capturePage()).toPNG());
           w.setSize(1280, 860);
-          console.log('CCE_SMOKE: shot-narrow', file);
+          debugLog('CCE_SMOKE: shot-narrow', file);
         } catch (e) { console.error('CCE_SMOKE: narrow capture failed:', e); }
       };
       const shoot = async (file) => {
@@ -609,7 +611,7 @@ function createWindow(initialState) {
           if (!w || w.isDestroyed()) return;
           const img = await w.webContents.capturePage();
           fs.writeFileSync(file, img.toPNG());
-          console.log('CCE_SMOKE: shot', file);
+          debugLog('CCE_SMOKE: shot', file);
         } catch (e) { console.error('CCE_SMOKE: capture failed:', e); }
       };
       const out = process.env.CCE_SMOKE_OUT || '/tmp/cce-smoke.png';
@@ -644,7 +646,7 @@ function createWindow(initialState) {
             + ' }'
             + ' return JSON.stringify(rows); })()'
           );
-          console.log('CCE_SMOKE: chattest ' + probe);
+          debugLog('CCE_SMOKE: chattest ' + probe);
         }, 3000);
       }
       if (process.env.CCE_SMOKE_PROXY) {
@@ -671,8 +673,8 @@ function createWindow(initialState) {
             + '     out.local = { model: pick.id, ok: r2.ok, error: r2.error || null };'
             + '     if (r2.ok && r2.id) { await new Promise(r3 => setTimeout(r3, 3000)); await ccx.invoke("chat:close", { id: r2.id }); } } }'
             + ' return JSON.stringify(out); })()'
-          ).then(r => console.log('CCE_SMOKE: proxy-create ' + r))
-            .catch(e => console.log('CCE_SMOKE: proxy-create failed ' + e));
+          ).then(r => debugLog('CCE_SMOKE: proxy-create ' + r))
+            .catch(e => debugLog('CCE_SMOKE: proxy-create failed ' + e));
         }, 6000);
       }
       if (process.env.CCE_SMOKE_TESTALL) {
@@ -690,7 +692,7 @@ function createWindow(initialState) {
             + ' }'
             + ' return JSON.stringify(rows); })()'
           );
-          console.log('CCE_SMOKE: testall ' + probe);
+          debugLog('CCE_SMOKE: testall ' + probe);
         }, 3000);
       }
       if (process.env.CCE_SMOKE_PROVIDERS) {
@@ -724,7 +726,7 @@ function createWindow(initialState) {
             + '   runtimes: (scan.runtimes || []).length, testOk: test && test.ok, tabs, connectRows: rows,'
             + '   diags: diags.map(d => ({ n: d.uid.slice(0, 6), proto: d.protocol, proxy: d.usesProxy, secret: d.hasSecret, tok: d.carriesToken })) }); })()'
           );
-          console.log('CCE_SMOKE: providers ' + probe);
+          debugLog('CCE_SMOKE: providers ' + probe);
         }, 3000);
       }
       if (process.env.CCE_SMOKE_DIALOG) {
@@ -746,16 +748,16 @@ function createWindow(initialState) {
             + '   out[id] = snap(); }'
             + ' dlg.closest(".modal-overlay").remove();'
             + ' return JSON.stringify(out); })()'
-          ).then(r => console.log('CCE_SMOKE: dialog ' + r))
-            .catch(e => console.log('CCE_SMOKE: dialog failed ' + e));
+          ).then(r => debugLog('CCE_SMOKE: dialog ' + r))
+            .catch(e => debugLog('CCE_SMOKE: dialog failed ' + e));
         }, 4500);
       }
       if (process.env.CCE_SMOKE_SEND) {
         // Round-trip test: send a tiny message through the chat engine.
         setTimeout(() => {
-          console.log('CCE_SMOKE: sending test message to', chats.lastCreatedId);
+          debugLog('CCE_SMOKE: sending test message to', chats.lastCreatedId);
           const r = chats.send(chats.lastCreatedId, 'Reply with exactly: OK');
-          console.log('CCE_SMOKE: send ->', JSON.stringify(r));
+          debugLog('CCE_SMOKE: send ->', JSON.stringify(r));
           setTimeout(() => shoot(out + '.early.png'), 5000);
           setTimeout(async () => { await shoot(out); app.quit(); }, 60000);
         }, Number(process.env.CCE_SMOKE_SEND_DELAY || 12000));
@@ -790,6 +792,10 @@ function handle(channel, fn) {
     if (!isValidSender(e)) {
       return { ok: false, error: 'Blocked IPC from unauthorized origin: ' + (e.senderFrame && e.senderFrame.url) };
     }
+    // Shape check before the handler runs, so a junk argument is a readable
+    // refusal rather than a crash halfway through a write.
+    const badArgs = ipcschemas.validateArgs(channel, payload);
+    if (badArgs) return { ok: false, error: badArgs };
     if (payload != null) {
       try {
         const sz = Buffer.byteLength(JSON.stringify(payload));
@@ -1390,22 +1396,29 @@ function registerIpc() {
   });
 
   // Health-checked, parsed `claude mcp list` — drives the status chips in the panel.
-  handle('connectors:status', async () => connectors.status(claudePath()));
+  // The scan spawns a process and health-checks every server, so it is cached
+  // for a short while; every mutation below invalidates it.
+  const connectorStatus = connectors.createStatusCache({ ttl: 30_000, load: () => connectors.status(claudePath()) });
+  handle('connectors:status', async () => connectorStatus.get());
+  handle('connectors:refresh', async () => { connectorStatus.invalidate(); return connectorStatus.get(); });
 
   handle('connectors:add', async ({ presetId, scope, header }) => {
     const preset = connectors.PRESETS.find(p => p.id === presetId);
     if (!preset) throw new Error('unknown preset');
     const res = await connectors.add(claudePath(), { preset, scope, header });
+    connectorStatus.invalidate();
     return res;
   });
 
   handle('connectors:addCustom', async ({ name, url, header, scope }) => {
     const res = await connectors.addCustom(claudePath(), { name, url, header, scope });
+    connectorStatus.invalidate();
     return res;
   });
 
   handle('connectors:remove', async ({ name }) => {
     const res = await connectors.remove(claudePath(), { name });
+    connectorStatus.invalidate();
     return res;
   });
 
@@ -1487,7 +1500,7 @@ function registerIpc() {
   // ----- chats (Agent SDK) -----
   chats.on('event', (id, evt) => {
     if (process.env.CCE_SMOKE && evt && (evt.kind === 'error' || evt.kind === 'status')) {
-      console.log('CCE_SMOKE: chat-' + evt.kind, id, evt.kind === 'error' ? String(evt.error).slice(0, 200) : 'busy=' + evt.busy);
+      debugLog('CCE_SMOKE: chat-' + evt.kind, id, evt.kind === 'error' ? String(evt.error).slice(0, 200) : 'busy=' + evt.busy);
     }
     // The window that owns the chat: the event belongs to it, and a
     // notification about that chat must raise THAT window — not the newest
@@ -2862,7 +2875,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(async () => {
-    if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: app ready');
+    if (process.env.CCE_SMOKE) debugLog('CCE_SMOKE: app ready');
     // cce:// links (item 24). Registration needs the packaged app; in dev the
     // catch keeps startup clean and links simply arrive through argv.
     try { app.setAsDefaultProtocolClient('cce'); } catch { /* not packaged */ }
@@ -2876,13 +2889,13 @@ if (!gotLock) {
     auth.init(app.getPath('userData'));
     modelsdev.init(app.getPath('userData'));
     const migrated = auth.migrateFromConfig(store.providers, () => store.save());
-    if (migrated) console.log('[auth] migrated', migrated, 'secret(s) out of config.json');
+    if (migrated) debugLog('[auth] migrated', migrated, 'credential(s) out of config.json');
     providers.useAuth(auth);
     providers.ensureDefaults(store);
-    if (providers.migrateUrls(store)) console.log('[providers] repaired a stale preset base URL');
-    if (providers.migrateModels(store)) console.log('[providers] applied requested model pins');
+    if (providers.migrateUrls(store)) debugLog('[providers] repaired a stale preset base URL');
+    if (providers.migrateModels(store)) debugLog('[providers] applied requested model pins');
     refreshSecretCache();
-    if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: store ready');
+    if (process.env.CCE_SMOKE) debugLog('CCE_SMOKE: store ready');
 
     const proxy = await startProxy(async (uid) => {
       const inst = store.providers.find(x => x.uid === uid);
@@ -2905,7 +2918,7 @@ if (!gotLock) {
       };
     }, { token: proxyToken, port: Number(process.env.CCE_PROXY_PORT || 0) });
     proxyPort = proxy.port;
-    if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: store ready');
+    if (process.env.CCE_SMOKE) debugLog('CCE_SMOKE: store ready');
     // Register IPC before the CLI probe: detectClaude() shells out to
     // `claude --version` (up to 15s), and the renderer calls handlers as soon
     // as it loads. Handlers that need claudeInfo already read the mutable
@@ -2930,7 +2943,7 @@ if (!gotLock) {
     }
     detectClaude().then((info) => {
       claudeInfo = info;
-      if (process.env.CCE_SMOKE) console.log('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
+      if (process.env.CCE_SMOKE) debugLog('CCE_SMOKE: claude detected ->', JSON.stringify(claudeInfo));
       if (win && !win.isDestroyed()) win.webContents.send('claude:detected', claudeInfo);
     });
     app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow(); });

@@ -18,6 +18,7 @@ const managedconfig = require('./managedconfig');
 const { createLoopGuard, createBudget } = require('./loopguard');
 const spendguard = require('./spendguard');
 const webdomains = require('./webdomains');
+const { debugLog } = require('./debug');
 const connectorauto = require('./connectorauto');
 const { absFor, shareablePath } = require('./fileshare');
 const sdkoptions = require('./sdkoptions');
@@ -585,7 +586,7 @@ class ChatManager extends EventEmitter {
       }
     }
     if (isLean) {
-      console.log('[chat] explicit lean tool mode active for chat ' + id + ' (' + options.tools.join(', ') + ')');
+      debugLog('[chat] explicit lean tool mode active for chat ' + id + ' (' + options.tools.join(', ') + ')');
     }
     // Sandboxed command execution (claude code sandbox: Bubblewrap on Linux).
     if (settings && settings.sandbox && settings.sandbox.enabled) {
@@ -968,7 +969,7 @@ class ChatManager extends EventEmitter {
             clearTimeout(chat.watchdog);
           }
           if (process.env.CCE_SMOKE) {
-            console.log('[frame]', msg.type, msg.subtype || '',
+            debugLog('[frame]', msg.type, msg.subtype || '',
               msg.type === 'assistant' ? JSON.stringify((msg.message?.content || []).map(b => b.type)) : '',
               msg.type === 'result' ? (msg.subtype + ' err=' + msg.is_error + ' ' + String(msg.result).slice(0, 120)) : '');
           }

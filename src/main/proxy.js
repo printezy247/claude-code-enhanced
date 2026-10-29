@@ -12,6 +12,7 @@ const { resolveToolName, callSignature, repairToolArgs, requiresArgs, uniqueTool
 const { openaiBase } = adapters;
 const { sseLines } = require('./sse');
 const tokencount = require('./tokencount');
+const { debugLog } = require('./debug');
 
 // A model that thinks for a minute sends nothing for a minute, and the engine
 // reads a silent stream as a dead one (its idle timeout). A ping is an SSE
@@ -35,13 +36,19 @@ const CCE_PROXY_PORT = Number(process.env.CCE_PROXY_PORT || 0);
 
 const MAX_BODY_BYTES = 96 * 1024 * 1024;
 
+/** The proxy body cap, in bytes: CCE_PROXY_BODY_LIMIT, else 96 MB. */
+function maxBodyFromEnv(env = process.env) {
+  const n = Number(env && env.CCE_PROXY_BODY_LIMIT);
+  return Number.isFinite(n) && n > 0 ? n : MAX_BODY_BYTES;
+}
+
 function startProxy(resolveProvider, opts = {}) {
   // resolveProvider(uid) -> { baseUrl, apiKey } | null
   const token = opts.token || null;
   const port = opts.port || Number(process.env.CCE_PROXY_PORT || 0);
   // A turn with many screenshots can be large, but an unbounded buffer lets
   // one runaway request take the whole app's memory. Over the cap: 413.
-  const maxBody = opts.maxBodyBytes || MAX_BODY_BYTES;
+  const maxBody = opts.maxBodyBytes || maxBodyFromEnv();
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://127.0.0.1');
     const m = url.pathname.match(/^\/px\/([a-z0-9]+)\/(.+)$/i);
@@ -49,7 +56,7 @@ function startProxy(resolveProvider, opts = {}) {
     const uid = m[1];
     const restPath = '/' + m[2];
     const isGet = req.method === 'GET';
-    if (process.env.CCE_SMOKE) console.log('[proxy] ' + req.method + ' ' + url.pathname + (url.search || ''));
+    if (process.env.CCE_SMOKE) debugLog('[proxy] ' + req.method + ' ' + url.pathname + (url.search || ''));
     // Auth: the proxy forwards with the provider's real credentials, so an
     // unauthenticated local listener is a credential-exfiltration and
     // spend-your-money hole. #8
@@ -89,7 +96,7 @@ function startProxy(resolveProvider, opts = {}) {
       if (refused) return;
       const raw = Buffer.concat(chunks).toString('utf8');
       handleTranslated(restPath, raw, prov, res, req.headers).catch((err) => {
-        if (process.env.CCE_SMOKE) console.log('[proxy] TRANSLATE ERR ' + String((err && err.stack) || err).slice(0, 300));
+        if (process.env.CCE_SMOKE) debugLog('[proxy] TRANSLATE ERR ' + String((err && err.stack) || err).slice(0, 300));
         if (!res.headersSent) {
           res.writeHead(502, { 'content-type': 'application/json' });
         }
@@ -107,7 +114,7 @@ function startProxy(resolveProvider, opts = {}) {
     });
     server.listen(port, '127.0.0.1', () => {
       const actual = server.address() && server.address().port;
-      console.log('[proxy] anthropic<->openai translator on http://127.0.0.1:' + actual
+      debugLog('[proxy] anthropic<->openai translator on http://127.0.0.1:' + actual
         + (token ? ' (token required)' : ' (UNAUTHENTICATED)'));
       resolve({ port: actual, server, token });
     });
@@ -115,7 +122,7 @@ function startProxy(resolveProvider, opts = {}) {
 }
 
 async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
-  const dbg = (m) => { if (process.env.CCE_SMOKE) console.log('[proxy] ' + m); };
+  const dbg = (m) => { if (process.env.CCE_SMOKE) debugLog('[proxy] ' + m); };
   dbg('translate ' + restPath + ' bytes=' + raw.length);
 
   let body;
@@ -142,7 +149,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
   // cold local models miss that deadline. Answer the probe here; the first real
   // message still reaches the provider and reports any genuine error.
   if (isModelProbe(body)) {
-    console.log('[proxy] model probe for "' + body.model + '" answered locally');
+    debugLog('[proxy] model probe for "' + body.model + '" answered locally');
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ id: 'msg_probe', type: 'message', role: 'assistant', model: body.model, content: [{ type: 'text', text: 'Hi' }], stop_reason: 'max_tokens', stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } }));
     return;
@@ -199,7 +206,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
     // up. Ask again with a model this provider is known to serve.
     const alt = fallbackModel(prov, body.model);
     if (alt && isModelMissing(err)) {
-      console.log('[proxy] model "' + body.model + '" is not on this provider; substituting with "' + alt + '"');
+      debugLog('[proxy] model "' + body.model + '" is not on this provider; substituting with "' + alt + '"');
       try { res.setHeader('x-cce-model-substituted', alt); } catch { /* headers might be locked */ }
       body = { ...body, model: alt };
       upstream = await call(body);
@@ -699,7 +706,7 @@ function isModelProbe(body) {
     // The engine validates a model with a 1-token probe; we fake a successful
     // reply so slow free tiers and cold local models pass the ~15s confirm
     // deadline. The first real message still reaches the provider.
-    if (process.env.CCE_DEV === '1') console.log('[proxy] model probe answered locally for "' + (body.model || '') + '"');
+    if (process.env.CCE_DEV === '1') debugLog('[proxy] model probe answered locally for "' + (body.model || '') + '"');
   }
   return text === 'Hi';
 }
@@ -1179,4 +1186,6 @@ module.exports = {
   aggregateToAnthropic,
   clearLastGoodModel,
   lastGoodModel,
+  maxBodyFromEnv,
+  MAX_BODY_BYTES,
 };
