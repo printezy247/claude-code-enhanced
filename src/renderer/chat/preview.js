@@ -18,7 +18,7 @@ export function ensurePanes(chat) {
   chat.slash.appendChild(chat.slashPreview);
 }
 
-/** Show a preview: { title, badge, meta, body, cut }. All text. */
+/** Show a preview: { title, badge, meta, body, cut, image }. Text, plus an optional data-URL image. */
 export function setPreview(chat, p) {
   const box = chat.slashPreview;
   if (!box) return;
@@ -29,6 +29,13 @@ export function setPreview(chat, p) {
   if (p.badge) head.appendChild(el('span', 'sp-badge', p.badge));
   box.appendChild(head);
   if (p.meta) box.appendChild(el('div', 'sp-meta', p.meta));
+  if (p.image && /^data:image\/(png|jpeg|gif|webp);base64,/.test(p.image)) {
+    const img = document.createElement('img');
+    img.className = 'sp-thumb';
+    img.alt = p.title || 'image preview';
+    img.src = p.image;
+    box.appendChild(img);
+  }
   if (p.body) {
     const pre = el('pre', 'sp-body');
     pre.textContent = p.body + (p.cut ? '\n…' : '');

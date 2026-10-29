@@ -2370,6 +2370,22 @@ function registerIpc() {
     return { path: target, tooLarge: false, size: st.size, content: fs.readFileSync(target, 'utf8') };
   });
 
+  // An image of an open project as a data URL, for the "@" menu's hover preview.
+  // Same confinement as file:read; small images only, and only real image types.
+  const THUMB_TYPES = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp' };
+  handle('file:thumb', async ({ path: p }) => {
+    const home = process.env.HOME || os.homedir();
+    const safe = pathsafe.resolveSafe(String(p), { roots: readableRoots(), home });
+    if (safe.error) throw new Error('path is outside any open project');
+    const type = THUMB_TYPES[path.extname(safe.path).toLowerCase()];
+    if (!type) throw new Error('not a previewable image');
+    if (SENSITIVE_RE.test(safe.path)) throw new Error('that file is not readable here');
+    const st = fs.statSync(safe.path);
+    if (!st.isFile()) throw new Error('not a file');
+    if (st.size > 3 * 1024 * 1024) return { tooLarge: true, size: st.size };
+    return { tooLarge: false, size: st.size, url: 'data:' + type + ';base64,' + fs.readFileSync(safe.path).toString('base64') };
+  });
+
   // Everything the engine reads as memory/rules for a project — one panel edits them.
   handle('memory:files', async ({ cwd }) => {
     const home = process.env.HOME || os.homedir();

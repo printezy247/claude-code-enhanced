@@ -154,3 +154,22 @@ function subsequence(q, n) {
 const EXT = { javascript: 'js', js: 'js', typescript: 'ts', ts: 'ts', python: 'py', py: 'py', bash: 'sh', sh: 'sh', shell: 'sh', json: 'json', html: 'html', css: 'css', markdown: 'md', md: 'md', yaml: 'yml', yml: 'yml', diff: 'diff', sql: 'sql', rust: 'rs', go: 'go', java: 'java' };
 export function codeFileName(lang) { return 'snippet.' + (EXT[String(lang || '').toLowerCase()] || 'txt'); }
 
+
+const SHELL_LANGS = new Set(['bash', 'sh', 'zsh', 'shell', 'console', 'terminal', 'shellsession', 'fish']);
+
+/** True for a code block meant for a shell: a shell language tag, or a #! line. */
+export function isShellBlock(lang, text) {
+  if (SHELL_LANGS.has(String(lang || '').toLowerCase())) return true;
+  return !lang && /^#!\s*\/\S*\b(ba|z|fi)?sh\b/.test(String(text || '').trimStart());
+}
+
+/**
+ * What to paste into a terminal: the block as written, minus the "$ " prompt
+ * a console example puts in front of each command (only when every line has it).
+ */
+export function shellText(text) {
+  const lines = String(text || '').replace(/\n+$/, '').split('\n');
+  const body = lines.filter((l) => l.trim());
+  if (body.length && body.every((l) => /^\$ /.test(l.trim()))) return lines.map((l) => l.replace(/^(\s*)\$ /, '$1')).join('\n');
+  return lines.join('\n');
+}

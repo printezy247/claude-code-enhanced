@@ -4,7 +4,7 @@
 let seq = 0;
 const newId = () => 'q' + Date.now().toString(36) + (seq++).toString(36);
 
-export const DEFAULT_RULES = { onError: true, onPermission: true, onSpend: true };
+export const DEFAULT_RULES = { onError: true, onPermission: true, onSpend: true, onTests: true };
 
 /**
  * One queued message. Old code pushed a bare string or {text, blocks}; both
@@ -77,6 +77,7 @@ export function nextAction(list, state = {}) {
   if (rules.onError && state.lastTurnError) return { hold: 'error' };
   if (rules.onPermission && state.permWaiting) return { hold: 'permission' };
   if (rules.onSpend && state.spendWarn) return { hold: 'spend' };
+  if (rules.onTests && state.testsFailed) return { hold: 'tests' };
   const head = list[0];
   if (head.ask && !head.approved) return { hold: 'ask' };
   if (head.runAt && head.runAt > now) return { hold: 'scheduled', wakeAt: head.runAt };
@@ -88,9 +89,31 @@ export const HOLD_TEXT = {
   error: 'Queue paused: the last turn ended with an error',
   permission: 'Queue paused: a permission prompt is waiting',
   spend: 'Queue paused: the spend ceiling was reached',
+  tests: 'Queue paused: a test run failed in the last turn',
   ask: 'Next item waits for your OK',
   scheduled: 'Next item is scheduled',
 };
+
+const TEST_CMD = /(^|[\s;&|(])(npm\s+(run\s+)?test|npm\s+t|pnpm\s+(run\s+)?test|yarn\s+test|npx\s+(vitest|jest|playwright|mocha)|vitest|jest|pytest|py\.test|mocha|tox|rspec|phpunit|cargo\s+test|go\s+test|dotnet\s+test|mvn\s+test|gradle\s+test|ctest|make\s+(test|check)|deno\s+test|bun\s+test|ava)(\s|$)/;
+
+/** True when a shell command is a test run (a failing one pauses the queue). */
+export function isTestCommand(command) {
+  return TEST_CMD.test(String(command || ''));
+}
+
+/** Set (or clear, with '') the model and reasoning effort of one queued item. */
+export function setOverrides(list, i, { model, effort } = {}) {
+  if (!clampIndex(list, i)) return list.slice();
+  return list.map((x, k) => {
+    if (k !== i) return x;
+    const y = { ...x };
+    for (const [key, v] of [['model', model], ['effort', effort]]) {
+      if (v === undefined) continue;
+      if (v) y[key] = String(v); else delete y[key];
+    }
+    return y;
+  });
+}
 
 /** Text-only form for localStorage. Images go through draft:images under imageKey(). */
 export function serialize(list) {

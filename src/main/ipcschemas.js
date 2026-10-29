@@ -64,6 +64,7 @@ const SCHEMAS = {
 
   // files the renderer asks the main process to touch
   'file:read': { path: 'nonempty', maxBytes: { type: 'number', optional: true } },
+  'file:thumb': { path: 'nonempty' },
   'file:saveText': { path: 'nonempty', content: { type: 'text', optional: true } },
   'memory:save': { path: 'nonempty', content: { type: 'text', optional: true } },
   'skills:read': { path: 'nonempty' },

@@ -7,8 +7,11 @@
 const fs = require('fs');
 // FAKE_CODEX_STATE: a JSON file that keeps threads across server restarts (resume).
 const STATE = process.env.FAKE_CODEX_STATE || '';
-const threads = new Map(STATE && fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : []);
-const save = () => { if (STATE) fs.writeFileSync(STATE, JSON.stringify([...threads])); };
+// A state file another server is writing right now reads as half a JSON: treat that as empty.
+const load = () => { try { return JSON.parse(fs.readFileSync(STATE, 'utf8')); } catch { return []; } };
+const threads = new Map(STATE && fs.existsSync(STATE) ? load() : []);
+// Write to a temp name and rename, so a reader never sees a partial file.
+const save = () => { if (!STATE) return; const tmp = STATE + '.' + process.pid; fs.writeFileSync(tmp, JSON.stringify([...threads])); fs.renameSync(tmp, STATE); };
 let n = 0;
 const id = (p) => p + '-' + (++n);
 const out = (o) => process.stdout.write(JSON.stringify(o) + '\n');

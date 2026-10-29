@@ -12,6 +12,7 @@ import { flushMarkdown, handleStream } from './stream.js';
 import { applyLiveOutput, parseTodoChecklist, renderBlock, renderTodos, resolveToolResult, storeToolOriginal } from './tools.js';
 import { appendCommandNote, appendError, appendSummary, appendUser, scrollDownSoft } from './transcript.js';
 import { chats, el, esc } from './util.js';
+import { formatRequestMetrics } from './metrics.js';
 
 /* ---------------- background tasks ---------------- */
 
@@ -354,6 +355,10 @@ function handleMessage(chat, msg) {
     case 'result': {
       chat.lastResult = msg;
       chat.lastTurnError = !!(msg.is_error || /^error/.test(String(msg.subtype || '')));
+      // A failing test run in this turn holds the queue (rule "onTests"); the next turn starts clean.
+      chat.lastTurnTests = !!chat.turnTestFail;
+      chat.turnTestFail = false;
+      noteRequestMetrics(chat, msg);
       finishWorkflowRun(chat, chat.lastTurnError ? 'error' : 'finished');
       endTurnCleanup(chat);
       // The transcript is on disk now — pick up the new/updated conversation.
@@ -607,6 +612,16 @@ const TERMINAL_WHY = {
  * engine's code alone ("billing_error") left the user guessing whether to
  * retry, re-login or top up. Null when there is nothing better to say.
  */
+/** Remember what the finished turn cost on its request, for the jump rail's hover. */
+function noteRequestMetrics(chat, msg) {
+  const reqs = chat.msgs ? chat.msgs.querySelectorAll(':scope > .user-msg') : [];
+  const last = reqs[reqs.length - 1];
+  if (!last) return;
+  const metered = !chat.provider || !chat.provider.baseUrl;
+  const text = formatRequestMetrics(msg, { metered });
+  if (text) last.dataset.metrics = text;
+}
+
 export function sendFailureCause(code, detail = '') {
   const d = String(detail || '');
   if (/too long|too large|request_too_large|maximum context|context length|413/i.test(d)) {

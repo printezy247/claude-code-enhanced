@@ -3,7 +3,7 @@
 // history, and Stop aborts. Runs against a stand-in server with the real
 // message shapes (test/fixtures/fake-opencode-serve.js); the real OpenCode
 // 1.19.5 was checked by hand with the same steps.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -16,7 +16,11 @@ const ChatManager = require('../src/main/chats.js');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-opencode-serve.js');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-oc-'));
-const STATE = path.join(tmp, 'state.json');
+// One state file per test: a server from the previous test can still be shutting down.
+let stateSeq = 0;
+const newState = () => path.join(tmp, 'state-' + (++stateSeq) + '.json');
+let STATE = newState();
+beforeEach(() => { STATE = newState(); });
 const live = [];
 afterEach(() => { while (live.length) live.pop().close(); });
 

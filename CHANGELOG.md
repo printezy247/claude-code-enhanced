@@ -9,6 +9,14 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.11.0
+- New: **Send to terminal** on shell code blocks (bash, sh, zsh, console). It pastes the block into your terminal tab without running it (bracketed paste, so a multi-line block waits for Enter) and drops the `$ ` prompts a console example carries. With no terminal open it opens a shell in the chat's folder.
+- New: queued messages get **Model and effort…** in their row menu, so each queued message can run on its own model and reasoning effort (shown as chips on the row).
+- New: the queue also holds when a **test run failed** in the last turn (npm/yarn/pnpm test, vitest, jest, pytest, cargo/go/dotnet test, make test…). Run anyway resumes it; Settings has a toggle next to the other hold rules.
+- New: `@` also lists your other open conversations. Picking one adds `@chat:"Title"`; the model gets that conversation's latest exchange with your message, and in your message the mention is a link that jumps to its tab.
+- New: hovering an image in the `@` menu shows a thumbnail (images of the open project, up to 3 MB).
+- New: the jump-rail hover shows what each request cost: how long it took, tokens in and out, and the price when the provider bills.
 ## 0.10.0
 - Security: `skills:read` read any file path it was given. It now reads only skill folders under `~/.claude` or an open project's `.claude`.
 - Security: `memory:save` and `file:saveText` judged a not-yet-existing file by its unresolved path, so a symlinked folder inside the home directory or a project could send the write somewhere else. Both now resolve through the nearest existing parent. `shell:reveal` got the same check.

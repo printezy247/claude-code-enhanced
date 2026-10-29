@@ -3,7 +3,7 @@
 // and Stop interrupts. Runs against a stand-in server with the real protocol
 // shapes (test/fixtures/fake-codex-appserver.js); the real Codex 0.165 was
 // checked by hand with the same steps.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,7 +15,11 @@ const ChatManager = require('../src/main/chats.js');
 
 const FAKE = path.join(__dirname, 'fixtures', 'fake-codex-appserver.js');
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-codex-'));
-const STATE = path.join(tmp, 'state.json');
+// One state file per test: a server from the previous test can still be shutting down.
+let stateSeq = 0;
+const newState = () => path.join(tmp, 'state-' + (++stateSeq) + '.json');
+let STATE = newState();
+beforeEach(() => { STATE = newState(); });
 const live = [];
 afterEach(() => { while (live.length) live.pop().close(); });
 
@@ -105,7 +109,8 @@ describe('ChatManager wiring', () => {
     mgr.on('event', (cid, e) => events.push(e));
     const created = mgr.createEngine({ engine: 'codex', command: FAKE, cwd: tmp, env: { ...process.env, FAKE_CODEX_STATE: STATE } });
     mgr.send(created.id, 'run something');
-    await until(() => events.some((e) => e.kind === 'permission'));
+    try { await until(() => events.some((e) => e.kind === 'permission')); }
+    catch (err) { throw new Error(err.message + ' — events so far: ' + JSON.stringify(events.map((e) => e.kind + (e.msg ? ':' + e.msg.type + ':' + (e.msg.result || e.msg.subtype || '') : '')))); }
     const card = events.find((e) => e.kind === 'permission');
     expect(card.toolName).toBe('Bash');
     expect(card.suggestions.length).toBe(1);   // offers "Allow for this session"

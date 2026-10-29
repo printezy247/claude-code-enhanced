@@ -1,4 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
+import { chatToken, conversationContext } from './mentions.js';
+import { chatTurns, openChats } from './mentions-live.js';
 import { elIcon, toast } from '../app/core.js';
 import { handleEvent } from './events.js';
 import { folderEntries, headLines } from './cmdmatch.js';
@@ -181,7 +183,10 @@ export async function maybeAt(chat) {
   const git = GIT_REFS.filter((g) => g.label.startsWith(q));
   const dirs = chat.foldersCache.filter((f) => f.toLowerCase().includes(q)).slice(0, 4).map((f) => ({ kind: 'folder', label: f + '/' }));
   const files = chat.filesCache.filter(f => f.toLowerCase().includes(q)).slice(0, 10).map((f) => ({ kind: 'file', label: f }));
-  const items = git.concat(dirs, files);
+  // Other open conversations: @ one to bring its latest exchange into this message.
+  const convs = openChats(chat.id).filter((c) => (c.title + ' ' + c.folder).toLowerCase().includes(q)).slice(0, 4)
+    .map((c) => ({ kind: 'chat', label: c.title, hint: c.folder, chatId: c.id }));
+  const items = git.concat(convs, dirs, files);
   if (!items.length) { hideSlash(chat); return true; }
   chat.atItems = items;
   chat.slashIdx = 0;
@@ -191,8 +196,8 @@ export async function maybeAt(chat) {
   chat.slashSpacer.style.height = '0px';
   for (const n of [...chat.slashList.querySelectorAll('.slash-item, .slash-section')]) n.remove();
   items.forEach((it, i) => {
-    const icon = it.kind === 'git' ? 'branch' : 'file';
-    const item = elIcon('div', 'slash-item at-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg(icon, 14) + ' ' + esc(it.kind === 'git' ? '@' + it.label : it.label));
+    const icon = it.kind === 'git' ? 'branch' : it.kind === 'chat' ? 'layers' : 'file';
+    const item = elIcon('div', 'slash-item at-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg(icon, 14) + ' ' + esc(it.kind === 'git' ? '@' + it.label : it.kind === 'chat' ? it.label + (it.hint ? '  ·  ' + it.hint : '') : it.label));
     item.dataset.idx = String(i);
     item.style.position = 'static';
     item.addEventListener('mousedown', (e) => { e.preventDefault(); chat.slashIdx = i; applyAt(chat); });
@@ -214,11 +219,25 @@ function markAt(chat) {
 async function loadAtPreview(chat, it) {
   if (!it) return setPreview(chat, null);
   if (it.kind === 'git') return setPreview(chat, { title: '@' + it.label, badge: 'git', meta: it.hint });
+  if (it.kind === 'chat') {
+    const other = openChats(chat.id).find((c) => c.id === it.chatId);
+    const ctx = other ? conversationContext(it.label, chatTurns(other.chat), 900) : '';
+    return setPreview(chat, { title: it.label, badge: 'conversation', meta: ctx ? 'Its latest exchange comes with your message' : 'Nothing said in it yet', body: ctx.replace(/^<conversation[^>]*>\n|\n<\/conversation>$/g, '') });
+  }
   if (it.kind === 'folder') {
     const names = folderEntries(chat.filesCache, it.label, 30);
     return setPreview(chat, { title: it.label, badge: 'folder', meta: names.length + (names.length >= 30 ? '+' : '') + ' entries', body: names.join('\n') });
   }
-  if (/\.(png|jpe?g|gif|webp|ico|pdf|zip|gz|woff2?)$/i.test(it.label)) return setPreview(chat, { title: it.label, badge: 'file', meta: 'Binary file: no text preview' });
+  if (/\.(png|jpe?g|gif|webp)$/i.test(it.label) && !it.label.split('/').includes('..') && !it.label.startsWith('/')) {
+    setPreview(chat, { title: it.label, badge: 'image', meta: 'loading…' });
+    try {
+      const r = await ccx.invoke('file:thumb', { path: (chat.cwd || '') + '/' + it.label });
+      if (chat.atItems[chat.slashIdx] !== it) return;
+      if (r && r.ok && r.url) return setPreview(chat, { title: it.label, badge: 'image', meta: Math.round(r.size / 1024) + ' KB', image: r.url });
+      return setPreview(chat, { title: it.label, badge: 'image', meta: r && r.tooLarge ? 'Large image: ' + Math.round(r.size / 1024) + ' KB' : 'No preview' });
+    } catch { return setPreview(chat, { title: it.label, badge: 'image', meta: 'No preview' }); }
+  }
+  if (/\.(ico|pdf|zip|gz|woff2?)$/i.test(it.label)) return setPreview(chat, { title: it.label, badge: 'file', meta: 'Binary file: no text preview' });
   setPreview(chat, { title: it.label, badge: 'file', meta: 'loading…' });
   if (it.label.split('/').includes('..') || it.label.startsWith('/')) return setPreview(chat, { title: it.label, badge: 'file', meta: 'No preview' });
   try {
@@ -236,7 +255,7 @@ export async function applyAt(chat) {
   chat.atMode = false;
   hideSlash(chat);
   if (!it) return;
-  let insert = it.kind === 'git' ? '' : '@' + it.label + ' ';
+  let insert = it.kind === 'git' ? '' : it.kind === 'chat' ? chatToken(it.label) + ' ' : '@' + it.label + ' ';
   if (it.kind === 'git') {
     try {
       if (it.label === 'branch') {

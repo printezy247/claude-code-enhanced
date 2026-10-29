@@ -6,6 +6,7 @@ import { noteToolOutcome } from './picker.js';
 import { hiddenThoughtNode, thoughtNode } from './stream.js';
 import { scrollDownSoft } from './transcript.js';
 import { el, md, splitThink, stripAnsi, thinkingText } from './util.js';
+import { isTestCommand } from './queue.js';
 
 /* ---------------- tool metadata ---------------- */
 
@@ -712,6 +713,7 @@ export function resolveToolResult(chat, block) {
     return;
   }
   noteToolOutcome(chat.model, !block.is_error);
+  if (block.is_error && ctx.name === 'Bash' && isTestCommand(ctx.input && ctx.input.command)) chat.turnTestFail = true;
   // A streaming card is tracked per thread, not in chat.tools, so look there
   // too or the live card would never resolve.
   if (ctx.name === 'TodoWrite') renderTodos(chat, ctx.input);

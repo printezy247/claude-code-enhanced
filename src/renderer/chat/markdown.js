@@ -1,8 +1,8 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { elIcon, loadMonaco } from '../app/core.js';
-import { switchView } from '../app/tabs.js';
+import { sendToTerminal, switchView } from '../app/tabs.js';
 import { makePanel } from './panels.js';
-import { codeFileName } from './cmdmatch.js';
+import { codeFileName, isShellBlock, shellText } from './cmdmatch.js';
 import { el } from './util.js';
 
 /** navigator.clipboard is refused in some Electron states (focus, permissions); fall back to the main process. */
@@ -50,6 +50,17 @@ function addCodeHeader(pre, code, plain) {
   });
   head.appendChild(wrap);
   head.appendChild(save);
+  if (isShellBlock(lang, plain)) {
+    const term = el('button', 'code-act', 'Send to terminal');
+    term.type = 'button';
+    term.title = 'Paste into a terminal tab. It is not run until you press Enter.';
+    term.addEventListener('click', async () => {
+      const ok = await sendToTerminal(shellText(plain));
+      term.textContent = ok ? 'Sent' : 'No terminal';
+      setTimeout(() => { term.textContent = 'Send to terminal'; }, 1500);
+    });
+    head.insertBefore(term, wrap);
+  }
   pre.insertBefore(head, pre.firstChild);
 }
 

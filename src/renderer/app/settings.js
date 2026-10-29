@@ -369,7 +369,7 @@ export function renderSettings() {
   // Queue: when a queued message waits instead of running
   c9.appendChild(el('div', 'hint', 'Message queue — hold the queue (Pause banner) when:'));
   const qRules = queueRules();
-  for (const [key, text] of [['onError', 'the last turn ended with an error'], ['onPermission', 'a permission prompt is waiting'], ['onSpend', 'the spend ceiling was reached']]) {
+  for (const [key, text] of [['onError', 'the last turn ended with an error'], ['onPermission', 'a permission prompt is waiting'], ['onSpend', 'the spend ceiling was reached'], ['onTests', 'a test run failed in the last turn']]) {
     const cb = el('input'); cb.type = 'checkbox'; cb.checked = qRules[key] !== false;
     cb.addEventListener('change', () => saveQueueRules({ ...queueRules(), [key]: cb.checked }));
     const lb = el('label', 'check');

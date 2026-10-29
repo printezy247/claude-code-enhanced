@@ -2,7 +2,7 @@
 // The data rules live in queue.js; this file draws them and saves them.
 import { elIcon, toast } from '../app/core.js';
 import { autosize, renderImageChips } from './composer.js';
-import { HOLD_TEXT, DEFAULT_RULES, deserialize, duplicate, edit, imageKey, makeItem, move, nextAction, remove, runNext, serialize, summary } from './queue.js';
+import { HOLD_TEXT, DEFAULT_RULES, deserialize, duplicate, edit, imageKey, makeItem, move, nextAction, remove, runNext, serialize, setOverrides, summary } from './queue.js';
 import { el } from './util.js';
 
 const pendKey = (chat) => 'cce:pending:' + (chat.cwd || '');
@@ -145,6 +145,7 @@ function openRowMenu(chat, i, anchor) {
     return y;
   })));
   add(it.runAt ? 'Change run time…' : 'Run at a time…', () => pickTime(chat, i));
+  add('Model and effort…', () => editModelEffort(chat, i, anchor));
   add('Remove', () => setQueue(chat, remove(chat.pendingMsgs, i)));
   anchor.parentNode.appendChild(menu);
   const away = (e) => { if (!menu.contains(e.target)) { menu.remove(); document.removeEventListener('mousedown', away, true); } };
@@ -152,6 +153,53 @@ function openRowMenu(chat, i, anchor) {
   menu.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); menu.remove(); anchor.focus(); } });
   const first = menu.querySelector('button');
   if (first) first.focus();
+}
+
+/** The models this chat can switch to without changing provider, from its picker. */
+function queueModelChoices(chat) {
+  const out = [];
+  for (const o of (chat.modelSel ? [...chat.modelSel.options] : [])) {
+    if (!o.value || o.value.startsWith('__pm:') || out.some((x) => x.value === o.value)) continue;
+    out.push({ value: o.value, label: o.textContent || o.value });
+  }
+  return out;
+}
+
+/** A small popover on a queued row: pick the model and the reasoning effort that item runs with. */
+function editModelEffort(chat, i, anchor) {
+  document.querySelectorAll('.q-pop').forEach((m) => m.remove());
+  const it = chat.pendingMsgs[i];
+  if (!it) return;
+  const pop = el('div', 'q-pop');
+  pop.setAttribute('role', 'dialog');
+  pop.setAttribute('aria-label', 'Model and effort for this queued message');
+  const field = (label, options, current) => {
+    const l = el('label', 'q-pop-fld');
+    l.appendChild(el('span', '', label));
+    const sel = el('select');
+    for (const [v, t] of options) { const o = el('option', '', t); o.value = v; sel.appendChild(o); }
+    if (current && !options.some(([v]) => v === current)) { const o = el('option', '', current); o.value = current; sel.appendChild(o); }
+    sel.value = current || '';
+    l.appendChild(sel);
+    pop.appendChild(l);
+    return sel;
+  };
+  const models = [['', 'this chat’s model' + (chat.model ? ' (' + chat.model + ')' : '')], ...queueModelChoices(chat).map((m) => [m.value, m.label])];
+  const efforts = [['', 'this chat’s effort'], ...((chat.effortLevels && chat.effortLevels.length ? chat.effortLevels : ['low', 'medium', 'high']).map((e) => [e, e]))];
+  const modelSel = field('Model', models, it.model || '');
+  const effortSel = field('Effort', efforts, it.effort || '');
+  const row = el('div', 'q-pop-actions');
+  const save = el('button', 'q-btn', 'Set');
+  save.addEventListener('click', () => { pop.remove(); setQueue(chat, setOverrides(chat.pendingMsgs, i, { model: modelSel.value, effort: effortSel.value })); });
+  const cancel = el('button', 'q-btn', 'Cancel');
+  cancel.addEventListener('click', () => { pop.remove(); anchor.focus(); });
+  row.appendChild(save); row.appendChild(cancel);
+  pop.appendChild(row);
+  anchor.parentNode.appendChild(pop);
+  const away = (e) => { if (!pop.contains(e.target)) { pop.remove(); document.removeEventListener('mousedown', away, true); } };
+  setTimeout(() => document.addEventListener('mousedown', away, true), 0);
+  pop.addEventListener('keydown', (e) => { if (e.key === 'Escape') { e.stopPropagation(); pop.remove(); anchor.focus(); } });
+  modelSel.focus();
 }
 
 function editInline(chat, i, textEl) {
@@ -214,7 +262,7 @@ export function renderQueued(chat) {
   const hold = chat.queuePaused ? 'paused' : chat.queueHeld;
   if (hold) {
     const banner = el('div', 'q-banner', HOLD_TEXT[hold] || 'Queue held');
-    if (hold === 'ask' || hold === 'error' || hold === 'permission' || hold === 'spend') {
+    if (hold === 'ask' || hold === 'error' || hold === 'permission' || hold === 'spend' || hold === 'tests') {
       const run = el('button', 'q-btn', hold === 'ask' ? 'Run' : 'Run anyway');
       run.addEventListener('click', () => {
         if (hold === 'ask') chat.pendingMsgs[0] = { ...chat.pendingMsgs[0], approved: true };

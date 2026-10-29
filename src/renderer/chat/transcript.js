@@ -1,4 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
+import { renderMentions } from './mentions.js';
+import { jumpToChat } from './mentions-live.js';
 import { toast } from '../app/core.js';
 import { Chat } from './index.js';
 import { addCopyBtn } from './markdown.js';
@@ -91,7 +93,7 @@ export function setupRequestRail(chat) {
     const text = textOf(m);
     const lines = text.split('\n');
     const head = lines.slice(0, 3).join('\n');
-    tip.textContent = (head.length > 280 ? head.slice(0, 280) + '…' : head + (lines.length > 3 ? '\n…' : '')) + '\n— ' + replyStatus(chat, m, items[items.length - 1] === m);
+    tip.textContent = (head.length > 280 ? head.slice(0, 280) + '…' : head + (lines.length > 3 ? '\n…' : '')) + '\n— ' + replyStatus(chat, m, items[items.length - 1] === m) + (m.dataset.metrics ? ' · ' + m.dataset.metrics : '');
     tip.classList.remove('hidden');
     const br = b.getBoundingClientRect(), pr = body.getBoundingClientRect();
     tip.style.top = Math.max(4, Math.min(br.top - pr.top - 8, pr.height - tip.offsetHeight - 4)) + 'px';
@@ -140,7 +142,9 @@ export function appendUser(chat, text, uuid) {
   const wrap = el('div', 'msg user-msg');
   wrap.dataset.uuid = uuid || '';
   wrap.dataset.text = String(text || '').trim();
-  const bubble = el('div', 'user-bubble', text);
+  const bubble = el('div', 'user-bubble');
+  // An @chat:"Title" mention is a link to that conversation's tab.
+  renderMentions(bubble, text, jumpToChat);
   addCopyBtn(bubble, () => text);
   // Hover actions: re-ask from here, and rewind the files to this point. #30
   const acts = el('div', 'msg-actions');

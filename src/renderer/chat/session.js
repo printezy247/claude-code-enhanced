@@ -1,4 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
+import { expandMentions } from './mentions.js';
+import { turnsForTitle } from './mentions-live.js';
 import { $, paintDeclaredIcons, state, toast } from '../app/core.js';
 import { fillModeSelect, uiMode } from '../app/modes.js';
 import { switchView } from '../app/tabs.js';
@@ -266,6 +268,8 @@ export async function createSession(opts) {
   // composer
   const send = (action) => {
     const text = chat.composer.value.trim();
+    // What the model reads: the message plus a summary of each @-mentioned open conversation.
+    const sendText = expandMentions(text, (t) => turnsForTitle(t, chat.id));
     const blocks = chat.pendingImages.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }));
     if ((!text && !blocks.length) || !chat.alive) return;
     if (text.startsWith('/')) noteSlashUsed(chat, text);
@@ -285,7 +289,7 @@ export async function createSession(opts) {
       const mode = action || chat.busyMode || 'queue';
       if (mode === 'queue') {
         appendUser(chat, text || '(image)');
-        enqueue(chat, { text, blocks });
+        enqueue(chat, { text: sendText, blocks });
         chat.msgs.appendChild(el('div', 'sys-note', '⏭ queued — will run after current turn finishes'));
         scrollDownSoft(chat);
         chat.composer.value = '';
@@ -310,7 +314,7 @@ export async function createSession(opts) {
       hideSlash(chat);
       clearImages(chat);
       updateBusyUi(chat);
-      ccx.invoke('chat:steer', { id: chat.id, text, blocks: blocks.length ? blocks : null }).then((r) => {
+      ccx.invoke('chat:steer', { id: chat.id, text: sendText, blocks: blocks.length ? blocks : null }).then((r) => {
         if (!r || !r.ok) {
           appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)') + ' (your message is back in the box)');
           restoreUnsent(chat, text, blocks);
@@ -350,7 +354,7 @@ export async function createSession(opts) {
     clearImages(chat);
     updateBusyUi(chat);
     if (blocks.some((b) => b && b.type === 'image')) chat.sentImages = true;
-    ccx.invoke('chat:send', { id: chat.id, text, blocks: blocks.length ? blocks : null }).then((r) => {
+    ccx.invoke('chat:send', { id: chat.id, text: sendText, blocks: blocks.length ? blocks : null }).then((r) => {
       if (!r || !r.ok) {
         appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)') + ' (your message is back in the box)');
         restoreUnsent(chat, text, blocks);
