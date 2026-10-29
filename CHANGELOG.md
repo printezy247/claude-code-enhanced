@@ -8,6 +8,13 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.10.0
+- Security: `skills:read` read any file path it was given. It now reads only skill folders under `~/.claude` or an open project's `.claude`.
+- Security: `memory:save` and `file:saveText` judged a not-yet-existing file by its unresolved path, so a symlinked folder inside the home directory or a project could send the write somewhere else. Both now resolve through the nearest existing parent. `shell:reveal` got the same check.
+- Security: the engine chat channel (`chat:create`, which starts Claude, Codex, OpenCode and Antigravity chats) now has an input schema: unknown engines, permission modes and non-boolean flags are refused with a message instead of reaching the handler.
+- Fixed: terminal colour codes in Codex / OpenCode / Antigravity replies, thinking and tool output no longer show as `[0m` junk.
+- New: interrupted-run recovery works for Codex, OpenCode and Antigravity chats. If the app stops mid-turn, the Board offers Resume, which reopens the same CLI on the same session, provider and model. The session id is kept up to date as the CLI reports it.
 ## 0.9.99
 - New: OpenCode chats run over `opencode serve` instead of one `opencode run` per message. OpenCode asks before running a command, editing a file or fetching a URL, and each request shows as CCE's usual Allow / Deny card ("Allow for this session" lets OpenCode remember it). Stop aborts the turn. The server listens on 127.0.0.1 behind a random per-chat password.
 - New: OpenCode chats take images (attach button and paste).

@@ -8,6 +8,7 @@
 'use strict';
 const { spawn } = require('child_process');
 const { REGISTRY } = require('./engines');
+const { stripAnsi } = require('./ansi');
 
 const labelOf = (engine) => (REGISTRY.find((e) => e.id === engine) || {}).label || engine;
 
@@ -92,12 +93,12 @@ function argsFor(engine, { prompt, sessionId = null, yolo = false, model = '', e
 /* ---- SDK-shaped frames ---------------------------------------------------- */
 
 const assistant = (sid, content) => ({ type: 'assistant', session_id: sid || '', parent_tool_use_id: null, message: { role: 'assistant', content } });
-const textMsg = (sid, text) => assistant(sid, [{ type: 'text', text }]);
-const thinkingMsg = (sid, thinking) => assistant(sid, [{ type: 'thinking', thinking }]);
+const textMsg = (sid, text) => assistant(sid, [{ type: 'text', text: stripAnsi(text) }]);
+const thinkingMsg = (sid, thinking) => assistant(sid, [{ type: 'thinking', thinking: stripAnsi(thinking) }]);
 const toolUse = (sid, id, name, input) => assistant(sid, [{ type: 'tool_use', id, name, input: input || {} }]);
 const toolResult = (sid, id, content, isError) => ({
   type: 'user', session_id: sid || '', parent_tool_use_id: null,
-  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: String(content == null ? '' : content), is_error: !!isError }] },
+  message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: stripAnsi(String(content == null ? '' : content)), is_error: !!isError }] },
 });
 const initMsg = (sid, engine, extra = {}) => ({
   type: 'system', subtype: 'init', session_id: sid || '', engine, model: labelOf(engine),
@@ -105,7 +106,7 @@ const initMsg = (sid, engine, extra = {}) => ({
 });
 const resultMsg = (sid, { ok, text, usage, started }) => ({
   type: 'result', subtype: ok ? 'success' : 'error_during_execution', is_error: !ok,
-  result: String(text || ''), session_id: sid || '', num_turns: 1,
+  result: stripAnsi(String(text || '')), session_id: sid || '', num_turns: 1,
   duration_ms: started ? Date.now() - started : 0,
   usage: { input_tokens: Number(usage && usage.input_tokens) || 0, output_tokens: Number(usage && usage.output_tokens) || 0 },
 });

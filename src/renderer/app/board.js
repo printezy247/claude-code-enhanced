@@ -51,12 +51,21 @@ function runRow(run) {
   row.appendChild(el('span', 'chip mcp-warn', 'interrupted'));
   row.appendChild(el('b', '', run.cwd || run.id));
   row.appendChild(el('span', 'meta', run.model || ''));
+  if (run.engine && !run.sessionId) row.appendChild(el('span', 'meta', 'no session id saved: starts fresh'));
   // Resume the cut-short run: same folder, same session.
   const resume = el('button', 'btn small primary', 'Resume');
   resume.addEventListener('click', async () => {
     resume.disabled = true;
     try {
-      await Chat.createSession({ cwd: run.cwd, resume: run.sessionId || undefined, providerUid: state.providers && state.providers.defaultUid });
+      if (run.engine) {
+        // An engine chat starts the same CLI again on the same thread and provider.
+        await Chat.createSession({
+          cwd: run.cwd, engine: run.engine, resume: run.sessionId || undefined, yolo: !!run.yolo,
+          ...(run.providerUid ? { providerUid: run.providerUid, model: run.model || undefined } : {}),
+        });
+      } else {
+        await Chat.createSession({ cwd: run.cwd, resume: run.sessionId || undefined, providerUid: state.providers && state.providers.defaultUid });
+      }
       await ccx.invoke('runs:ack', { id: run.id });
       switchView('conversations');
     } catch (e) { toast(String(e && e.message || e), 'err'); resume.disabled = false; }
