@@ -11,6 +11,12 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.13.0
+- New: **chats on another machine over SSH.** The target chip in a chat lists your saved SSH hosts next to Local and New worktree; pick one, give the folder on that machine, and Claude Code runs there (`ssh -T host 'cd <folder> && exec claude …'`) while the conversation, approvals, interrupts and the connector broker work as usual. The remote runs with its own login, settings and connectors. This computer's providers, API keys, proxy, sandbox, plugins and local connectors are not sent or used, the folder name and every flag are shell-quoted so they cannot add a command, and ssh never asks for a password (key or agent login only). The Changes and Overview panels and local transcripts only cover this computer's folders. Needs `claude` installed and logged in on the remote.
+- Fixed: the worktree and sandbox chips in a chat header disappeared as soon as the project's git info loaded, because the redraw cleared the row. They stay now.
+- New: `npm run lint` skips lintian when the .deb's payload is identical to the last clean run (a fingerprint of every file except the `.desktop` entry; control metadata is not part of it), and still validates the `.desktop` entry every time. `LINT_FORCE=1` runs it anyway. lintian's own exit status is now reported (it was never checked); `LINT_STRICT=1` makes it fail the script. CI remembers the last clean run between builds.
+- New: a memory benchmark for long chats: the live DOM stays flat from 100 to 1,000 turns, and heap growth per card is bounded and linear (about 40 KB per card under the test's jsdom; evicted cards are kept as detached nodes, so memory grows with history).
 ## 0.12.0
 - New: the **Board** has a Queues section: every open chat with messages waiting, why it is held, its first three items, Pause / Resume per chat, Pause all / Resume all, and a jump to the chat. It updates live while the Board is open.
 - New: dropped MCP connections reconnect with **exponential backoff** (250 ms, 500 ms, 1 s … up to 4 s, with jitter, three retries). A tool call is never repeated after it may have run: only a connection that never came up, or a 429, is retried for one. Handshakes and tool lists also retry on a 502/503/504.

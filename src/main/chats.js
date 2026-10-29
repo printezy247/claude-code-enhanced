@@ -455,11 +455,12 @@ class ChatManager extends EventEmitter {
     };
   }
 
-  async create({ cwd, providerInstance, settings, model, permissionMode, yolo, resume, resumeAt, claudePath, fork, anthropicBaseUrl }) {
+  async create({ cwd, providerInstance, settings, model, permissionMode, yolo, resume, resumeAt, claudePath, fork, anthropicBaseUrl, ssh }) {
     const { query } = await this.sdk();
     const opts_fork = !!fork;
     const id = 'c' + this.nextId++;
-    const dir = (cwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
+    // A chat on another machine keeps its folder as typed: a leading ~ is that machine's home, not this one's.
+    const dir = ssh ? String(cwd || '~') : (cwd || os.homedir()).replace(/^~(?=\/|$)/, os.homedir());
     const effMode = normalizeMode(permissionMode, providerInstance, yolo);
     const autoPolicy0 = wantsAutoPolicy(permissionMode, providerInstance, yolo);
 
@@ -930,6 +931,7 @@ class ChatManager extends EventEmitter {
 
     const chat = {
       id, cwd: dir, model: model || '', permissionMode: effMode, autoPolicy: autoPolicy0,
+      ssh: ssh ? { id: ssh.id, label: ssh.label } : null,
       busy: false, sessionId: null,
       provider: providerInstance ? providers.publicInstance(providerInstance) : null,
       providerInstance,
@@ -956,6 +958,8 @@ class ChatManager extends EventEmitter {
     options.abortController = abort;
     this.chats.set(id, chat);
 
+    // Over ssh: the engine runs on the remote machine, with its own login.
+    if (ssh) require('./sshrun').remoteOptions(options, ssh);
     const q = query({ prompt: stream.iterate(), options });
     chat.q = q;
 

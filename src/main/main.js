@@ -1614,7 +1614,27 @@ function registerIpc() {
     if (!engineSaveTimer) engineSaveTimer = setTimeout(() => { engineSaveTimer = null; try { store.save(); } catch { /* next one will */ } }, 1500);
   }
 
-  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree, engine, cliDefault }, e) => {
+  handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree, engine, cliDefault, sshHost }, e) => {
+    // A chat on another machine (Settings > SSH hosts): Claude Code runs there,
+    // over ssh, with that machine's own login. The folder is a path on the
+    // remote, so none of the local checks (exists, worktree, providers) apply.
+    if (sshHost) {
+      const hosts = Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : [];
+      const host = hosts.find((h) => h && h.id === String(sshHost));
+      if (!host) return { ok: false, error: 'unknown SSH host' };
+      if (engine) return { ok: false, error: 'Codex, OpenCode and Antigravity chats run on this machine only' };
+      if (wantWorktree) return { ok: false, error: 'isolated worktrees are local: a remote chat uses the remote folder as it is' };
+      const remoteDir = String(cwd || '~').trim();
+      if (!/^(~|\/)/.test(remoteDir)) return { ok: false, error: 'give the folder on ' + host.label + ' as an absolute path (or start it with ~)' };
+      const created = await chats.create({
+        cwd: remoteDir, providerInstance: null,
+        settings: { ...store.settings, sandbox: undefined },
+        model: model ? sanitizeModel(model) : undefined, permissionMode, yolo, ssh: host,
+      });
+      const owner = senderWindowId(e);
+      if (owner != null) windowRegistry.claim(owner, 'chats', created.id);
+      return { ...created, model: model || '', worktree: null, ssh: { id: host.id, label: host.label, host: host.host } };
+    }
     // A stale or renamed cwd otherwise reaches the engine, which dies with the
     // misleading "CLI path wrong / auth expired" watchdog message.
     if (cwd) {

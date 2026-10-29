@@ -1,5 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { expandMentions } from './mentions.js';
+import { tf } from '../i18n.js';
 import { turnsForTitle } from './mentions-live.js';
 import { $, paintDeclaredIcons, state, toast } from '../app/core.js';
 import { fillModeSelect, uiMode } from '../app/modes.js';
@@ -197,9 +198,19 @@ export async function createSession(opts) {
   if (typeof window.updateTabCount === 'function') window.updateTabCount();
 
   // project folder + linked GitHub repo, like the desktop header
+  chat.ssh = res.ssh || null;
   renderProjectInfo(chat);
+  if (res.ssh) {   // Claude Code runs on another machine over ssh
+    const folder = el('span', 'proj-chip', (chat.cwd || '').replace(/\/+$/, '').split('/').pop() || chat.cwd);
+    folder.title = chat.cwd + '\non ' + (res.ssh.host || res.ssh.label);
+    chat.projEl.appendChild(folder);
+    const chip = el('span', 'proj-chip sandbox proj-extra', '⇄ ' + res.ssh.label);
+    chip.title = 'This chat runs Claude Code on ' + (res.ssh.host || res.ssh.label) + ' over SSH';
+    chat.projEl.appendChild(chip);
+    chat.msgs.appendChild(el('div', 'sys-note', tf('target.sshNote', { label: res.ssh.label })));
+  }
   if (res.worktree) {   // isolated git worktree for this chat #feat-worktree
-    const chip = el('span', 'proj-chip sandbox', '⌥ ' + res.worktree.branch);
+    const chip = el('span', 'proj-chip sandbox proj-extra', '⌥ ' + res.worktree.branch);
     chip.title = 'This chat edits git worktree ' + res.worktree.path;
     chat.projEl.appendChild(chip);
     if (Array.isArray(res.worktree.needsInstall) && res.worktree.needsInstall.length) {
@@ -213,7 +224,7 @@ export async function createSession(opts) {
   }
   discoverModels(chat);
   if (chat.sandbox) {
-    const chip = el('span', 'proj-chip sandbox', '⛨ sandboxed');
+    const chip = el('span', 'proj-chip sandbox proj-extra', '⛨ sandboxed');
     chip.title = 'Bash commands run in a Bubblewrap sandbox (filesystem/network restricted). Configure in Settings.';
     chat.projEl.appendChild(chip);
   }

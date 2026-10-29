@@ -15,3 +15,6 @@ src/renderer/app.bundle.js
 # Local playtest screenshots (evidence, not source)
 playtest/
 graphify-out/
+
+# Remembered lintian result (scripts/lint.sh)
+.cache/
