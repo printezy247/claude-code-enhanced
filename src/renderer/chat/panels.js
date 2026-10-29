@@ -127,9 +127,13 @@ export function wireHeaderMenu(chat, forkConversation) {
 /* ---------------- project / github chips ---------------- */
 
 export async function renderProjectInfo(chat) {
+  // A folder on another machine: this computer's git knows nothing about it.
+  if (chat.ssh) return;
   try {
     const r = await ccx.invoke('git:info', { cwd: chat.cwd });
     if (!r.ok || !chat.projEl) return;
+    // Chips added by other code (worktree, sandbox) carry .proj-extra and survive the redraw.
+    const extras = [...chat.projEl.querySelectorAll('.proj-extra')];
     chat.projEl.innerHTML = '';
     const folder = elIcon('span', 'proj-chip', CCEIcons.svg('folder', 13) + ' ' + esc(basename(chat.cwd)));
     folder.title = chat.cwd + (r.remote ? '\nremote: ' + r.remote : '') + (r.branch ? '\nbranch: ' + r.branch : '');
@@ -146,6 +150,7 @@ export async function renderProjectInfo(chat) {
       d.title = r.dirty + ' uncommitted file(s) in this working tree';
       chat.projEl.appendChild(d);
     }
+    for (const x of extras) chat.projEl.appendChild(x);
   } catch { /* git absent or not a repo — chips stay minimal */ }
 }
 

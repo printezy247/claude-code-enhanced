@@ -5,6 +5,8 @@
 // renderer.
 import { describe, it, expect } from 'vitest';
 import { createRequire } from 'node:module';
+import v8 from 'node:v8';
+import vm from 'node:vm';
 
 const require = createRequire(import.meta.url);
 const { loadRenderer, flush } = require('./helpers/renderer.js');
@@ -63,4 +65,41 @@ describe('perf budget: 2000+ transcript cards', () => {
     expect(chat.msgs.textContent).toContain('Step 799:');
     expect(chat.msgs.textContent).not.toContain('Step 0:');
   }, 60000);
+});
+
+// Memory. The live DOM must stay flat however long the chat gets, and the heap
+// may grow with history but only linearly and within a budget. (Measured here
+// under jsdom, where a node costs far more than in a browser: about 40 KB per
+// card at 100 to 2,800 turns. The budget is 2.5x that, to catch a leak or an
+// accidental quadratic, not to certify a number.)
+describe('perf budget: memory over a long session', () => {
+  v8.setFlagsFromString('--expose-gc');
+  const gc = vm.runInNewContext('gc');
+  const heap = async () => { await flush(); gc(); gc(); return process.memoryUsage().heapUsed; };
+  const BYTES_PER_CARD_BUDGET = 100 * 1024;
+
+  it('DOM nodes stay flat and heap growth is linear and bounded from 100 to 1000 turns', async () => {
+    const { h, chat, send } = await openChat();
+    let done = 0;
+    const base = await heap();
+    const sample = async (target) => {
+      while (done < target) turn(send, done++);
+      return { turns: target, heap: (await heap()) - base, dom: h.window.document.querySelectorAll('*').length, rows: chat.msgs.children.length };
+    };
+    const a = await sample(100);
+    const b = await sample(400);
+    const c = await sample(1000);
+
+    // flat DOM: the same window of rows, the same node count
+    expect(c.rows).toBeLessThanOrEqual(VIRT_WINDOW + 20);
+    expect(Math.abs(c.dom - a.dom)).toBeLessThan(a.dom * 0.1);
+    // bounded per card
+    const perCard = (c.heap - a.heap) / ((c.turns - a.turns) * 3);
+    expect(perCard).toBeLessThan(BYTES_PER_CARD_BUDGET);
+    // linear: per turn, the stretch from 400 to 1000 turns must not cost much more
+    // than the stretch from 100 to 400 (a quadratic would cost far more)
+    const early = (b.heap - a.heap) / (b.turns - a.turns);
+    const late = (c.heap - b.heap) / (c.turns - b.turns);
+    expect(late).toBeLessThan(early * 2.5 + 20 * 1024);
+  }, 120000);
 });

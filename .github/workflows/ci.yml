@@ -57,6 +57,14 @@ jobs:
       # On a push electron-builder sees CI and tries to publish to a release, which
       # fails without a token and left every push to main red. Only build here.
       - run: npm run dist -- --publish never
+      # lintian is skipped when the payload matches the last clean run (scripts/lint.sh).
+      - name: Remember the last clean lintian run
+        uses: actions/cache@v4
+        with:
+          path: .cache/lint
+          key: lintian-${{ github.sha }}
+          restore-keys: |
+            lintian-
       - run: npm run lint
       # Keep the installable package: a build that only lints it is of no use to
       # someone who wants to try the change. Download it from the run's page.

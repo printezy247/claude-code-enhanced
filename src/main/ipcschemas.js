@@ -50,6 +50,7 @@ const SCHEMAS = {
     worktree: { type: 'boolean', optional: true },
     resume: { type: 'text', optional: true },
     engine: { enum: CHAT_ENGINES, optional: true, message: 'unknown engine' },
+    sshHost: { type: 'text', optional: true },
   },
   'session:resize': { id: 'id', cols: 'number', rows: 'number' },
   'session:kill': { id: 'id' },
