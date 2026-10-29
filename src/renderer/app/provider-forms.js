@@ -158,7 +158,7 @@ export function openNewSessionModal() {
     const cli = cliSel.value;
     show(modelLabel, (chat || cli === 'claude') && cli !== 'shell');
     show(modeRow, chat && cli === 'claude');
-    show(resume.label, chat && (cli === 'claude' || cli === 'codex'));
+    show(resume.label, chat && cli !== 'shell');
     show(wt.label, chat);
     show(cont.label, !chat && cli === 'claude');
     show(login.label, !chat && cli === 'claude');
@@ -194,7 +194,7 @@ export function openNewSessionModal() {
       } else {
         Chat.createSession({
           cwd, yolo: yolo.input.checked, engine: cli, worktree: wt.input.checked, ...(p ? target : {}),
-          resume: cli === 'codex' && resume.input.checked ? 'last' : null,
+          resume: resume.input.checked ? 'last' : null,
         });
       }
     } else {
