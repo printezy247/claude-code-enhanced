@@ -202,6 +202,10 @@ export async function createSession(opts) {
     const chip = el('span', 'proj-chip sandbox', '⌥ ' + res.worktree.branch);
     chip.title = 'This chat edits git worktree ' + res.worktree.path;
     chat.projEl.appendChild(chip);
+    if (Array.isArray(res.worktree.needsInstall) && res.worktree.needsInstall.length) {
+      chat.msgs.appendChild(el('div', 'sys-note', 'This worktree starts without ' + res.worktree.needsInstall.join(', ')
+        + ' (they are not copied or shared, so installs here cannot touch your main checkout). Reinstall dependencies here before running tests or builds.'));
+    }
   }
   if (chat.provider && chat.provider.baseUrl) {
     const mgr = pane.querySelector('.chat-mgr-btn');

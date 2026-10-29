@@ -1,5 +1,6 @@
 // Where this chat runs: this folder, or an isolated git worktree. The target
 // is fixed when a chat starts, so changing it opens a new chat (after asking).
+import { t, tf } from '../i18n.js';
 import { toast } from '../app/core.js';
 import { createSession } from './session.js';
 import { el } from './util.js';
@@ -8,8 +9,8 @@ export function wireTargetChip(chat, res) {
   const btn = chat.targetBtn;
   if (!btn) return;
   const isTree = !!res.worktree;
-  btn.querySelector('.tg-label').textContent = isTree ? 'Worktree' : 'Local';
-  btn.title = isTree ? 'This chat edits the git worktree ' + res.worktree.path : 'This chat edits the project folder directly';
+  btn.querySelector('.tg-label').textContent = isTree ? t('target.worktree') : t('target.local');
+  btn.title = isTree ? tf('target.tipTree', { path: res.worktree.path }) : t('target.tipLocal');
   let menu = null;
   const close = () => { if (menu) { menu.remove(); menu = null; btn.setAttribute('aria-expanded', 'false'); } };
   btn.addEventListener('click', () => {
@@ -26,10 +27,10 @@ export function wireTargetChip(chat, res) {
       b.addEventListener('click', () => { close(); fn(); });
       menu.appendChild(b);
     };
-    add('Local', 'edit the project folder directly', !isTree, () => {
+    add(t('target.local'), t('target.localDesc'), !isTree, () => {
       if (isTree) openNew(false);
     });
-    add('New worktree', 'an isolated git copy on its own branch', isTree, () => { if (!isTree) openNew(true); });
+    add(t('target.newTree'), t('target.newTreeDesc'), isTree, () => { if (!isTree) openNew(true); });
     chat.pane.querySelector('.chat-composer').appendChild(menu);
     btn.setAttribute('aria-expanded', 'true');
     const first = menu.querySelector('.wf-item');

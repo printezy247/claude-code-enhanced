@@ -130,6 +130,12 @@ class McpClient {
     /** Server → client notifications (`notifications/tools/list_changed`, …). */
     this.onNotification = typeof opts.onNotification === 'function' ? opts.onNotification : null;
     this.protocolVersion = opts.protocolVersion || PROTOCOL_VERSION;
+    // Reconnect policy: how many times a dropped request is retried, and the
+    // growth of the pause between tries (see _fetch). Tests pass tiny values.
+    this.retries = Number.isInteger(opts.retries) && opts.retries >= 0 ? opts.retries : 3;
+    this.retryBaseMs = Number(opts.retryBaseMs) >= 0 ? Number(opts.retryBaseMs) : 250;
+    this.retryMaxMs = Number(opts.retryMaxMs) > 0 ? Number(opts.retryMaxMs) : 4000;
+    this._sleep = typeof opts.sleep === 'function' ? opts.sleep : (ms) => new Promise((r) => setTimeout(r, ms));
 
     this._id = 0;                 // JSON-RPC ids, unique per session
     this._sessionId = '';         // `Mcp-Session-Id`, when the server issues one
@@ -491,15 +497,21 @@ class McpClient {
   // ---- http -----------------------------------------------------------------
 
   /**
-   * fetch with the timeout of this client.
+   * fetch with the timeout of this client, and a few tries with exponential
+   * backoff (250 ms, 500 ms, 1 s … capped, with jitter) when the endpoint drops.
    *
-   * Only the failures that are safe to ask again are retried: a connection
-   * that never came up, and a 429 (the server refused the request before it
-   * did any work). A 502 or a 504 may hide a tool call that already ran, so
-   * those are never repeated — a tool must not run twice.
+   * What may be asked again depends on what the server could have done:
+   *  - a connection that never came up (refused, no DNS, connect timeout): any request;
+   *  - a 429 (refused before any work): any request, waiting as long as Retry-After says;
+   *  - a socket that died, or a 502/503/504: only requests that change nothing
+   *    (the handshake, tools/list, resources). A tool call may already have run,
+   *    so it is never repeated: a tool must not run twice.
    */
   async _fetch(url, init, label) {
     let attempt = 0;
+    const maxRetries = this.retries;
+    const idempotent = label !== 'tools/call';
+    const pause = async (ms) => { await this._sleep(ms); };
     for (;;) {
       const controller = new AbortController();
       this._inflight.add(controller);
@@ -511,13 +523,10 @@ class McpClient {
       } catch (err) {
         if (timedOut) throw new Error(`MCP timeout: ${label} timed out after ${this.timeoutMs}ms`);
         const aborted = /abort/i.test(String((err && err.name) || '') + String((err && err.message) || ''));
-        // A tool call may already have run when the socket died: only a
-        // connect-phase failure is safe to repeat for it.
         const code = String((err && err.cause && err.cause.code) || (err && err.code) || '');
         const connectFail = /^(ECONNREFUSED|ENOTFOUND|EAI_AGAIN|UND_ERR_CONNECT_TIMEOUT)$/.test(code);
-        if (attempt === 0 && !aborted && (connectFail || label !== 'tools/call')) {
-          attempt++;
-          await new Promise((r) => setTimeout(r, 250));
+        if (attempt < maxRetries && !aborted && (connectFail || idempotent)) {
+          await pause(this._backoff(attempt++));
           continue;
         }
         throw err;
@@ -527,17 +536,24 @@ class McpClient {
         if (res) setTimeout(() => this._inflight.delete(controller), this.timeoutMs * 4).unref();
         else this._inflight.delete(controller);
       }
-      if (res.status === 429 && attempt === 0) {
-        attempt++;
+      const retryable = res.status === 429 || (idempotent && (res.status === 502 || res.status === 503 || res.status === 504));
+      if (retryable && attempt < maxRetries) {
         try { await res.body?.cancel(); } catch { /* the body is already gone */ }
         const header = res.headers.get('retry-after');
         const retryAfter = header === null ? NaN : Number(header);
-        const wait = Number.isFinite(retryAfter) && retryAfter >= 0 ? Math.min(retryAfter, 5) * 1000 : 1000;
-        await new Promise((r) => setTimeout(r, wait));
+        const told = Number.isFinite(retryAfter) && retryAfter >= 0 ? Math.min(retryAfter, 5) * 1000 : null;
+        await pause(told !== null ? told : this._backoff(attempt));
+        attempt++;
         continue;
       }
       return res;
     }
+  }
+
+  /** Delay before retry number `n` (0-based): base · 2ⁿ, capped, ±20 % jitter. */
+  _backoff(n) {
+    const raw = Math.min(this.retryMaxMs, this.retryBaseMs * 2 ** n);
+    return Math.round(raw * (0.8 + Math.random() * 0.4));
   }
 
   /**

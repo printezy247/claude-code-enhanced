@@ -192,3 +192,35 @@ describe('@ image preview handler', () => {
     }
   });
 });
+
+describe('Board: queues of every chat', () => {
+  it('lists chats with waiting messages and pauses them from one place', async () => {
+    const { h, chat } = await open({
+      'chats:board': { ok: true, rows: [] }, 'jobs:list': { ok: true, jobs: [] },
+      'runs:interrupted': { ok: true, runs: [] }, 'engines:list': { ok: true, engines: [] },
+    });
+    const doc = h.window.document;
+    h.window.switchView('board');
+    await flush(4);
+    expect(doc.querySelector('#board-queues-wrap').classList.contains('hidden')).toBe(true);   // nothing queued yet
+    chat.busy = true;
+    chat.composer.value = 'first queued';
+    chat.send('queue');
+    chat.composer.value = 'second queued';
+    chat.send('queue');
+    await flush(3);
+    expect(chat.pendingMsgs).toHaveLength(2);
+    const wrap = doc.querySelector('#board-queues-wrap');
+    expect(wrap.classList.contains('hidden')).toBe(false);         // setQueue refreshed the visible Board
+    const card = doc.querySelector('#board-queues .board-queue');
+    expect([...card.querySelectorAll('li')].map((li) => li.textContent.slice(0, 13))).toEqual(['first queued', 'second queued']);
+    const pause = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Pause');
+    click(h, pause);
+    expect(chat.queuePaused).toBe(true);
+    expect(doc.querySelector('#board-queues .chip').textContent).toBe('Queue paused');
+    click(h, doc.querySelector('#btn-queues-resume'));
+    expect(chat.queuePaused).toBe(false);
+    click(h, doc.querySelector('#btn-queues-pause'));
+    expect(chat.queuePaused).toBe(true);
+  });
+});

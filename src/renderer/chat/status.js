@@ -1,6 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { queueRules, renderQueued, scheduleWake, setQueue } from './qpanel.js';
-import { HOLD_TEXT, nextAction } from './queue.js';
+import { holdText, nextAction } from './queue.js';
 import { pollContext, publishTabState, startContextPolling, stopContextPolling } from './session.js';
 import { basename, fmtTok, modeLabel } from './util.js';
 
@@ -127,7 +127,7 @@ export async function drainQueue(chat) {
     chat.queueHeld = act.hold === 'paused' ? null : act.hold;
     renderQueued(chat);
     if (act.hold === 'scheduled') scheduleWake(chat);
-    else if (first && act.hold !== 'paused') notifyQueue(chat, HOLD_TEXT[act.hold]);
+    else if (first && act.hold !== 'paused') notifyQueue(chat, holdText(act.hold));
     return;
   }
   chat.queueHeld = null;

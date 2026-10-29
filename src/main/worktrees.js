@@ -8,6 +8,9 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
+// Folders a project installs into: git does not carry them into a new worktree.
+const DEP_DIRS = ['node_modules', '.venv', 'venv'];
+
 const gitRunner = (deps) => deps.run || ((args, opts) =>
   execFileSync('git', args, { timeout: 30000, stdio: 'pipe', ...opts }).toString());
 
@@ -54,7 +57,11 @@ function add(dir, deps = {}) {
   // A chat started in repo/sub keeps working in the same subfolder.
   const rel = path.relative(top, dir);
   const sub = rel && !rel.startsWith('..') && !path.isAbsolute(rel) ? path.join(p, rel) : p;
-  return { path: fss.existsSync(sub) ? sub : p, root: p, branch, top };
+  // Dependency folders are untracked, so a worktree starts without them. They
+  // are not linked in: a shared node_modules would let one chat's install
+  // rewrite another's. Say which ones the project has, so the chat can reinstall.
+  const needsInstall = DEP_DIRS.filter((d) => fss.existsSync(path.join(top, d)) && !fss.existsSync(path.join(p, d)));
+  return { path: fss.existsSync(sub) ? sub : p, root: p, branch, top, needsInstall };
 }
 
 /** Undo add() when the chat that wanted the worktree never started. */
