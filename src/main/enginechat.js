@@ -104,11 +104,12 @@ const initMsg = (sid, engine, extra = {}) => ({
   type: 'system', subtype: 'init', session_id: sid || '', engine, model: labelOf(engine),
   tools: [], mcp_servers: [], slash_commands: [], ...extra,
 });
+const usageOf = (u) => ({ input_tokens: Number(u && u.input_tokens) || 0, output_tokens: Number(u && u.output_tokens) || 0 });
 const resultMsg = (sid, { ok, text, usage, started }) => ({
   type: 'result', subtype: ok ? 'success' : 'error_during_execution', is_error: !ok,
   result: stripAnsi(String(text || '')), session_id: sid || '', num_turns: 1,
   duration_ms: started ? Date.now() - started : 0,
-  usage: { input_tokens: Number(usage && usage.input_tokens) || 0, output_tokens: Number(usage && usage.output_tokens) || 0 },
+  usage: usageOf(usage),
 });
 
 const asText = (v) => (typeof v === 'string' ? v : v == null ? '' : JSON.stringify(v));
@@ -138,8 +139,7 @@ function createTranslator(engine, { sessionId = null, initSent = false } = {}) {
       if (ev.type === 'error') { st.error = ev.message || st.error; return; }
       if (ev.type === 'turn.failed') return finishWith(false, (ev.error && ev.error.message) || st.error || 'Codex turn failed');
       if (ev.type === 'turn.completed') {
-        const u = ev.usage || {};
-        st.usage = { input_tokens: Number(u.input_tokens) || 0, output_tokens: Number(u.output_tokens) || 0 };
+        st.usage = usageOf(ev.usage);
         return finishWith(true, st.lastText);
       }
       if (ev.type !== 'item.started' && ev.type !== 'item.completed') return;
@@ -209,8 +209,7 @@ function createTranslator(engine, { sessionId = null, initSent = false } = {}) {
       if (ev.event === 'result') {
         const r = ev.result || {};
         if (r.conversation_id) init(r.conversation_id);
-        const u = r.usage || {};
-        st.usage = { input_tokens: Number(u.input_tokens) || 0, output_tokens: Number(u.output_tokens) || 0 };
+        st.usage = usageOf(r.usage);
         // Headless agy cannot ask for permission; say why the action did not happen.
         const denied = Array.isArray(r.denied_actions) ? r.denied_actions : [];
         if (denied.length) {
@@ -343,8 +342,9 @@ class EngineChat {
     let stderr = '';
     child.stdout.on('data', (d) => {
       buf += d;
-      let i;
-      while ((i = buf.indexOf('\n')) !== -1) { push(t.feed(buf.slice(0, i))); buf = buf.slice(i + 1); }
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines) push(t.feed(line));
     });
     child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-8000); });
     let ended = false;
