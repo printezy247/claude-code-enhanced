@@ -8,7 +8,7 @@ const http = require('http');
 const crypto = require('crypto');
 const adapters = require('./adapters');
 const { wrapToolNames } = require('./toolnames');
-const { resolveToolName, callSignature, repairToolArgs, requiresArgs } = require('./toolcalls');
+const { resolveToolName, callSignature, repairToolArgs, requiresArgs, uniqueToolId } = require('./toolcalls');
 const { openaiBase } = adapters;
 const { sseLines } = require('./sse');
 const tokencount = require('./tokencount');
@@ -401,7 +401,7 @@ async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
         }
       }
       closeBlock();
-      openBlock({ type: 'tool_use', id: t.id, name: tn.back(t.name) });
+      openBlock({ type: 'tool_use', id: uniqueToolId(t.id), name: tn.back(t.name) });
       sse('content_block_delta', { type: 'content_block_delta', index: blockIdx, delta: { type: 'input_json_delta', partial_json: args || '{}' } });
       stopReason = 'tool_use';
       sawTool = true;
@@ -904,7 +904,7 @@ function aggregateToAnthropic(j, body, back = (n) => n) {
     const sig = callSignature(callName, input);
     if (seenCalls.has(sig)) continue;
     seenCalls.add(sig);
-    content.push({ type: 'tool_use', id: tc.id || ('call_' + content.length), name: back(callName), input });
+    content.push({ type: 'tool_use', id: uniqueToolId(tc.id), name: back(callName), input });
   }
   // Thought, then said nothing: the reasoning is all there is, so it is the answer.
   if (!m.content && !(m.tool_calls || []).length && reasoning.trim()) content.push({ type: 'text', text: reasoning.trim() });

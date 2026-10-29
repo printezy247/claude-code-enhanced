@@ -1082,7 +1082,9 @@ class ChatManager extends EventEmitter {
         this.emit('event', id, { kind: 'exit' });
         this.chats.delete(id);
       } catch (err) {
-        if (!/abort/i.test(String(err && err.message))) {
+        // Only the user's own stop is silent. A fetch or stream timeout also
+        // says "aborted", and hiding it left a dead tab with no reason given.
+        if (!abort.signal.aborted) {
           this.emit('event', id, { kind: 'error', error: String((err && err.message) || err) });
         }
         this.emit('event', id, { kind: 'exit' });
@@ -1216,9 +1218,14 @@ class ChatManager extends EventEmitter {
     const verdict = capabilities.gate(chat.providerInstance, chat.model, capabilities.needsOf({ blocks }),
       { override: !!(opts && opts.override) });
     if (!verdict.allow) return { ok: false, error: verdict.error, unsupported: verdict.unsupported };
+    // A new task starts a fresh loop history. A message steered into a running
+    // turn is not a new task: clearing the history there let a looping agent
+    // off the hook every time the user typed a queued note.
+    if (!chat.busy) {
+      if (chat.guard) chat.guard.reset();
+      chat.guardTripped = false;
+    }
     // Anthropic content blocks (e.g. pasted images) or plain text
-    if (chat.guard) chat.guard.reset();
-    chat.guardTripped = false;
     const content = blocks && blocks.length
       ? [...blocks, ...(text ? [{ type: 'text', text }] : [])]
       : text;
@@ -1420,18 +1427,24 @@ class ChatManager extends EventEmitter {
         projectUsage: this.connectorMemory.usage(chat.cwd) || {}, chatUses: chat.connectorUses, recent,
       });
       chat.picked = d;
+      // A connector that dropped after the first recovery round ran out is
+      // picked up again here, on the next message.
+      if (!chat.recoverTimer && servers.some((s) => s.status === 'failed')) this._scheduleRecovery(id, 0);
       const changes = [];
       for (const s of servers) {
-        if (s.status === 'connected' && d.hide.has(s.name)) {
-          await q.toggleMcpServer(s.name, false);
-          chat.autoOff.add(s.name);
-          changes.push({ name: s.name, enabled: false, why: d.why[s.name] || '' });
-        } else if (s.status === 'disabled' && d.show.has(s.name)
-          && (chat.autoOff.has(s.name) || connectorauto.modeFor(modes, chat.cwd, s.name) === 'on')) {
-          await q.toggleMcpServer(s.name, true);
-          chat.autoOff.delete(s.name);
-          changes.push({ name: s.name, enabled: true, why: d.why[s.name] || '' });
-        }
+        // One connector that will not switch must not leave the rest unswitched.
+        try {
+          if (s.status === 'connected' && d.hide.has(s.name)) {
+            await q.toggleMcpServer(s.name, false);
+            chat.autoOff.add(s.name);
+            changes.push({ name: s.name, enabled: false, why: d.why[s.name] || '' });
+          } else if (s.status === 'disabled' && d.show.has(s.name)
+            && (chat.autoOff.has(s.name) || connectorauto.modeFor(modes, chat.cwd, s.name) === 'on')) {
+            await q.toggleMcpServer(s.name, true);
+            chat.autoOff.delete(s.name);
+            changes.push({ name: s.name, enabled: true, why: d.why[s.name] || '' });
+          }
+        } catch (err) { console.warn('[chat] connector toggle', s.name + ':', (err && err.message) || err); }
       }
       if (changes.length) this.emit('event', id, { kind: 'connectors-changed', changes });
       return changes;
@@ -1446,6 +1459,9 @@ class ChatManager extends EventEmitter {
     const wait = connectorauto.reconnectDelay(attempt) * 1000;
     if (!chat || !wait) return;
     chat.recoverTimer = setTimeout(async () => {
+      // Cleared before the round runs: a round that finds nothing left to fix
+      // leaves no timer, so a later failure can start recovery again.
+      chat.recoverTimer = null;
       const c = this.chats.get(id);
       if (!c || !c.q || typeof c.q.mcpServerStatus !== 'function' || typeof c.q.reconnectMcpServer !== 'function') return;
       let servers = [];

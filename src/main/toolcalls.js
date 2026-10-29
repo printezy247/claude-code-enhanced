@@ -7,6 +7,8 @@
 // whether broken arguments can safely be mended.
 'use strict';
 
+const crypto = require('crypto');
+
 const norm = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /** Loose names models use for the engine's built-in tools (normalized form). */
@@ -123,4 +125,23 @@ function requiresArgs(tools, name) {
   return Array.isArray(req) && req.length > 0;
 }
 
-module.exports = { resolveToolName, callSignature, repairToolArgs, requiresArgs, ALIASES };
+// Ids handed to the engine recently. Local servers and some proxies number
+// calls per reply (call_0, call_1) or not at all, so the same id comes back
+// every turn; the engine, the loop guard and the UI cards all key on it.
+const SEEN_IDS = new Set();
+const MAX_SEEN_IDS = 2000;
+
+/**
+ * An id for a tool_use block that has not been used before: the upstream's own
+ * id the first time it is seen (so a provider that checks its ids gets them
+ * back), a fresh `toolu_` id when it is missing or a repeat.
+ */
+function uniqueToolId(id) {
+  let out = String(id || '');
+  if (!out || SEEN_IDS.has(out)) out = 'toolu_' + crypto.randomBytes(12).toString('hex');
+  SEEN_IDS.add(out);
+  if (SEEN_IDS.size > MAX_SEEN_IDS) SEEN_IDS.delete(SEEN_IDS.values().next().value);
+  return out;
+}
+
+module.exports = { resolveToolName, callSignature, repairToolArgs, requiresArgs, uniqueToolId, ALIASES };
