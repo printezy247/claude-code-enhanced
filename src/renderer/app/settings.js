@@ -511,7 +511,7 @@ function renderRemoteCards(body) {
   // Engine tabs
   const cEng = el('div', 'settings-card');
   cEng.appendChild(el('h4', '', 'Engine tabs'));
-  cEng.appendChild(el('div', 'hint', 'Codex, Gemini CLI and OpenCode open as terminal tabs from the Board when installed.'));
+  cEng.appendChild(el('div', 'hint', 'Codex, Antigravity CLI and OpenCode open as terminal tabs from the Board when installed.'));
   const engList = el('div');
   cEng.appendChild(engList);
   body.appendChild(cEng);

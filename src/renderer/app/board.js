@@ -69,7 +69,7 @@ function runRow(run) {
   return row;
 }
 
-// Engine tabs (item 11): Codex / Gemini / OpenCode as terminal tabs. Only
+// Engine tabs (item 11): Codex / Antigravity / OpenCode as terminal tabs. Only
 // engines found on PATH get a button; a missing one shows its install hint.
 function engineRow(e) {
   const row = el('div', 'mcp-row');
