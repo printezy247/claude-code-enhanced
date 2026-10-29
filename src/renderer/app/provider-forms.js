@@ -42,7 +42,7 @@ export function openNewSessionModal() {
   const typeLabel = el('label', 'fld');
   typeLabel.appendChild(el('span', '', 'Type'));
   const typeSel = el('select');
-  [['chat', 'Chat — desktop-style (Agent SDK)'], ['claude', 'Terminal — claude TUI'], ['shell', 'Terminal — shell']].forEach(([v, n]) => {
+  [['chat', 'Chat — desktop-style (Agent SDK)'], ['claude', 'Terminal — claude TUI'], ['codex', 'Terminal — codex TUI'], ['gemini', 'Terminal — gemini TUI'], ['opencode', 'Terminal — opencode TUI'], ['shell', 'Terminal — shell']].forEach(([v, n]) => {
     const o = el('option', '', n); o.value = v; typeSel.appendChild(o);
   });
   typeSel.value = 'chat';
@@ -140,7 +140,7 @@ export function openNewSessionModal() {
         ...opts,
         type: typeSel.value,
         continueLast: contCheck.checked,
-        initText: loginCheck.checked ? '/login\r' : '',
+        initText: loginCheck.checked && typeSel.value === 'claude' ? '/login\r' : '',
       });
     }
   });
