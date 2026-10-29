@@ -7,6 +7,13 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.9.99
+- New: OpenCode chats run over `opencode serve` instead of one `opencode run` per message. OpenCode asks before running a command, editing a file or fetching a URL, and each request shows as CCE's usual Allow / Deny card ("Allow for this session" lets OpenCode remember it). Stop aborts the turn. The server listens on 127.0.0.1 behind a random per-chat password.
+- New: OpenCode chats take images (attach button and paste).
+- New: "Resume this folder's previous conversation" works for OpenCode (reopens the session and redraws the earlier turns) and for Antigravity (continues the conversation; its earlier turns aren't redrawn).
+- Fixed: OpenCode models on a CCE provider now declare image input, so OpenCode forwards attached images instead of dropping them.
+- Verified against the real OpenCode 1.19.5 CLI: allow runs the command, deny doesn't, allow-for-session stops the repeat prompt, an image reaches the provider, Stop ends a hung turn in under 50 ms, and a resumed session keeps its history. CI runs the same steps against a stand-in server.
 ## 0.9.98
 - New: Codex chats run over `codex app-server` instead of one `codex exec` per message. Codex now asks before running a command that isn't a known-safe read, and the request shows as CCE's usual Allow / Deny card. "Allow for this session" approves that exact command for the rest of the chat. Stop interrupts a turn, including one waiting on a card.
 - New: Codex chats take images (attach button and paste).

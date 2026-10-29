@@ -1236,7 +1236,13 @@ class ChatManager extends EventEmitter {
         emit: (evt) => this.emit('event', id, evt),
         ask: (req) => this._askEngine(id, req), onThread,
       })
-      : new EngineChat({ engine, command, cwd, env, yolo, model, extraArgs, emit: (evt) => this.emit('event', id, evt) });
+      : engine === 'opencode'
+        ? new (require('./opencodechat').OpenCodeChat)({
+          command, cwd, env, yolo, model, sessionId: resumeId || null,
+          emit: (evt) => this.emit('event', id, evt),
+          ask: (req) => this._askEngine(id, req), onThread,
+        })
+        : new EngineChat({ engine, command, cwd, env, yolo, model, extraArgs, sessionId: resumeId || null, onThread, emit: (evt) => this.emit('event', id, evt) });
     const chat = {
       engine, runner, cwd, q: runner.q, abort: new AbortController(),
       // No model = the CLI's own default; a CCE model shows with its provider.
@@ -1259,8 +1265,8 @@ class ChatManager extends EventEmitter {
   _askEngine(id, { toolName, input, title = '', description = '', itemId = '' }) {
     const requestId = 'r' + (this.permSeq++).toString(36) + Math.random().toString(36).slice(2, 6);
     // The rule an "Allow for this session" answer stands for, shown on the card.
-    // Codex remembers a session approval for this exact command (or these files).
-    const suggestions = [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName: toolName === 'Bash' ? 'this exact command, for the rest of this chat' : 'these files, for the rest of this chat' }] }];
+    // The CLI remembers a session approval for this kind of call.
+    const suggestions = [{ type: 'addRules', behavior: 'allow', destination: 'session', rules: [{ toolName: toolName === 'Bash' ? 'this command, for the rest of this chat' : 'these changes, for the rest of this chat' }] }];
     return new Promise((resolve) => {
       const finish = (v) => resolve(v);
       const entry = {

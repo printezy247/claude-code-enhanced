@@ -42,7 +42,9 @@ function providerSetup(engine, prov, model) {
     const config = { provider: { cce: {
       npm: '@ai-sdk/anthropic', name: prov.name || 'CCE',
       options: { baseURL: base, apiKey: '{env:' + PROVIDER_KEY_ENV + '}' },
-      models: { [model]: { name: model } },
+      // OpenCode drops an image sent to a model not declared as taking images.
+      // The proxy answers an image for a text-only model with a short note.
+      models: { [model]: { name: model, attachment: true, tool_call: true, modalities: { input: ['text', 'image'], output: ['text'] } } },
     } } };
     return { args: [], env: { ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify(config) }, model: 'cce/' + model };
   }
@@ -290,9 +292,9 @@ function killGroup(child, signal) {
  * view and the Board treat it like any other chat.
  */
 class EngineChat {
-  constructor({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], sessionId = null, emit }) {
+  constructor({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], sessionId = null, emit, onThread }) {
     argsFor(engine, { prompt: '' });   // throws on an unknown engine
-    Object.assign(this, { engine, command, cwd, env, yolo: !!yolo, model: model || '', extraArgs: extraArgs || [], sessionId, emit: emit || (() => {}) });
+    Object.assign(this, { engine, command, cwd, env, yolo: !!yolo, model: model || '', extraArgs: extraArgs || [], sessionId, emit: emit || (() => {}), onThread: onThread || (() => {}) });
     this.label = labelOf(engine);
     this.busy = false;
     this.queue = [];
@@ -323,7 +325,7 @@ class EngineChat {
         if (msg.type === 'result') this.lastUsage = msg.usage;
         this.emit({ kind: 'message', msg });
       }
-      if (t.sessionId) this.sessionId = t.sessionId;
+      if (t.sessionId && t.sessionId !== this.sessionId) { this.sessionId = t.sessionId; this.onThread(t.sessionId); }
       this.initSent = t.initSent;
     };
     let child;
