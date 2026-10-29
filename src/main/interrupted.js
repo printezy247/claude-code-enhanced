@@ -28,6 +28,11 @@ function createInterruptedStore(file) {
       all[run.id] = { ...run, at: Date.now() };
       write(all);
     },
+    /** An engine chat learns its session id after the turn has started. */
+    touchSession(id, sessionId) {
+      const all = read();
+      if (all[id] && sessionId && all[id].sessionId !== sessionId) { all[id].sessionId = sessionId; write(all); }
+    },
     /** The run ended on purpose (turn done, tab closed): nothing to resume. */
     forget(id) {
       const all = read();

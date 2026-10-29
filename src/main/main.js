@@ -75,6 +75,7 @@ const { modelContext } = require('./modelcontext');
 const { WindowRegistry, route } = require('./windows');
 const ipcguard = require('./ipcguard');
 const ipcschemas = require('./ipcschemas');
+const pathsafe = require('./pathsafe');
 const { createDraftStore } = require('./drafts');
 const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
 const { normalizeDomains } = require('./webdomains');
@@ -1531,9 +1532,14 @@ function registerIpc() {
     // that ends is forgotten. Whatever survives a restart is offered back.
     if (evt && evt.kind === 'status') {
       const live = chats.chats.get(id);
-      // Engine chats are not Claude sessions: "resume interrupted run" cannot reopen them.
-      if (evt.busy === true && live && !live.engine) {
-        interrupted.record({ id, cwd: live.cwd || '', sessionId: live.sessionId || null, model: live.model || '' });
+      if (evt.busy === true && live) {
+        // An engine chat is recorded with what it takes to start it again: the
+        // CLI, its session id (kept up to date as the CLI reports it), and the
+        // CCE provider and model it ran on.
+        interrupted.record({
+          id, cwd: live.cwd || '', sessionId: live.sessionId || null, model: live.model || '',
+          ...(live.engine ? { engine: live.engine, ...(live.engineMeta || {}) } : {}),
+        });
       } else if (evt.busy === false) {
         interrupted.forget(id);
       }
@@ -1640,13 +1646,21 @@ function registerIpc() {
         if (wt.error) return { ok: false, error: wt.error };
         dir = wt.path;
       }
+      let createdId = null;
       const created = chats.createEngine({
         engine: String(engine), command: resolved.command, cwd: dir,
         env: envWithLoginPath({ ...process.env, ...setup.env }), yolo: !!yolo, model: setup.model,
         extraArgs: setup.args, providerName: prov ? prov.name : '',
-        resumeId: resume === 'last' ? lastEngineThread(String(engine), dir) : '',
-        onThread: (threadId) => rememberEngineThread(String(engine), dir, threadId),
+        // 'last' = the folder's previous thread; any other string is a thread id
+        // (the interrupted-run drawer passes the one that was cut short).
+        resumeId: resume === 'last' ? lastEngineThread(String(engine), dir) : (typeof resume === 'string' && resume ? resume : ''),
+        providerUid: prov ? providerUid : '', rawModel: sanitizeModel(model || ''),
+        onThread: (threadId) => {
+          rememberEngineThread(String(engine), dir, threadId);
+          if (createdId) interrupted.touchSession(createdId, threadId);
+        },
       });
+      createdId = created.id;
       if (wt) created.worktree = wt;
       const owner = senderWindowId(e);
       if (owner != null) windowRegistry.claim(owner, 'chats', created.id);
@@ -1944,7 +1958,15 @@ function registerIpc() {
   handle('skills:list', async ({ skillsDir, cwd }) => ({
     skills: skilltoggle.scanSkills({ skillsDir, cwd }),
   }));
-  handle('skills:read', async ({ path }) => skilltoggle.readSkill(path));
+  handle('skills:read', async ({ path: p }) => {
+    // Skills live under ~/.claude (user skills, plugins) or an open project's
+    // .claude; reading any other path would be a file reader for the page.
+    const home = process.env.HOME || os.homedir();
+    const roots = [path.join(home, '.claude'), ...readableRoots().map((r) => path.join(r, '.claude'))];
+    const safe = pathsafe.resolveSafe(String(p || ''), { roots, home });
+    if (safe.error) throw new Error('that is not a skill folder');
+    return skilltoggle.readSkill(safe.path);
+  });
   handle('cmd:detail', async ({ name, cwd }) => require('./cmddetail').commandDetail({ name, cwd }));
   handle('skills:set-enabled', async ({ name, enabled }) => {
     const res = skilltoggle.setSkillEnabled(name, !!enabled);
@@ -2248,9 +2270,10 @@ function registerIpc() {
   handle('memory:resolve', async ({ cwd, slug, accept }) => automemory.resolve(cwd, String(slug || ''), !!accept));
   handle('memory:save', async ({ path: p, content }) => {
     const home = process.env.HOME || os.homedir();
-    const real = path.resolve(String(p || '').replace(/^~(?=\/|$)/, home));
-    if (real !== home && !real.startsWith(home + path.sep)) throw new Error('path outside home directory');
-    const allowed = real === path.join(home, '.claude', 'CLAUDE.md')
+    const safe = pathsafe.resolveSafe(String(p || ''), { roots: [home], home });
+    if (safe.error) throw new Error('path outside home directory');
+    const real = safe.path;
+    const allowed = real === path.join(fs.realpathSync(home), '.claude', 'CLAUDE.md')
       || /\/CLAUDE\.md$/.test(real)
       || /\/\.claude\/rules\/[\w.-]+\.md$/.test(real)
       || /\/\.claude\/settings(\.local)?\.json$/.test(real);
@@ -2315,13 +2338,11 @@ function registerIpc() {
   handle('file:saveText', async ({ path: p, content }) => {
     if (!p) throw new Error('path required');
     const home = process.env.HOME || os.homedir();
-    const real = path.resolve(String(p).replace(/^~(?=\/|$)/, home));
-    let target;
-    try { target = fs.realpathSync(real); } catch { target = real; }   // new file: parent must exist below
-    const roots = readableRoots();
-    if (!roots.some((r) => target === r || target.startsWith(r + path.sep))) {
-      throw new Error('path is outside any open project');
-    }
+    // A file that does not exist yet is judged through its nearest existing
+    // parent, so a symlinked folder inside a project cannot send the write elsewhere.
+    const safe = pathsafe.resolveSafe(String(p), { roots: readableRoots(), home });
+    if (safe.error) throw new Error('path is outside any open project');
+    const target = safe.path;
     if (SENSITIVE_RE.test(target)) throw new Error('that file is not editable here');
     if (!/\.(md|markdown|txt)$/i.test(target)) throw new Error('only .md/.markdown/.txt files can be saved here');
     const text = String(content ?? '');
@@ -2831,9 +2852,9 @@ function registerIpc() {
   handle('shell:reveal', async ({ path: p }) => {
     const file = String(p || '');
     const spillRoot = path.join(os.homedir(), '.claude', 'tool-results');
-    const real = path.resolve(file);
-    const underRoot = real === spillRoot || real.startsWith(spillRoot + path.sep);
-    if (!underRoot) throw new Error('refusing to open a path outside ' + spillRoot);
+    const safe = pathsafe.resolveSafe(file, { roots: [spillRoot] });
+    if (safe.error) throw new Error('refusing to open a path outside ' + spillRoot);
+    const real = safe.path;
     if (!fs.existsSync(real)) throw new Error('that file no longer exists');
     shell.showItemInFolder(real);
     return {};

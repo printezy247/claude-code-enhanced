@@ -10,6 +10,9 @@
 const ipcguard = require('./ipcguard');
 
 const SESSION_TYPES = ['chat', 'claude', 'codex', 'antigravity', 'opencode', 'shell', 'ssh'];
+// CLIs that can drive a chat (engines.js REGISTRY), besides Claude Code itself.
+const CHAT_ENGINES = ['codex', 'antigravity', 'opencode'];
+const PERMISSION_MODES = ['default', 'acceptEdits', 'plan', 'bypassPermissions', 'auto', 'dontAsk'];
 
 /**
  * channel -> field spec understood by ipcguard.checkFields.
@@ -31,8 +34,22 @@ const SCHEMAS = {
     cwd: { type: 'text', optional: true },
     type: { enum: SESSION_TYPES, message: 'unknown session type' },
     providerUid: { type: 'text', optional: true },
+    model: { type: 'text', optional: true },
+    cliDefault: { type: 'boolean', optional: true },
     hostId: { type: 'text', optional: true },
     initText: { type: 'text', optional: true },
+  },
+  // chat tabs: every CLI starts here (engine = Codex / OpenCode / Antigravity)
+  'chat:create': {
+    cwd: { type: 'text', optional: true },
+    providerUid: { type: 'text', optional: true },
+    model: { type: 'text', optional: true },
+    permissionMode: { enum: PERMISSION_MODES, optional: true, message: 'unknown permission mode' },
+    yolo: { type: 'boolean', optional: true },
+    cliDefault: { type: 'boolean', optional: true },
+    worktree: { type: 'boolean', optional: true },
+    resume: { type: 'text', optional: true },
+    engine: { enum: CHAT_ENGINES, optional: true, message: 'unknown engine' },
   },
   'session:resize': { id: 'id', cols: 'number', rows: 'number' },
   'session:kill': { id: 'id' },

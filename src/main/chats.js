@@ -1225,7 +1225,7 @@ class ChatManager extends EventEmitter {
    * the Agent SDK. It lives in the same map and emits the same events, so the
    * chat view, Board and window routing need no special case. #feat-engine-chat
    */
-  createEngine({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], providerName = '', resumeId = '', onThread }) {
+  createEngine({ engine, command, cwd, env, yolo = false, model = '', extraArgs = [], providerName = '', resumeId = '', onThread, providerUid = '', rawModel = '' }) {
     const { EngineChat } = require('./enginechat');
     const id = 'c' + this.nextId++;
     // Codex runs over its app-server so it can ask before acting; the other
@@ -1248,6 +1248,8 @@ class ChatManager extends EventEmitter {
       // No model = the CLI's own default; a CCE model shows with its provider.
       model: model ? runner.label + ' · ' + (providerName ? providerName + ' / ' : '') + model.replace(/^cce\//, '') : runner.label + ' · CLI default',
       permissionMode: yolo ? 'bypassPermissions' : 'default',
+      // What the interrupted-run drawer needs to start the same chat again.
+      engineMeta: { providerUid: providerUid || '', model: rawModel || '', yolo: !!yolo },
       get busy() { return runner.busy; },
       get sessionId() { return runner.sessionId; },
       close: () => runner.close(),
