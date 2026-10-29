@@ -22,9 +22,9 @@ describe('model list per CLI', () => {
     expect(uids('claude')).toEqual(['login', 'oai', 'ant', 'cop']);
     expect(modelGroups('claude', PROVS)[1].models[0]).toBe('');
   });
-  it('Codex only OpenAI-format key providers, OpenCode also Anthropic, Antigravity none', () => {
-    expect(uids('codex')).toEqual(['oai']);
-    expect(uids('opencode')).toEqual(['oai', 'ant']);
+  it('Codex and OpenCode take any provider with a base URL (through the proxy), Antigravity none', () => {
+    expect(uids('codex')).toEqual(['oai', 'ant', 'cop']);
+    expect(uids('opencode')).toEqual(['oai', 'ant', 'cop']);
     expect(uids('antigravity')).toEqual([]);
     expect(modelGroups('codex', PROVS)[0].models).toEqual(['qwen/qwen3-coder', 'z-ai/glm-4.6']);
     expect(modelGroups('opencode', PROVS)[1].models).toEqual(['claude-sonnet-5']);
@@ -35,34 +35,36 @@ describe('model list per CLI', () => {
   });
 });
 
-describe('CCE provider for an engine chat', () => {
-  const prov = { name: 'OpenRouter', baseUrl: 'https://openrouter.ai/api/v1/', protocol: 'openai', apiKey: 'sk-secret' };
+describe('CCE provider for an engine chat (through the local proxy)', () => {
+  const prov = { name: 'OpenRouter', proxyBase: 'http://127.0.0.1:4321/px/oai', token: 'proxy-token' };
   it('no provider: nothing added, CLI default', () => {
     expect(providerSetup('codex', null, '')).toEqual({ args: [], env: {}, model: '' });
   });
-  it('Codex: model_providers config, key only in the env', () => {
+  it('Codex: Responses API at the proxy, token only in the env', () => {
     const s = providerSetup('codex', prov, 'qwen/qwen3-coder');
     expect(s.args).toContain('model_provider="cce"');
-    expect(s.args).toContain('model_providers.cce.base_url="https://openrouter.ai/api/v1"');
+    expect(s.args).toContain('model_providers.cce.base_url="http://127.0.0.1:4321/px/oai/v1"');
+    expect(s.args).toContain('model_providers.cce.wire_api="responses"');
     expect(s.args).toContain(`model_providers.cce.env_key="${PROVIDER_KEY_ENV}"`);
-    expect(s.args.join(' ')).not.toContain('sk-secret');
-    expect(s.env[PROVIDER_KEY_ENV]).toBe('sk-secret');
+    expect(s.args.join(' ')).not.toContain('proxy-token');
+    expect(s.env[PROVIDER_KEY_ENV]).toBe('proxy-token');
     const { args } = argsFor('codex', { prompt: 'hi', model: s.model, extraArgs: s.args, sessionId: 'abc' });
     expect(args.slice(0, 2)).toEqual(['exec', 'resume']);
     expect(args.indexOf('model_provider="cce"')).toBeLessThan(args.indexOf('-m'));
     expect(args[args.indexOf('-m') + 1]).toBe('qwen/qwen3-coder');
   });
-  it('OpenCode: inline config and a cce/ model id', () => {
-    const s = providerSetup('opencode', { ...prov, protocol: 'anthropic' }, 'claude-sonnet-5');
+  it('OpenCode: built-in Anthropic SDK at the proxy, a cce/ model id', () => {
+    const s = providerSetup('opencode', prov, 'claude-sonnet-5');
     const cfg = JSON.parse(s.env.OPENCODE_CONFIG_CONTENT);
     expect(cfg.provider.cce.npm).toBe('@ai-sdk/anthropic');
+    expect(cfg.provider.cce.options.baseURL).toBe('http://127.0.0.1:4321/px/oai/v1');
     expect(cfg.provider.cce.options.apiKey).toBe(`{env:${PROVIDER_KEY_ENV}}`);
-    expect(s.env.OPENCODE_CONFIG_CONTENT).not.toContain('sk-secret');
+    expect(s.env.OPENCODE_CONFIG_CONTENT).not.toContain('proxy-token');
     expect(s.model).toBe('cce/claude-sonnet-5');
   });
   it('refuses what a CLI cannot run', () => {
     expect(providerSetup('antigravity', prov, 'x').error).toMatch(/own login/);
-    expect(providerSetup('codex', { ...prov, protocol: 'anthropic' }, 'x').error).toMatch(/OpenAI-format/);
+    expect(providerSetup('codex', { ...prov, proxyBase: '' }, 'x').error).toMatch(/proxy is not running/);
     expect(providerSetup('codex', prov, '').error).toMatch(/pick a model/);
   });
 });

@@ -5,6 +5,12 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.9.97
+- Fixed: Codex chats on a CCE provider. Codex removed its chat-completions mode in Feb 2026 and now speaks only the Responses API, so 0.9.96's setup failed on most providers. CCE's local proxy now serves the Responses API and translates it to whatever the provider speaks; Codex points at the proxy.
+- Changed: OpenCode chats on a CCE provider go through the same proxy with OpenCode's built-in Anthropic support, so no provider package is downloaded.
+- Changed: Codex and OpenCode chats can use any CCE provider with a base URL (OpenAI-format, Anthropic, Gemini, OAuth ones), not only OpenAI-format/Anthropic.
+- Verified against the real Codex 0.165 and OpenCode 1.19.5 CLIs: a tool call runs, its output reaches the model, and the answer comes back.
 ## 0.9.96
 - Changed: the New session dialog has one **Chat** and one **Terminal** type. A **CLI** picker chooses what runs it (Claude Code by default, Codex, OpenCode, Antigravity; Terminal also offers a shell). Each CLI runs its own binary; CLIs that aren't installed are greyed out.
 - Changed: a new chat uses the CLI's own login and default model ("CLI default"). The **Model** picker offers your CCE providers instead: any provider for Claude Code, OpenAI-format providers for Codex, OpenAI-format or Anthropic providers for OpenCode. Antigravity uses its own login only. "New chat here" and "New chat in this folder" use CLI default too.

@@ -15,35 +15,34 @@ const PROVIDER_KEY_ENV = 'CCE_PROVIDER_KEY';
 
 /**
  * Point an engine at a CCE provider instead of its own login: extra argv,
- * extra env and the model id to pass. `prov` is { name, baseUrl, protocol,
- * apiKey }. Codex takes an OpenAI-format endpoint through `-c model_providers`
- * config; OpenCode takes an inline config (OPENCODE_CONFIG_CONTENT) with an
- * OpenAI-compatible or Anthropic provider. Antigravity has no custom
- * providers. The key goes in the env, never on the command line.
+ * extra env and the model id to pass. `prov` is { name, proxyBase, token }:
+ * the engine talks to CCE's local proxy, which serves every CCE provider in
+ * its own dialect. Codex speaks only the Responses API (its chat-completions
+ * mode was removed in Feb 2026), so it uses the proxy's /v1/responses; OpenCode
+ * uses its built-in Anthropic SDK against the proxy's /v1/messages, which
+ * needs no extra package. Antigravity has no custom providers. The proxy
+ * token goes in the env, never on the command line.
  */
 function providerSetup(engine, prov, model) {
   if (!prov) return { args: [], env: {}, model: model || '' };
-  const baseUrl = String(prov.baseUrl || '').replace(/\/+$/, '');
-  const protocol = prov.protocol || 'openai';
-  if (!baseUrl) return { error: 'this provider has no base URL to hand to ' + labelOf(engine) };
+  if (!prov.proxyBase) return { error: 'the local provider proxy is not running, so ' + labelOf(engine) + ' cannot reach CCE providers' };
   if (!model) return { error: 'pick a model of this provider for ' + labelOf(engine) };
-  const env = prov.apiKey ? { [PROVIDER_KEY_ENV]: prov.apiKey } : {};
+  const base = String(prov.proxyBase).replace(/\/+$/, '') + '/v1';
+  const env = { [PROVIDER_KEY_ENV]: prov.token || 'cce' };
   if (engine === 'codex') {
-    if (protocol === 'anthropic' || protocol === 'gemini') return { error: 'Codex needs an OpenAI-format provider' };
     const q = (v) => JSON.stringify(String(v));   // a TOML basic string
     const args = ['-c', 'model_provider="cce"',
       '-c', 'model_providers.cce.name=' + q(prov.name || 'CCE'),
-      '-c', 'model_providers.cce.base_url=' + q(baseUrl),
-      '-c', 'model_providers.cce.wire_api=' + q(protocol === 'responses' ? 'responses' : 'chat'),
-      ...(prov.apiKey ? ['-c', 'model_providers.cce.env_key=' + q(PROVIDER_KEY_ENV)] : [])];
+      '-c', 'model_providers.cce.base_url=' + q(base),
+      '-c', 'model_providers.cce.wire_api="responses"',
+      '-c', 'model_providers.cce.env_key=' + q(PROVIDER_KEY_ENV)];
     return { args, env, model };
   }
   if (engine === 'opencode') {
-    if (protocol === 'gemini') return { error: 'OpenCode chats take an OpenAI-format or Anthropic provider here' };
-    const options = { baseURL: baseUrl, ...(prov.apiKey ? { apiKey: '{env:' + PROVIDER_KEY_ENV + '}' } : {}) };
     const config = { provider: { cce: {
-      npm: protocol === 'anthropic' ? '@ai-sdk/anthropic' : '@ai-sdk/openai-compatible',
-      name: prov.name || 'CCE', options, models: { [model]: {} },
+      npm: '@ai-sdk/anthropic', name: prov.name || 'CCE',
+      options: { baseURL: base, apiKey: '{env:' + PROVIDER_KEY_ENV + '}' },
+      models: { [model]: { name: model } },
     } } };
     return { args: [], env: { ...env, OPENCODE_CONFIG_CONTENT: JSON.stringify(config) }, model: 'cce/' + model };
   }

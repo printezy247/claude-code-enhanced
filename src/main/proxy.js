@@ -11,6 +11,7 @@ const { wrapToolNames } = require('./toolnames');
 const { resolveToolName, callSignature, repairToolArgs, requiresArgs, uniqueToolId } = require('./toolcalls');
 const { openaiBase } = adapters;
 const { sseLines } = require('./sse');
+const responses = require('./responses');
 const tokencount = require('./tokencount');
 const { debugLog } = require('./debug');
 
@@ -95,7 +96,8 @@ function startProxy(resolveProvider, opts = {}) {
     req.on('end', () => {
       if (refused) return;
       const raw = Buffer.concat(chunks).toString('utf8');
-      handleTranslated(restPath, raw, prov, res, req.headers).catch((err) => {
+      const handler = restPath === '/v1/responses' ? handleResponses : handleTranslated;
+      handler(restPath, raw, prov, res, req.headers).catch((err) => {
         if (process.env.CCE_SMOKE) debugLog('[proxy] TRANSLATE ERR ' + String((err && err.stack) || err).slice(0, 300));
         if (!res.headersSent) {
           res.writeHead(502, { 'content-type': 'application/json' });
@@ -119,6 +121,81 @@ function startProxy(resolveProvider, opts = {}) {
       resolve({ port: actual, server, token });
     });
   });
+}
+
+/**
+ * OpenAI Responses API (what Codex speaks) on top of the Anthropic pipeline:
+ * the request is translated to Anthropic Messages, run through
+ * handleTranslated against a stand-in response, and the Anthropic SSE that
+ * comes back is re-emitted as Responses events. Works for every provider the
+ * proxy serves, chat-completions and Anthropic alike.
+ */
+async function handleResponses(_restPath, raw, prov, res, inHeaders = {}) {
+  let req;
+  try { req = JSON.parse(raw || '{}'); } catch {
+    res.writeHead(400, { 'content-type': 'application/json' }).end(JSON.stringify({ error: { type: 'invalid_request_error', message: 'bad JSON' } }));
+    return;
+  }
+  const { body, custom } = responses.responsesToAnthropic(req);
+  const wantStream = req.stream !== false;
+  const out = (event, data) => {
+    if (!wantStream) return;
+    if (!res.headersSent) res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' });
+    try { res.write('event: ' + event + '\ndata: ' + JSON.stringify(data) + '\n\n'); } catch { /* socket gone */ }
+  };
+  const stream = responses.createResponsesStream({ model: req.model, custom, emit: out });
+  const parse = responses.createSseParser((ev, d) => stream.event(ev, d));
+
+  // The stand-in for `res` that handleTranslated writes Anthropic output to.
+  const { EventEmitter } = require('events');
+  const shim = new EventEmitter();
+  let status = 200; let ctype = ''; let errBody = '';
+  Object.assign(shim, {
+    headersSent: false, writableEnded: false, destroyed: false,
+    writeHead(code, headers) {
+      status = code; shim.headersSent = true;
+      ctype = String((headers && (headers['content-type'] || headers['Content-Type'])) || '');
+      return shim;
+    },
+    setHeader() {},
+    write(chunk) {
+      const text = String(chunk);
+      if (status === 200 && /event-stream/.test(ctype)) parse(text); else errBody += text;
+      return true;
+    },
+    end(chunk) { if (chunk) shim.write(chunk); shim.writableEnded = true; shim.emit('finish'); },
+    destroy() { shim.destroyed = true; shim.emit('close'); },
+  });
+  res.on('close', () => { if (!shim.writableEnded) shim.emit('close'); });
+  await new Promise((resolve, reject) => {
+    shim.on('finish', resolve);
+    shim.on('close', resolve);
+    handleTranslated('/v1/messages', JSON.stringify(body), prov, shim, inHeaders).catch(reject);
+  });
+  if (res.destroyed) return;
+  if (status !== 200 || !/event-stream/.test(ctype)) {
+    let j = null;
+    try { j = JSON.parse(errBody); } catch { /* not JSON */ }
+    if (status === 200 && j && Array.isArray(j.content)) {
+      // A whole Anthropic message: replay it as events.
+      const ev = [];
+      writeMessageAsSse({ write: (t) => ev.push(t) }, j);
+      parse(ev.join(''));
+    } else {
+      const message = (j && j.error && (j.error.message || j.error)) || errBody || ('upstream HTTP ' + status);
+      if (wantStream) stream.fail(String(message), j && j.error && j.error.type);
+      else {
+        res.writeHead(status === 200 ? 502 : status, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { type: (j && j.error && j.error.type) || 'api_error', message: String(message) } }));
+        return;
+      }
+    }
+  }
+  if (!stream.done) stream.end();
+  if (wantStream) { try { res.end(); } catch { /* socket gone */ } return; }
+  const r = stream.response;
+  res.writeHead(r.status === 'failed' ? 502 : 200, { 'content-type': 'application/json' });
+  res.end(JSON.stringify(r));
 }
 
 async function handleTranslated(restPath, raw, prov, res, inHeaders = {}) {
