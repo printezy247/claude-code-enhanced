@@ -4,25 +4,18 @@
 // translates to the provider's dialect); Antigravity only its own login. The
 // Claude login itself has no base URL to hand to another CLI.
 
-export const CHAT_CLIS = [
-  { id: 'claude', label: 'Claude Code' },
-  { id: 'codex', label: 'Codex', engine: 'codex' },
-  { id: 'opencode', label: 'OpenCode', engine: 'opencode' },
-  { id: 'antigravity', label: 'Antigravity', engine: 'antigravity' },
+// The CLI choices come from the engine list the main process detects
+// (engines.js REGISTRY), so a new engine needs no change here.
+const CLAUDE_CHAT = { id: 'claude', label: 'Claude Code' };
+export const chatClis = (engineList) => [
+  CLAUDE_CHAT,
+  ...(engineList || []).map((e) => ({ id: e.id, label: e.label.replace(/ CLI$/, ''), engine: e.id })),
 ];
-export const TERMINAL_CLIS = [
+export const terminalClis = (engineList) => [
   { id: 'claude', label: 'claude TUI' },
-  { id: 'codex', label: 'codex TUI', engine: 'codex' },
-  { id: 'opencode', label: 'opencode TUI', engine: 'opencode' },
-  { id: 'antigravity', label: 'antigravity TUI (agy)', engine: 'antigravity' },
+  ...(engineList || []).map((e) => ({ id: e.id, label: e.bin + ' TUI', engine: e.id })),
   { id: 'shell', label: 'shell' },
 ];
-
-function canRun(cli, p) {
-  if (cli === 'claude') return true;
-  if (cli === 'codex' || cli === 'opencode') return !!p.baseUrl;
-  return false;
-}
 
 function modelsOf(p) {
   const ids = [p.model, ...(p.whitelist || []), ...(p.models || [])]
@@ -36,10 +29,12 @@ function modelsOf(p) {
  * "CLI default" is not in the list; the modal adds it first. Claude also gets
  * a "provider default" entry ('' model) per provider; other CLIs need a model.
  */
-export function modelGroups(cli, providers) {
+export function modelGroups(cli, providers, engineList = []) {
   const out = [];
+  const engine = engineList.find((e) => e.id === cli);
+  const canRun = (p) => cli === 'claude' || (!!engine && engine.providers && !!p.baseUrl);
   for (const p of providers || []) {
-    if (!p || !canRun(cli, p)) continue;
+    if (!p || !canRun(p)) continue;
     const models = modelsOf(p);
     if (cli === 'claude') models.unshift('');
     if (models.length) out.push({ provider: { uid: p.uid, name: p.name || p.uid }, models });

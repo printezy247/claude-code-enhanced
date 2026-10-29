@@ -9,6 +9,7 @@ const { spawn } = require('child_process');
 const crypto = require('crypto');
 const net = require('net');
 const { frames } = require('./enginechat');
+const { terminate, appendTail, stubQuery } = require('./procutil');
 
 // OpenCode tool names -> the names the chat view knows.
 const TOOL_NAMES = {
@@ -111,7 +112,7 @@ class OpenCodeChat {
       const child = spawn(this.command, ['serve', '--port', String(port), '--hostname', '127.0.0.1'], { cwd: this.cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       this.child = child;
       let stderr = '';
-      child.stderr.on('data', (d) => { stderr = (stderr + d).slice(-4000); });
+      child.stderr.on('data', (d) => { stderr = appendTail(stderr, d); });
       const exited = new Promise((_, reject) => {
         child.on('error', reject);
         child.on('exit', (code) => {
@@ -335,20 +336,13 @@ class OpenCodeChat {
     if (this.eventAbort) { try { this.eventAbort.abort(); } catch { /* done */ } }
     const child = this.child;
     if (!child) return;
-    try { process.kill(-child.pid, 'SIGTERM'); } catch { try { child.kill('SIGTERM'); } catch { /* gone */ } }
-    setTimeout(() => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } }, 3000).unref();
+    terminate(child);
   }
 
   _stub() {
-    const empty = async () => [];
-    const known = {
+    return stubQuery('OpenCode', {
       interrupt: () => this.interrupt(),
-      supportedCommands: empty, supportedModels: empty, supportedAgents: empty, mcpServerStatus: empty,
-      getContextUsage: async () => ({ totalTokens: this.usage.input_tokens, maxTokens: 0, percentage: 0, categories: [] }),
-    };
-    return new Proxy(known, {
-      get: (target, prop) => (prop in target ? target[prop]
-        : (typeof prop === 'string' ? async () => { throw new Error('OpenCode chats do not support ' + prop); } : undefined)),
+      usage: () => ({ totalTokens: this.usage.input_tokens, maxTokens: 0, percentage: 0, categories: [] }),
     });
   }
 }

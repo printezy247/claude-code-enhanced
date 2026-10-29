@@ -12,6 +12,10 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.13.1
+- Changed: engine chats are driven by the engine registry. Each engine in `engines.js` now says which runner it uses and whether it takes images, asks before acting, and can run on a CCE provider; the chat view, the New session dialog (CLI list and model hints) and `createEngine` read that instead of checking engine names, so a new engine is one registry entry. The Codex, OpenCode and Antigravity runners share one process-stop helper (SIGTERM to the group, then SIGKILL), one stderr tail, one text flattener and one stand-in query object (`src/main/procutil.js`), and OpenCode tool names reuse the shared alias table.
+- Changed: a tool result shown in an engine chat is cut to its first and last 20,000 characters with a note of what was left out, so one `cat` of a big file or build log cannot flood the chat.
+- Changed: the "finished" notification names the chat's CLI from the chat itself, and the Antigravity translator is flatter. No other behavior changes.
 ## 0.13.0
 - New: **chats on another machine over SSH.** The target chip in a chat lists your saved SSH hosts next to Local and New worktree; pick one, give the folder on that machine, and Claude Code runs there (`ssh -T host 'cd <folder> && exec claude …'`) while the conversation, approvals, interrupts and the connector broker work as usual. The remote runs with its own login, settings and connectors. This computer's providers, API keys, proxy, sandbox, plugins and local connectors are not sent or used, the folder name and every flag are shell-quoted so they cannot add a command, and ssh never asks for a password (key or agent login only). The Changes and Overview panels and local transcripts only cover this computer's folders. Needs `claude` installed and logged in on the remote.
 - Fixed: the worktree and sandbox chips in a chat header disappeared as soon as the project's git info loaded, because the redraw cleared the row. They stay now.

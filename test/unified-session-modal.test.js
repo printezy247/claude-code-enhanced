@@ -17,9 +17,9 @@ const ipc = {
   'chats:index': { ok: true, sessions: [] },
   'usage:scan': { ok: true, days: [], total: 0, sessions: 0 },
   'engines:list': { ok: true, engines: [
-    { id: 'codex', label: 'Codex', found: true, hint: '' },
-    { id: 'opencode', label: 'OpenCode', found: true, hint: '' },
-    { id: 'antigravity', label: 'Antigravity CLI', found: false, hint: 'install it' },
+    { id: 'codex', label: 'Codex', bin: 'codex', providers: true, found: true, hint: '' },
+    { id: 'opencode', label: 'OpenCode', bin: 'opencode', providers: true, found: true, hint: '' },
+    { id: 'antigravity', label: 'Antigravity CLI', bin: 'agy', providers: false, found: false, hint: 'install it' },
   ] },
   'chat:create': { ok: true, id: 'c9', cwd: '/home/jack/alpha', model: '', permissionMode: 'default', provider: null },
 };

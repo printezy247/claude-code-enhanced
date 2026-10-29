@@ -12,6 +12,7 @@ const { parsedDataEvents } = require('./sse');
 const bedrock = require('./bedrock.js');
 const modelsdev = require('./modelsdev.js');
 const { wireToolId } = require('./toolnames');
+const { textOf } = require('./procutil');
 const { modelCaps, samplingDefaults } = require('./modelcontext.js');
 
 /** OpenAI-compatible root for a provider base URL (bare Ollama roots get /v1). */
@@ -349,7 +350,7 @@ function buildOpenAIBody(body, wantStream, prov) {
   for (const m of body.messages || []) {
     const c = m.content;
     if (m.role === 'system') {
-      const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map(b => (b && b.text) || '').join('\n') : '';
+      const t = textOf(c);
       if (t.trim()) lateSystem.push(t);
       continue;
     }
@@ -513,7 +514,7 @@ function buildResponsesInput(body, prov) {
   for (const m of body.messages || []) {
     const c = m.content;
     if (m.role === 'system') {
-      const t = typeof c === 'string' ? c : Array.isArray(c) ? c.map(b => (b && b.text) || '').join('\n') : '';
+      const t = textOf(c);
       if (t.trim()) lateSystem.push(t);
       continue;
     }
