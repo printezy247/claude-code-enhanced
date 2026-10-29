@@ -9,7 +9,7 @@
 
 const ipcguard = require('./ipcguard');
 
-const SESSION_TYPES = ['chat', 'claude', 'codex', 'gemini', 'opencode', 'shell', 'ssh'];
+const SESSION_TYPES = ['chat', 'claude', 'codex', 'antigravity', 'opencode', 'shell', 'ssh'];
 
 /**
  * channel -> field spec understood by ipcguard.checkFields.

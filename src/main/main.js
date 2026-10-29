@@ -2437,7 +2437,7 @@ function registerIpc() {
     })),
   }));
   // ---- Phase 3 (items 11-14) --------------------------------------------------
-  // Engine tabs: which Codex/Gemini/OpenCode binaries are on PATH. #feat-engines
+  // Engine tabs: which Codex/Antigravity/OpenCode binaries are on PATH. #feat-engines
   handle('engines:list', async () => ({
     engines: await engines.detect({ PATH: (await loginEnvReady()).PATH || process.env.PATH }),
   }));

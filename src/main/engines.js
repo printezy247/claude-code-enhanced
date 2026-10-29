@@ -1,4 +1,4 @@
-// External agent engines (item 11): Codex, Gemini CLI and OpenCode run as
+// External agent engines (item 11): Codex, Antigravity CLI and OpenCode run as
 // real terminal tabs, the same way the claude CLI does. Detection is a PATH
 // scan; nothing is spawned until the user opens a tab.
 'use strict';
@@ -8,7 +8,7 @@ const { execFile } = require('child_process');
 
 const REGISTRY = [
   { id: 'codex', label: 'Codex', bin: 'codex', hint: 'install: npm install -g @openai/codex' },
-  { id: 'gemini', label: 'Gemini CLI', bin: 'gemini', hint: 'install: npm install -g @google/gemini-cli' },
+  { id: 'antigravity', label: 'Antigravity CLI', bin: 'agy', hint: 'install: see https://antigravity.google/docs/overview' },
   { id: 'opencode', label: 'OpenCode', bin: 'opencode', hint: 'install: npm install -g opencode-ai' },
 ];
 

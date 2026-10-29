@@ -47,7 +47,7 @@ export function openNewSessionModal() {
     ['chat', 'Chat — desktop-style (Agent SDK)'],
     ['claude', 'Terminal — claude TUI'],
     ['codex', 'Terminal — codex TUI', 'codex'],
-    ['gemini', 'Terminal — gemini TUI', 'gemini'],
+    ['antigravity', 'Terminal — antigravity TUI (agy)', 'antigravity'],
     ['opencode', 'Terminal — opencode TUI', 'opencode'],
     ['shell', 'Terminal — shell'],
   ];

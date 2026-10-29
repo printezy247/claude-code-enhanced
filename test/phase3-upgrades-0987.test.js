@@ -31,9 +31,10 @@ async function bootMain() {
 // ---------- 11. engines ------------------------------------------------------
 
 describe('engine registry (item 11)', () => {
-  it('knows codex, gemini and opencode with install hints', () => {
+  it('knows codex, antigravity and opencode with install hints', () => {
     const ids = engines.REGISTRY.map((e) => e.id);
-    expect(ids).toEqual(['codex', 'gemini', 'opencode']);
+    expect(ids).toEqual(['codex', 'antigravity', 'opencode']);
+    expect(engines.REGISTRY.find((e) => e.id === 'antigravity').bin).toBe('agy');
     for (const e of engines.REGISTRY) {
       expect(e.bin, e.id).toBeTruthy();
       expect(e.label, e.id).toBeTruthy();
@@ -50,8 +51,8 @@ describe('engine registry (item 11)', () => {
       expect(codex.found).toBe(true);
       expect(codex.path).toBe(path.join(dir, 'codex'));
       expect(codex.version).toContain('1.2.3');
-      const gemini = found.find((e) => e.id === 'gemini');
-      expect(gemini.found).toBe(false);
+      const agy = found.find((e) => e.id === 'antigravity');
+      expect(agy.found).toBe(false);
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
@@ -60,9 +61,9 @@ describe('engine registry (item 11)', () => {
   it('commandFor resolves a found engine and explains a missing one', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cce-engines-'));
     try {
-      fs.writeFileSync(path.join(dir, 'gemini'), '#!/bin/sh\ntrue\n', { mode: 0o755 });
-      const ok = await engines.commandFor('gemini', { PATH: dir });
-      expect(ok.command).toBe(path.join(dir, 'gemini'));
+      fs.writeFileSync(path.join(dir, 'agy'), '#!/bin/sh\ntrue\n', { mode: 0o755 });
+      const ok = await engines.commandFor('antigravity', { PATH: dir });
+      expect(ok.command).toBe(path.join(dir, 'agy'));
       expect(ok.args).toEqual([]);
       const missing = await engines.commandFor('codex', { PATH: dir });
       expect(missing.error).toMatch(/not found/);
