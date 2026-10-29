@@ -955,7 +955,7 @@ body.split-open #splitpane { display: flex; }
 /* Engine chats (Codex / Antigravity / OpenCode): the CLI owns model, mode,
    effort and context, and takes text only. #feat-engine-chat */
 .engine-chat .chat-footbar,
-.engine-chat .chat-attach,
+.engine-chat:not(.engine-images) .chat-attach,
 .engine-chat .chat-mgr-btn { display: none !important; }
 
 /* ---------- composer footer (#32) ---------- */

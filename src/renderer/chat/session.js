@@ -165,17 +165,22 @@ export async function createSession(opts) {
     chat.engine = res.engine;
     chat.memProbed = true;   // the memory / skill probes are Claude prompts
     pane.classList.add('engine-chat');
+    if (res.engine === 'codex') pane.classList.add('engine-images');   // app-server takes images
     tab.firstChild.textContent = '◆ ' + basename(res.cwd) + ' · ' + name;
     if (chat.providerEl) chat.providerEl.textContent = res.model || name;
-    chat.composer.placeholder = 'Message ' + name + '…  (text only)';
+    // Codex runs over its app-server: images work and it asks before acting.
+    chat.composer.placeholder = res.engine === 'codex' ? 'Message ' + name + '…  (images ok)' : 'Message ' + name + '…  (text only)';
     const h = pane.querySelector('.chat-empty h3');
     if (h) h.textContent = name;
     const p = pane.querySelector('.chat-empty p');
     if (p) {
-      p.textContent = name + ' runs headless in this project: one CLI run per message, ' + (/CLI default$/.test(res.model || '') ? 'with its own login and models. ' : 'on ' + String(res.model || '').replace(/^[^·]*·\s*/, '') + '. ')
-        + (res.permissionMode === 'bypassPermissions'
-          ? 'YOLO is on: it runs commands and edits files without asking.'
-          : 'It cannot stop to ask you, so actions that need approval are blocked (Codex may still edit files inside this folder).');
+      p.textContent = res.engine === 'codex'
+        ? name + ' works in this project, ' + (/CLI default$/.test(res.model || '') ? 'with its own login and models. ' : 'on ' + String(res.model || '').replace(/^[^·]*·\s*/, '') + '. ')
+          + (res.permissionMode === 'bypassPermissions' ? 'YOLO is on: it runs commands and edits files without asking.' : 'It asks before running commands outside its sandbox.')
+        : name + ' runs headless in this project: one CLI run per message, ' + (/CLI default$/.test(res.model || '') ? 'with its own login and models. ' : 'on ' + String(res.model || '').replace(/^[^·]*·\s*/, '') + '. ')
+          + (res.permissionMode === 'bypassPermissions'
+            ? 'YOLO is on: it runs commands and edits files without asking.'
+            : 'It cannot stop to ask you, so actions that need approval are blocked.');
     }
   }
   // Restore any draft left by a crash/refresh. #crash-recovery

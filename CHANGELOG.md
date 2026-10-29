@@ -6,6 +6,12 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+
+## 0.9.98
+- New: Codex chats run over `codex app-server` instead of one `codex exec` per message. Codex now asks before running a command that isn't a known-safe read, and the request shows as CCE's usual Allow / Deny card. "Allow for this session" approves that exact command for the rest of the chat. Stop interrupts a turn, including one waiting on a card.
+- New: Codex chats take images (attach button and paste).
+- New: "Resume this folder's previous conversation" works for Codex: CCE remembers the last Codex thread per folder, reopens it and redraws the earlier turns.
+- Verified against the real Codex 0.165 CLI: allow runs the command, deny doesn't, an image reaches the provider, and a resumed thread keeps its history. CI runs the same steps against a stand-in server.
 ## 0.9.97
 - Fixed: Codex chats on a CCE provider. Codex removed its chat-completions mode in Feb 2026 and now speaks only the Responses API, so 0.9.96's setup failed on most providers. CCE's local proxy now serves the Responses API and translates it to whatever the provider speaks; Codex points at the proxy.
 - Changed: OpenCode chats on a CCE provider go through the same proxy with OpenCode's built-in Anthropic support, so no provider package is downloaded.

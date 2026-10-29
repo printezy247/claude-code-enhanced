@@ -1590,6 +1590,24 @@ function registerIpc() {
   }
 
   // Local-model pre-warm helpers live in ./localmodels (tested by scripts/check.js).
+  // The last conversation per CLI and folder, so "resume this folder's previous
+  // conversation" works for engine chats (Claude keeps its own in ~/.claude).
+  const engineKey = (engine, dir) => engine + '|' + dir;
+  function lastEngineThread(engine, dir) {
+    const e = (store.settings.engineThreads || {})[engineKey(engine, dir)];
+    return (e && e.id) || '';
+  }
+  let engineSaveTimer = null;
+  function rememberEngineThread(engine, dir, id) {
+    if (!id) return;
+    const all = { ...(store.settings.engineThreads || {}) };
+    all[engineKey(engine, dir)] = { id, at: Date.now() };
+    // Keep the newest 100 folders.
+    const keep = Object.entries(all).sort((a, b) => b[1].at - a[1].at).slice(0, 100);
+    store.settings.engineThreads = Object.fromEntries(keep);
+    if (!engineSaveTimer) engineSaveTimer = setTimeout(() => { engineSaveTimer = null; try { store.save(); } catch { /* next one will */ } }, 1500);
+  }
+
   handle('chat:create', async ({ cwd, providerUid, model, permissionMode, yolo, resume, fork, resumeAt, worktree: wantWorktree, engine, cliDefault }, e) => {
     // A stale or renamed cwd otherwise reaches the engine, which dies with the
     // misleading "CLI path wrong / auth expired" watchdog message.
@@ -1626,6 +1644,8 @@ function registerIpc() {
         engine: String(engine), command: resolved.command, cwd: dir,
         env: envWithLoginPath({ ...process.env, ...setup.env }), yolo: !!yolo, model: setup.model,
         extraArgs: setup.args, providerName: prov ? prov.name : '',
+        resumeId: resume === 'last' ? lastEngineThread(String(engine), dir) : '',
+        onThread: (threadId) => rememberEngineThread(String(engine), dir, threadId),
       });
       if (wt) created.worktree = wt;
       const owner = senderWindowId(e);
