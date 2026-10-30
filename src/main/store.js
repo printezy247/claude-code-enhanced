@@ -14,6 +14,9 @@ const DEFAULT_SETTINGS = {
   claudePath: '',            // empty = auto-detect
   fontSize: 14,
   scrollback: 5000,
+  lightpandaBlockUrls: '',       // sites the web browser must not load
+  lightpandaBlockPrivate: false, // block localhost / LAN addresses in the web browser
+  lightpandaCookies: false,      // one cookie file shared by chats
   disableTelemetry: true,    // DISABLE_TELEMETRY / DISABLE_ERROR_REPORTING / DISABLE_AUTOUPDATER
   defaultProviderUid: null,
   defaultCwd: os.homedir(),

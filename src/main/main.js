@@ -860,10 +860,16 @@ function owned(kind, fn) {
 }
 
 function registerIpc() {
-  handle('app:info', async (args) => {
+  handle('app:info', async (args, e) => {
     // The banner's re-check asks for a fresh look; everything else gets the cache.
     if (args && args.refresh) claudeInfo = await detectClaude();
+    // A window opened by /detach is handed its conversation once: a reload must not resume it again.
+    const wid = senderWindowId(e);
+    const st = wid == null ? null : windowRegistry.stateOf(wid);
+    const detach = st && st.detach ? st.detach : null;
+    if (detach) windowRegistry.setState(wid, { detach: null });
     return {
+    detach,
     appVersion: app.getVersion(),
     electron: process.versions.electron,
     claude: claudeInfo,
@@ -880,6 +886,14 @@ function registerIpc() {
     return { id: created.id, count: windowRegistry.size };
   });
 
+  // /detach: open a window that resumes one conversation. The old window has
+  // already closed its chat, so only one live session ever holds the transcript.
+  handle('window:detach', async ({ sessionId, cwd }) => {
+    if (!/^[0-9a-f-]{8,64}$/i.test(String(sessionId))) throw new Error('That is not a conversation id.');
+    const created = createWindow({ detach: { sessionId: String(sessionId), cwd: typeof cwd === 'string' ? cwd.slice(0, 1000) : '' } });
+    try { created.win.focus(); } catch { /* the window may not be ready yet */ }
+    return { id: created.id };
+  });
   // Release ping (#47, item 25): the same GitHub release feed, but compared
   // numerically per version segment (string order said 0.9.10 < 0.9.9) and
   // with fetch failures reported as errors — never as "you are up to date".
@@ -2636,6 +2650,16 @@ function registerIpc() {
     store.settings = { ...store.settings, sshHosts: list };
     return { ok: true };
   });
+  // Remote folders over ssh, read-only: list, read a file, show the git diff.
+  const sshBrowser = require('./sshbrowse').createBrowser();
+  const remoteHost = (id) => {
+    const h = (Array.isArray(store.settings.sshHosts) ? store.settings.sshHosts : []).find((x) => x && x.id === id);
+    if (!h) throw new Error('That ssh host is not saved.');
+    return h;
+  };
+  handle('ssh:ls', async ({ hostId, path: p }) => sshBrowser.list(remoteHost(hostId), p));
+  handle('ssh:read', async ({ hostId, path: p }) => sshBrowser.read(remoteHost(hostId), p));
+  handle('ssh:diff', async ({ hostId, path: p }) => sshBrowser.diff(remoteHost(hostId), p));
   // Background jobs: queue, list, cancel. Done/failed jobs notify. #feat-jobs
   // Codebase index (item 15): build/search/status for the current project.
   // The stored index is JSON per cwd; nothing leaves the machine.
@@ -2871,7 +2895,11 @@ function registerIpc() {
   handle('lightpanda:status', async () => lightpanda.status());
   handle('chat:browser', owned('chats', async ({ id, enabled }) => {
     if (enabled && !lightpanda.status().ready) throw new Error('Lightpanda is not installed.');
-    await chats.setBrowser(id, !!enabled, enabled ? lightpanda.serverConfig() : null);
+    await chats.setBrowser(id, !!enabled, enabled ? lightpanda.serverConfig({
+      blockUrls: store.settings.lightpandaBlockUrls,
+      blockPrivate: !!store.settings.lightpandaBlockPrivate,
+      cookieFile: store.settings.lightpandaCookies ? path.join(path.dirname(require('./lightpanda').DEFAULT_BINARY), 'cookies.json') : null,
+    }) : null);
     return { enabled: !!enabled };
   }));
 

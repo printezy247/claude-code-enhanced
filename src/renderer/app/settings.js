@@ -260,6 +260,24 @@ export function renderSettings() {
   st.appendChild(stc);
   st.appendChild(el('span', '', 'Show thinking (reasoning summaries in chat; Claude models are asked for their summaries when on)'));
   c5.appendChild(st);
+  // Lightpanda browser options (apply to chats that switch it on afterwards).
+  c5.appendChild(el('div', 'hint', 'Web browser (Lightpanda): applies the next time a chat turns it on. It has no allow-list option, so this is a block list.'));
+  const lpBlock = el('label', 'fld');
+  lpBlock.appendChild(el('span', '', 'Sites the browser must not load (one pattern per line, * is a wildcard)'));
+  const lpBlockInp = el('textarea'); lpBlockInp.rows = 3; lpBlockInp.value = s.lightpandaBlockUrls || ''; lpBlockInp.placeholder = '*doubleclick*\n*://ads.example.com/*';
+  lpBlockInp.setAttribute('aria-label', 'Sites the browser must not load');
+  lpBlock.appendChild(lpBlockInp);
+  c5.appendChild(lpBlock);
+  const lpPriv = el('label', 'check');
+  const lpPrivC = el('input'); lpPrivC.type = 'checkbox'; lpPrivC.checked = !!s.lightpandaBlockPrivate;
+  lpPriv.appendChild(lpPrivC);
+  lpPriv.appendChild(el('span', '', 'Block private network addresses (localhost, 192.168.x.x). Leave off to test a local dev server.'));
+  c5.appendChild(lpPriv);
+  const lpCook = el('label', 'check');
+  const lpCookC = el('input'); lpCookC.type = 'checkbox'; lpCookC.checked = !!s.lightpandaCookies;
+  lpCook.appendChild(lpCookC);
+  lpCook.appendChild(el('span', '', 'Keep cookies between chats in one file (~/.local/share/lightpanda/cookies.json). Logins then carry over; delete the file to forget them.'));
+  c5.appendChild(lpCook);
   body.appendChild(c5);
 
   // updates (release ping)
@@ -471,6 +489,9 @@ export function renderSettings() {
       fontSize: Math.max(8, Math.min(24, parseInt(fontInput.value, 10) || 14)),
       scrollback: Math.max(500, Math.min(200000, parseInt(sbInput.value, 10) || 5000)),
       disableTelemetry: telCheck.checked,
+      lightpandaBlockUrls: lpBlockInp.value,
+      lightpandaBlockPrivate: lpPrivC.checked,
+      lightpandaCookies: lpCookC.checked,
       maxBudgetUsd: parseFloat(budInput.value) || 0,
       maxTurns: parseInt(turnsInput.value, 10) || 0,
       fallbackModel: fbInput.value.trim(),

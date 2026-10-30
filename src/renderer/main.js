@@ -362,7 +362,11 @@ function wireChrome() {
   // chat starts only once a folder is picked; autoOpenWelcomeChat restores
   // the old welcome chat in the default folder.
   initHome();
-  if (state.settings.autoOpenWelcomeChat) {
+  // A window opened by /detach is handed the conversation it should resume (it rides on app:info).
+  const handed = info.detach;
+  if (handed && handed.sessionId) {
+    await Chat.createSession({ cwd: handed.cwd || state.settings.defaultCwd || '~', resume: handed.sessionId, providerUid: state.providers.defaultUid });
+  } else if (state.settings.autoOpenWelcomeChat) {
     await Chat.createSession({
       cwd: state.settings.defaultCwd || '~',
       providerUid: state.providers.defaultUid,

@@ -2061,3 +2061,8 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .recipe-card { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; }
 .recipe-title { font-weight: 600; font-size: 13px; }
 .recipe-next { white-space: pre-wrap; margin: 4px 0; }
+
+/* Remote (ssh) Files tab */
+.remote-view { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 50vh; overflow: auto; margin: 6px 0; }
+.remote-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-row.dir { font-weight: 600; }

@@ -388,6 +388,12 @@ function openConvoMenu(anchor, s, cwd) {
     toggleConversations(false);
     switchView('conversations');
   });
+  add('Open in new window', 'its own window', async () => {
+    // Open here → /detach in that chat instead (it must close first); otherwise just hand it over.
+    if (focusIfOpen(s.sessionId)) { toast('This conversation is open here. Use /detach in that chat to move it.', ''); return; }
+    const r = await ccx.invoke('window:detach', { sessionId: s.sessionId, cwd });
+    if (!r || !r.ok) toast((r && r.error) || 'Could not open a new window', 'err');
+  });
   add('Fork', 'branch a copy', () => {
     Chat.createSession({ cwd, resume: s.sessionId, fork: true });
     toggleConversations(false);

@@ -140,7 +140,7 @@ describe('per-row actions menu', () => {
     const menu = h.window.document.querySelector('.convo-menu');
     expect(menu).toBeTruthy();
     const labels = [...menu.querySelectorAll('.cm-label')].map(b => b.textContent);
-    expect(labels).toEqual(['Open', 'Fork', 'Pin', 'Rename…', 'Archive', 'Transcript', 'Export', 'New chat in this folder', 'Delete']);
+    expect(labels).toEqual(['Open', 'Open in new window', 'Fork', 'Pin', 'Rename…', 'Archive', 'Transcript', 'Export', 'New chat in this folder', 'Delete']);
     h.window.close();
   });
 
