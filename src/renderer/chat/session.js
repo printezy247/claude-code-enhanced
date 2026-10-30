@@ -63,7 +63,7 @@ export async function createSession(opts) {
         <div class="chat-slash hidden"></div>
         <div class="chat-input-row">
           <button class="chat-attach" title="Attach an image or a file" aria-label="Attach a file"><span data-icon="clip2"></span></button>
-          <textarea class="chat-input" rows="1" placeholder="Ask Claude to work on this project…  (@ files · / commands · paste images)"></textarea>
+          <textarea class="chat-input" rows="1" placeholder="Message… (@ files · / commands)"></textarea>
           <button class="chat-busy-mode hidden" title="Toggle Queue vs Steer mode when busy"><span class="busy-mode-badge queue">⏭ Queue</span></button>
           <button class="chat-send" title="Send (Enter)" aria-label="Send"><span data-icon="send"></span></button>
         </div>
@@ -180,7 +180,7 @@ export async function createSession(opts) {
     chat.caps = caps;
     tab.firstChild.textContent = '◆ ' + basename(res.cwd) + ' · ' + name;
     if (chat.providerEl) chat.providerEl.textContent = res.model || name;
-    chat.composer.placeholder = 'Message ' + name + (caps.images ? '…  (images ok)' : '…  (text only)');
+    chat.composer.placeholder = 'Message ' + name + (caps.images ? '…' : '… (text only)');
     const h = pane.querySelector('.chat-empty h3');
     if (h) h.textContent = name;
     const p = pane.querySelector('.chat-empty p');

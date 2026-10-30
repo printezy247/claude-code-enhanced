@@ -60,6 +60,20 @@ export function replyStatus(chat, m, isLast) {
   return answered ? 'answered' : 'no reply yet';
 }
 
+/** Colour of a request's tick: a failed tool (err), a waiting permission (perm), an edited file (edit). */
+function tickTone(from, until, chat) {
+  let err = false, edit = false;
+  for (let n = from.nextElementSibling; n && n !== until; n = n.nextElementSibling) {
+    if (n.classList.contains('tool-card')) {
+      if (n.querySelector('.tool-dot.err')) err = true;
+      if (n.classList.contains('kind-edit') && n.querySelector('.tool-dot.done')) edit = true;
+    }
+  }
+  const last = !until;
+  if (last && chat.permSlot && chat.permSlot.querySelector('.perm-card')) return 'perm';
+  return err ? 'err' : edit ? 'edit' : '';
+}
+
 export function setupRequestRail(chat) {
   const body = chat.pane.querySelector('.chat-body');
   if (!body || !chat.msgs) return;
@@ -83,6 +97,8 @@ export function setupRequestRail(chat) {
       b.type = 'button';
       b.dataset.i = String(i);
       b.setAttribute('aria-label', 'Request ' + (i + 1) + ': ' + textOf(m).slice(0, 80));
+      const tone = tickTone(m, items[i + 1], chat);
+      if (tone) b.classList.add('tick-' + tone);
       rail.appendChild(b);
     });
   };
@@ -118,6 +134,9 @@ export function setupRequestRail(chat) {
     queued = true;
     requestAnimationFrame(paint);
   }).observe(chat.msgs, { childList: true });
+  // A tool finishing or failing recolours its request's tick.
+  new MutationObserver(() => { if (queued) return; queued = true; requestAnimationFrame(paint); })
+    .observe(chat.msgs, { subtree: true, attributes: true, attributeFilter: ['class'] });
   paint();
 }
 

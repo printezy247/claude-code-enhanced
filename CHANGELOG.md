@@ -12,6 +12,15 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.15.0
+- Added: `Ctrl+1`…`Ctrl+9` jump to a tab (9 is the last), `Alt+1`…`Alt+6` open Changes, Files, Terminal, Diff, Review or Preview in the side pane, and `Ctrl+Tab` now cycles in most-recently-used order.
+- Added: `Ctrl+K` opens the command palette from every view. Type `>` for commands, `@` to add a file to the message, `#` for conversations, `:` for models.
+- Added: the Board's live chat rows have quick buttons: Jump, Compact (from 65% context), Stop while busy, Allow and Deny when a permission waits.
+- Added: clicking a file in the Overview's Changes card opens it in the Review pane; Shift+click adds `@file` to the message; Alt+click shows it in the folder.
+- Added: the request rail on the chat's right edge is always visible, and its ticks are coloured: red for a failed tool, orange for a waiting permission, green for edited files.
+- Changed: the Overview makes no git, context or connector calls while another view is open, the Overview is hidden or the window is in the background; it refreshes when you come back.
+- Changed: flatter Overview cards (no heavy shadow), system notes are small pills, long conversation lists skip off-screen rows, shorter message placeholder.
+
 ## 0.14.0
 - Added: model routing (Settings, off by default): in chats with no model chosen, small tasks go to Haiku, medium to Sonnet, big ones to Opus, for that message only.
 - Added: `/loop <times> <prompt>` runs a prompt several times in a row (Stop ends it, an error ends it). `/goal <text>` keeps a goal banner above the chat until `/goal clear`; it is remembered per folder.

@@ -1,6 +1,8 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { elIcon, toast } from '../app/core.js';
 import { switchView } from '../app/tabs.js';
+import { paletteKinds, paletteMode } from '../app/nav.js';
+import { openChats } from './mentions-live.js';
 import { autosize } from './composer.js';
 import { INSTALL_CMD, renderHooks } from './events.js';
 import { closeChat, createSession } from './session.js';
@@ -349,7 +351,7 @@ export function openPalette(chat) {
   const back = el('div', 'palette-back');
   const box = el('div', 'palette');
   const input = el('input');
-  input.placeholder = 'Jump to a session, model, command, or panel…';
+  input.placeholder = 'Jump to…   > commands  @ files  # chats  : models';
   const list = el('div', 'palette-list');
   box.appendChild(input);
   box.appendChild(list);
@@ -363,38 +365,42 @@ export function openPalette(chat) {
     ['Connectors', 'connectors'], ['Settings', 'settings']]) {
     add('view', label, '', () => { close(); switchView(view); });
   }
-  add('panel', 'Skills, agents, hooks, tools', '', () => { close(); toggleSkillsPanel(chat); });
-  add('panel', 'MCP servers (live)', '', () => { close(); toggleMcpPanel(chat); });
-  add('panel', 'past conversations', '', () => { close(); toggleHistoryPanel(chat); });
-  add('panel', '⏪ rewind files', '', () => { close(); toggleRewindPanel(chat); });
-  add('panel', 'memory & rules', '', () => { close(); toggleMemoryPanel(chat); });
-  add('chat', '⑂ fork this conversation', '', () => { close(); chat.forkBtn.click(); });
-  add('chat', '⌨ terminal tab in this folder', '', () => { close(); window.createSession({ cwd: chat.cwd, type: 'shell' }); });
-  add('chat', 'summarize session into a handoff brief', '', () => { close(); prefilledSummary(chat); });
-  add('chat', '■ stop / interrupt', '', () => { close(); chat.stopBtn.click(); });
+  if (chat) {
+    add('panel', 'Skills, agents, hooks, tools', '', () => { close(); toggleSkillsPanel(chat); });
+    add('panel', 'MCP servers (live)', '', () => { close(); toggleMcpPanel(chat); });
+    add('panel', 'past conversations', '', () => { close(); toggleHistoryPanel(chat); });
+    add('panel', '⏪ rewind files', '', () => { close(); toggleRewindPanel(chat); });
+    add('panel', 'memory & rules', '', () => { close(); toggleMemoryPanel(chat); });
+    add('chat', '⑂ fork this conversation', '', () => { close(); chat.forkBtn.click(); });
+    add('chat', '⌨ terminal tab in this folder', '', () => { close(); window.createSession({ cwd: chat.cwd, type: 'shell' }); });
+    add('chat', 'summarize session into a handoff brief', '', () => { close(); prefilledSummary(chat); });
+    add('chat', '■ stop / interrupt', '', () => { close(); chat.stopBtn.click(); });
 
-  for (const o of chat.modelSel.options) {
-    if (!o.value || o.value === '__custom') continue;
-    add('model', o.textContent, '', () => {
-      close();
-      chat.modelSel.value = o.value;
-      chat.modelSel.dispatchEvent(new Event('change'));
-    });
+    for (const o of chat.modelSel.options) {
+      if (!o.value || o.value === '__custom') continue;
+      add('model', o.textContent, '', () => {
+        close();
+        chat.modelSel.value = o.value;
+        chat.modelSel.dispatchEvent(new Event('change'));
+      });
+    }
+    for (const c of (chat.commandDetails || chat.commands || []).slice(0, 120)) {
+      const name = typeof c === 'string' ? c : c.name;
+      const desc = typeof c === 'string' ? '' : (c.description || '');
+      add('command', '/' + name, desc, () => {
+        close();
+        chat.composer.value = '/' + name + ' ';
+        chat.composer.focus();
+      });
+    }
   }
-  for (const c of (chat.commandDetails || chat.commands || []).slice(0, 120)) {
-    const name = typeof c === 'string' ? c : c.name;
-    const desc = typeof c === 'string' ? '' : (c.description || '');
-    add('command', '/' + name, desc, () => {
-      close();
-      chat.composer.value = '/' + name + ' ';
-      chat.composer.focus();
-    });
+  for (const c of openChats(chat && chat.id)) {
+    add('open', c.title, c.folder, () => { close(); switchView('conversations'); if (window.__activate) window.__activate(c.id); });
   }
 
   let sel = 0;
   const render = () => {
-    const q = input.value.trim().toLowerCase();
-    const shown = items.filter(i => !q || i.label.toLowerCase().includes(q) || (i.sub || '').toLowerCase().includes(q)).slice(0, 60);
+    const shown = shownNow();
     list.innerHTML = '';
     if (sel >= shown.length) sel = 0;
     shown.forEach((i, idx) => {
@@ -409,10 +415,18 @@ export function openPalette(chat) {
     if (!shown.length) list.appendChild(el('div', 'palette-item', 'no match'));
     return shown;
   };
-  const shownNow = () => items.filter(i => {
-    const q = input.value.trim().toLowerCase();
-    return !q || i.label.toLowerCase().includes(q) || (i.sub || '').toLowerCase().includes(q);
-  }).slice(0, 60);
+  // Prefixes: > commands, @ files, # conversations, : models.
+  const shownNow = () => {
+    const { mode, q: raw } = paletteMode(input.value);
+    const q = raw.toLowerCase();
+    if (mode === 'files') {
+      if (!chat) return [];
+      return [{ kind: 'file', label: '@' + raw, sub: 'add to the message', run: () => { close(); chat.composer.value += (chat.composer.value && !/\s$/.test(chat.composer.value) ? ' ' : '') + '@' + raw + ' '; chat.composer.focus(); } }];
+    }
+    const kinds = paletteKinds(mode);
+    return items.filter(i => (!kinds || kinds.includes(i.kind))
+      && (!q || i.label.toLowerCase().includes(q) || (i.sub || '').toLowerCase().includes(q))).slice(0, 60);
+  };
 
   function onKey(e) {
     if (!back.isConnected) { document.removeEventListener('keydown', onKey, true); return; }

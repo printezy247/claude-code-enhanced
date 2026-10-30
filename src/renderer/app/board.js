@@ -8,6 +8,8 @@ import { holdText, summary } from '../chat/queue.js';
 import { setQueuePaused } from '../chat/qpanel.js';
 import { chatTitle } from '../chat/mentions-live.js';
 import { t, tf } from '../i18n.js';
+import { boardActions } from './boardactions.js';
+import { doCompact } from '../chat/slash.js';
 
 function rowCard(r) {
   const card = el('div', 'card');
@@ -30,6 +32,25 @@ function rowCard(r) {
     } catch (e) { toast(String(e && e.message || e), 'err'); }
   });
   card.appendChild(open);
+  const live = Chat.chats.get(r.id);
+  if (live) {
+    const bar = el('span', 'board-actions');
+    const press = (cls) => { const b = live.permSlot && live.permSlot.querySelector('.perm-card .btn.' + cls); if (b) b.click(); };
+    const run = {
+      jump: () => { switchView('conversations'); if (window.__activate) window.__activate(live.id); },
+      compact: () => doCompact(live),
+      stop: () => ccx.invoke('chat:interrupt', { id: live.id }),
+      allow: () => press('primary'),
+      deny: () => press('danger'),
+    };
+    for (const a of boardActions(live)) {
+      const b = el('button', 'btn small' + (a.id === 'deny' || a.id === 'stop' ? ' danger' : ''), a.label);
+      b.dataset.action = a.id;
+      b.addEventListener('click', () => run[a.id]());
+      bar.appendChild(b);
+    }
+    card.appendChild(bar);
+  }
   return card;
 }
 
