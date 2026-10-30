@@ -73,7 +73,22 @@ process.stdin.on('data', (d) => {
     else if (m.method === 'thread/start') { const t = thread('thread-' + Date.now().toString(36) + (++n)); save(); ok({ thread: { id: t.id }, model: p.model || 'fake-model', approvalPolicy: p.approvalPolicy }); }
     else if (m.method === 'thread/resume') { const t = thread(p.threadId); ok({ thread: { id: t.id }, model: p.model || 'fake-model' }); }
     else if (m.method === 'thread/read') { const t = thread(p.threadId); ok({ thread: { id: t.id, turns: t.turns } }); }
-    else if (m.method === 'turn/start') { const turnId = id('turn'); ok({ turn: { id: turnId, status: 'inProgress', items: [] } }); runTurn(thread(p.threadId), turnId, p.input || []); }
+    else if (m.method === 'model/list') ok({ data: [
+      { id: 'm-fast', model: 'm-fast', displayName: 'Fast', isDefault: true, hidden: false, supportedReasoningEfforts: [{ reasoningEffort: 'low', description: '' }, { reasoningEffort: 'high', description: '' }] },
+      { id: 'm-plain', model: 'm-plain', displayName: 'Plain', hidden: false, supportedReasoningEfforts: [] },
+      { id: 'm-hid', model: 'm-hid', displayName: 'Hidden', hidden: true, supportedReasoningEfforts: [] },
+    ], nextCursor: null });
+    else if (m.method === 'thread/compact/start') {
+      ok({});
+      const turnId = id('turn');
+      note('turn/started', { threadId: p.threadId, turn: { id: turnId, status: 'inProgress', items: [] } });
+      note('item/completed', { threadId: p.threadId, turnId, item: { type: 'contextCompaction', id: id('item') } });
+      note('turn/completed', { threadId: p.threadId, turn: { id: turnId, status: 'completed', items: [], error: null } });
+    }
+    else if (m.method === 'turn/start') {
+      // FAKE_CODEX_LOG: what each turn asked for (model, effort, policies), one JSON per line.
+      if (process.env.FAKE_CODEX_LOG) fs.appendFileSync(process.env.FAKE_CODEX_LOG, JSON.stringify({ model: p.model, effort: p.effort, approvalPolicy: p.approvalPolicy, sandboxPolicy: p.sandboxPolicy }) + '\n');
+      const turnId = id('turn'); ok({ turn: { id: turnId, status: 'inProgress', items: [] } }); runTurn(thread(p.threadId), turnId, p.input || []); }
     else if (m.method === 'turn/interrupt') {
       ok({});
       if (current) {

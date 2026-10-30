@@ -85,7 +85,7 @@ export async function createSession(opts) {
 
   const chat = {
     follow: true,   // keep the view pinned to new output until the user scrolls up
-    id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider, res.autoPolicy), autoPolicy: !!res.autoPolicy,
+    id, cwd: res.cwd, provider: res.provider, model: res.model || '', mode: uiMode(res.permissionMode, res.provider, res.autoPolicy, res.capabilities && res.capabilities.modes), autoPolicy: !!res.autoPolicy,
     pane, msgs: pane.querySelector('.chat-msgs'), composer: pane.querySelector('.chat-input'),
     sendBtn: pane.querySelector('.chat-send'), stopBtn: pane.querySelector('.chat-stop'),
     statusLine: pane.querySelector('.chat-statusline .sl-left'),
@@ -166,10 +166,16 @@ export async function createSession(opts) {
   if (res.engine) {
     const name = res.label || res.model || res.engine;
     chat.engine = res.engine;
+    chat.engineModel = res.engineModel || '';
     chat.memProbed = true;   // the memory / skill probes are Claude prompts
     pane.classList.add('engine-chat');
     const caps = res.capabilities || {};
     if (caps.images) pane.classList.add('engine-images');
+    // Leave out the footbar controls this CLI has no way to do.
+    if (!caps.model) pane.classList.add('no-model');
+    if (!caps.modes) pane.classList.add('no-mode');
+    if (!caps.compact && !caps.context) pane.classList.add('no-ctx');
+    chat.caps = caps;
     tab.firstChild.textContent = '◆ ' + basename(res.cwd) + ' · ' + name;
     if (chat.providerEl) chat.providerEl.textContent = res.model || name;
     chat.composer.placeholder = 'Message ' + name + (caps.images ? '…  (images ok)' : '…  (text only)');
@@ -231,7 +237,7 @@ export async function createSession(opts) {
   // composer controls (model + mode moved out of the header into the footer,
   // as in the desktop app). #32 #33
   fillModelSelector(chat);
-  fillModeSelect(chat.modeSel, chat.provider);
+  fillModeSelect(chat.modeSel, chat.provider, chat.caps && chat.caps.modes);
   chat.modeSel.value = chat.mode;
   refreshEffort(chat);
   wireModelPicker(chat);
@@ -250,10 +256,10 @@ export async function createSession(opts) {
     if (r.ok) {
       // The main process is the authority: it may fall back (auto → accept edits on a third-party provider).
       chat.autoPolicy = !!r.autoPolicy;
-      chat.mode = uiMode(r.permissionMode || want, chat.provider, chat.autoPolicy);
+      chat.mode = uiMode(r.permissionMode || want, chat.provider, chat.autoPolicy, chat.caps && chat.caps.modes);
       chat.modeSel.value = chat.mode;
-      if (chat.mode !== want) toast('auto needs Anthropic’s own API — using ' + modeLabel(chat.mode) + ' instead', 'err');
-      else toast('Mode → ' + modeLabel(chat.mode), 'ok');
+      if (chat.mode !== want) toast('auto needs Anthropic’s own API — using ' + modeLabel(chat.mode, chat.caps && chat.caps.modes) + ' instead', 'err');
+      else toast('Mode → ' + modeLabel(chat.mode, chat.caps && chat.caps.modes), 'ok');
       setStatusLine(chat);
     } else { toast(r.error, 'err'); chat.modeSel.value = chat.mode; }
   });

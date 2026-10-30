@@ -37,7 +37,8 @@ export function wireTargetChip(chat, res) {
     chat.pane.querySelector('.chat-composer').appendChild(menu);
     // The menu is there at once; saved SSH hosts join it when the list arrives.
     const mine = menu;
-    ccx.invoke('sshhosts:list').then((r) => {
+    // Codex, OpenCode and Antigravity run on this machine only.
+    if (!chat.engine) ccx.invoke('sshhosts:list').then((r) => {
       if (menu !== mine) return;   // closed meanwhile
       for (const h of (r && r.hosts) || []) {
         add(t('target.ssh') + ' · ' + h.label, tf('target.sshDesc', { who: (h.user ? h.user + '@' : '') + h.host }), isSsh && res.ssh.id === h.id, () => openSsh(h));
@@ -56,7 +57,10 @@ export function wireTargetChip(chat, res) {
     if (ok === null || String(ok).trim().toLowerCase() !== 'ok') return;
     // A remote chat's folder is a path on the other machine: the local chat starts in the default folder.
     const root = isSsh ? undefined : (res.worktree && res.worktree.root ? res.worktree.root : chat.cwd);
-    createSession({ cwd: root, providerUid: chat.provider ? chat.provider.uid : null, model: chat.model || '', permissionMode: chat.mode, worktree });
+    // An engine chat reopens on the same CLI (its model is set again from the footbar).
+    createSession(chat.engine
+      ? { cwd: root, engine: chat.engine, yolo: chat.mode === 'bypassPermissions', worktree }
+      : { cwd: root, providerUid: chat.provider ? chat.provider.uid : null, model: chat.model || '', permissionMode: chat.mode, worktree });
     toast('Opened a new chat in ' + where);
   }
 

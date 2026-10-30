@@ -43,14 +43,16 @@ function textOf(content) {
 /**
  * Stand-in for the Agent SDK query object of an engine chat. The panels that
  * ask it for commands, models or agents get an empty answer; `usage()` feeds
- * the context bar. Any other SDK call rejects with a message naming the engine.
+ * the context bar; `extra` adds the SDK calls the engine can really do (set a
+ * model, a mode, an effort). Any other SDK call rejects with a message naming the engine.
  */
-function stubQuery(label, { interrupt, usage }) {
+function stubQuery(label, { interrupt, usage, extra = {} }) {
   const empty = async () => [];
   const known = {
     interrupt,
     supportedCommands: empty, supportedModels: empty, supportedAgents: empty, mcpServerStatus: empty,
     getContextUsage: async () => usage(),
+    ...extra,   // the controls this engine really has: setModel, setPermissionMode, ...
   };
   return new Proxy(known, {
     get: (target, prop) => (prop in target ? target[prop]

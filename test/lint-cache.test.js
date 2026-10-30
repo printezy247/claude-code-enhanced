@@ -22,7 +22,7 @@ const lintianRuns = () => (fs.existsSync(runs) ? fs.readFileSync(runs, 'utf8').s
 
 let n = 0;
 /** A .deb in its own dist folder: { binary, desktop, version } decide what differs. */
-function makeDeb({ binary = 'ELF-1', desktop = '[Desktop Entry]\nName=App\n', version = '1.0.0' } = {}) {
+function makeDeb({ binary = 'ELF-1', desktop = '[Desktop Entry]\nType=Application\nName=App\n', version = '1.0.0' } = {}) {
   const dir = path.join(tmp, 'pkg' + (++n));
   fs.mkdirSync(path.join(dir, 'DEBIAN'), { recursive: true });
   fs.mkdirSync(path.join(dir, 'opt', 'app'), { recursive: true });
@@ -48,7 +48,7 @@ describe.skipIf(!haveDpkg)('lint.sh payload cache', () => {
   it('fingerprint ignores the .desktop entry and the version, not the payload', () => {
     const a = fingerprint(makeDeb());
     expect(a).toMatch(/^[0-9a-f]{64}$/);
-    expect(fingerprint(makeDeb({ desktop: '[Desktop Entry]\nName=Renamed\nComment=x\n' }))).toBe(a);
+    expect(fingerprint(makeDeb({ desktop: '[Desktop Entry]\nType=Application\nName=Renamed\nComment=x\n' }))).toBe(a);
     expect(fingerprint(makeDeb({ version: '2.0.0' }))).toBe(a);
     expect(fingerprint(makeDeb({ binary: 'ELF-2' }))).not.toBe(a);
   });
@@ -60,7 +60,7 @@ describe.skipIf(!haveDpkg)('lint.sh payload cache', () => {
     expect(first.status).toBe(0);
     expect(lintianRuns()).toBe(1);
     // a new build that only changed the menu entry and the version
-    const second = lint(makeDeb({ desktop: '[Desktop Entry]\nName=New name\n', version: '1.0.1' }), cache);
+    const second = lint(makeDeb({ desktop: '[Desktop Entry]\nType=Application\nName=New name\n', version: '1.0.1' }), cache);
     expect(second.status).toBe(0);
     expect(second.stdout).toContain('lintian skipped');
     expect(lintianRuns()).toBe(1);

@@ -60,6 +60,13 @@ function withPermissions(configJson, yolo) {
   let cfg = {};
   try { cfg = configJson ? JSON.parse(configJson) : {}; } catch { cfg = {}; }
   cfg.permission = yolo ? { bash: 'allow', edit: 'allow', webfetch: 'allow' } : { bash: 'ask', edit: 'ask', webfetch: 'ask' };
+  cfg.permissions = yolo
+    ? [{ action: '*', resource: '*', effect: 'allow' }]
+    : [
+        { action: 'shell', resource: '*', effect: 'ask' },
+        { action: 'edit', resource: '*', effect: 'ask' },
+        { action: 'webfetch', resource: '*', effect: 'ask' },
+      ];
   return JSON.stringify(cfg);
 }
 
@@ -108,7 +115,7 @@ class OpenCodeChat {
       const password = crypto.randomBytes(18).toString('hex');
       this.auth = 'Basic ' + Buffer.from('opencode:' + password).toString('base64');
       this.base = 'http://127.0.0.1:' + port;
-      const env = { ...this.env, OPENCODE_SERVER_PASSWORD: password, OPENCODE_CONFIG_CONTENT: withPermissions(this.env.OPENCODE_CONFIG_CONTENT, this.yolo) };
+      const env = { ...this.env, OPENCODE_SERVER_PASSWORD: password, OPENCODE_PASSWORD: password, OPENCODE_CONFIG_CONTENT: withPermissions(this.env.OPENCODE_CONFIG_CONTENT, this.yolo) };
       const child = spawn(this.command, ['serve', '--port', String(port), '--hostname', '127.0.0.1'], { cwd: this.cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       this.child = child;
       let stderr = '';
@@ -130,12 +137,20 @@ class OpenCodeChat {
       await this._listen();
       let session;
       if (this.sessionId) {
-        session = await this._api('GET', '/session/' + encodeURIComponent(this.sessionId));
+        try {
+          session = await this._api('GET', '/api/session/' + encodeURIComponent(this.sessionId));
+        } catch {
+          session = await this._api('GET', '/session/' + encodeURIComponent(this.sessionId));
+        }
       } else {
-        session = await this._api('POST', '/session', { title: 'CCE chat' });
+        try {
+          session = await this._api('POST', '/api/session', { location: { directory: this.cwd }, title: 'CCE chat' });
+        } catch {
+          session = await this._api('POST', '/session', { title: 'CCE chat' });
+        }
       }
       const resumed = !!this.sessionId;
-      this.sessionId = session.id;
+      this.sessionId = (session && session.data && session.data.id) || (session && session.id) || this.sessionId;
       this.onThread(this.sessionId);
       if (!this.initSent) { this.initSent = true; this.emit({ kind: 'message', msg: frames.initMsg(this.sessionId, 'opencode', { model: this.model || 'OpenCode' }) }); }
       if (resumed) await this._replay().catch(() => {});
@@ -159,7 +174,8 @@ class OpenCodeChat {
     let connected;
     const ready = new Promise((resolve, reject) => { connected = { resolve, reject }; });
     (async () => {
-      const r = await fetch(this.base + '/event', { headers: { authorization: this.auth }, signal });
+      let r = await fetch(this.base + '/api/event', { headers: { authorization: this.auth }, signal }).catch(() => null);
+      if (!r || !r.ok) r = await fetch(this.base + '/event', { headers: { authorization: this.auth }, signal });
       if (!r.ok) throw new Error('OpenCode event stream -> ' + r.status);
       connected.resolve();
       const reader = r.body.getReader();
@@ -187,14 +203,61 @@ class OpenCodeChat {
   _frame(msg) { this.emit({ kind: 'message', msg }); }
 
   _onEvent(e) {
-    const p = e.properties || {};
+    const p = e.data || e.properties || {};
     if (p.sessionID && p.sessionID !== this.sessionId) return;
     switch (e.type) {
       case 'message.part.updated': this._onPart(p.part || {}, true); break;
+      case 'session.text.started': break;
+      case 'session.text.delta':
+        if (p.delta) { this.lastText += p.delta; this._frame(frames.textMsg(this.sessionId, this.lastText)); }
+        break;
+      case 'session.text.ended':
+        if (p.text && !this.lastText) { this.lastText = p.text; this._frame(frames.textMsg(this.sessionId, this.lastText)); }
+        break;
+      case 'session.reasoning.delta':
+        if (p.delta) this._frame(frames.thinkingMsg(this.sessionId, p.delta));
+        break;
+      case 'session.tool.called': {
+        const callId = p.callID || p.id || ('call_' + Date.now());
+        if (!this.seenTool.has(callId)) {
+          this.seenTool.add(callId);
+          this._frame(frames.toolUse(this.sessionId, callId, toolName(p.tool || p.name), toolInput(p.tool || p.name, p.input)));
+        }
+        break;
+      }
+      case 'session.tool.success': {
+        const callId = p.callID || p.id;
+        if (callId && !this.doneParts.has(callId)) {
+          this.doneParts.add(callId);
+          this._frame(frames.toolResult(this.sessionId, callId, p.output, false));
+        }
+        break;
+      }
+      case 'session.tool.failed': {
+        const callId = p.callID || p.id;
+        if (callId && !this.doneParts.has(callId)) {
+          this.doneParts.add(callId);
+          const denied = /reject|denied|permission/i.test(String(p.error || ''));
+          this._frame(frames.toolResult(this.sessionId, callId, denied ? 'Denied: the tool was not run.' : String(p.error || 'failed'), true));
+        }
+        break;
+      }
       case 'permission.asked': this._onPermission(p); break;
       case 'question.asked': this._rejectQuestion(p); break;
-      case 'session.error': this.lastError = (p.error && (p.error.data && p.error.data.message || p.error.message || p.error.name)) || this.lastError; break;
-      case 'session.idle': this._endTurn(); break;
+      case 'session.step.ended': {
+        const t = p.tokens || {};
+        if (t.input || t.output) this.tokens.set(p.id || 'step', { input: Number(t.input) || 0, output: Number(t.output) || 0 });
+        break;
+      }
+      case 'session.step.failed':
+      case 'session.execution.failed':
+      case 'session.error':
+        this.lastError = (p.error && ((p.error.data && p.error.data.message) || p.error.message || p.error.name)) || this.lastError;
+        break;
+      case 'session.idle':
+      case 'session.execution.succeeded':
+        this._endTurn();
+        break;
       default: break;
     }
   }
@@ -227,22 +290,29 @@ class OpenCodeChat {
   }
 
   async _onPermission(p) {
-    const patterns = Array.isArray(p.patterns) ? p.patterns : [];
+    const patterns = Array.isArray(p.resources) ? p.resources : (Array.isArray(p.patterns) ? p.patterns : []);
     const meta = p.metadata || {};
-    const isBash = p.permission === 'bash';
+    const action = p.permission || p.action || '';
+    const isBash = action === 'bash' || action === 'shell';
+    const isWeb = action === 'webfetch';
     const subject = isBash ? (meta.command || patterns.join(' && ')) : (meta.filepath || meta.filePath || patterns.join(', '));
     let decision = 'deny';
     try {
       decision = await this.ask({
-        toolName: isBash ? 'Bash' : (p.permission === 'webfetch' ? 'WebFetch' : 'Edit'),
-        input: isBash ? { command: subject } : p.permission === 'webfetch' ? { url: meta.url || subject } : { file_path: subject },
-        title: 'OpenCode wants to ' + (isBash ? 'run: ' : p.permission === 'webfetch' ? 'fetch: ' : 'change: ') + subject,
+        toolName: isBash ? 'Bash' : (isWeb ? 'WebFetch' : 'Edit'),
+        input: isBash ? { command: subject } : isWeb ? { url: meta.url || subject } : { file_path: subject },
+        title: 'OpenCode wants to ' + (isBash ? 'run: ' : isWeb ? 'fetch: ' : 'change: ') + subject,
         description: '', itemId: (p.tool && p.tool.callID) || p.id,
       });
     } catch { decision = 'deny'; }
+    const replyVal = decision === 'always' ? 'always' : decision === 'allow' ? 'once' : 'reject';
     try {
-      await this._api('POST', '/permission/' + encodeURIComponent(p.id) + '/reply', { reply: decision === 'always' ? 'always' : decision === 'allow' ? 'once' : 'reject' });
-    } catch { /* the turn ended or was aborted meanwhile */ }
+      await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/permission/' + encodeURIComponent(p.id) + '/reply', { decision: replyVal });
+    } catch {
+      try {
+        await this._api('POST', '/permission/' + encodeURIComponent(p.id) + '/reply', { reply: replyVal });
+      } catch { /* the turn ended or was aborted meanwhile */ }
+    }
   }
 
   /** OpenCode's own questions to the user have no card yet: decline rather than hang. */
@@ -267,16 +337,33 @@ class OpenCodeChat {
 
   async _replay() {
     const sid = this.sessionId;
-    const msgs = await this._api('GET', '/session/' + encodeURIComponent(sid) + '/message', undefined, 30_000);
+    let msgs;
+    try {
+      const r = await this._api('GET', '/api/session/' + encodeURIComponent(sid) + '/message', undefined, 30_000);
+      msgs = (r && r.data) ? r.data : r;
+    } catch {
+      msgs = await this._api('GET', '/session/' + encodeURIComponent(sid) + '/message', undefined, 30_000);
+    }
     for (const m of Array.isArray(msgs) ? msgs : []) {
-      const role = m.info && m.info.role;
-      for (const part of m.parts || []) {
-        if (role === 'user') {
-          if (part.type === 'text' && part.text && !part.synthetic) {
-            this._frame({ type: 'user', session_id: sid, uuid: part.id, parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text: part.text }] } });
+      const role = (m.info && m.info.role) || m.type;
+      if (role === 'user') {
+        const text = m.text || (m.parts && m.parts.find((p) => p.type === 'text')?.text);
+        if (text) {
+          this._frame({ type: 'user', session_id: sid, uuid: m.id || ('u_' + Date.now()), parent_tool_use_id: null, message: { role: 'user', content: [{ type: 'text', text }] } });
+        }
+      } else if (role === 'assistant') {
+        if (Array.isArray(m.content)) {
+          for (const item of m.content) {
+            if (item.type === 'text' && item.text) {
+              this._frame(frames.textMsg(sid, item.text));
+            } else if (item.type === 'tool') {
+              this._frame(frames.toolUse(sid, item.id, toolName(item.name), toolInput(item.name, item.state?.input)));
+              if (item.state?.output) this._frame(frames.toolResult(sid, item.id, item.state.output, false));
+              else if (item.state?.error) this._frame(frames.toolResult(sid, item.id, item.state.error, true));
+            }
           }
         } else {
-          this._onPart(part, false);
+          for (const part of m.parts || []) this._onPart(part, false);
         }
       }
     }
@@ -300,9 +387,19 @@ class OpenCodeChat {
     this.started = Date.now();
     this.emit({ kind: 'status', busy: true });
     this._start()
-      .then(() => {
+      .then(async () => {
         const model = splitModel(this.model);
-        return this._api('POST', '/session/' + encodeURIComponent(this.sessionId) + '/prompt_async', { ...(model ? { model } : {}), parts }, 60_000);
+        const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
+        const files = parts.filter((p) => p.type === 'file').map((p) => ({ uri: p.url, name: p.filename || 'file' }));
+        try {
+          return await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/prompt', {
+            text, files, ...(model ? { model } : {}),
+          }, 60_000);
+        } catch {
+          return await this._api('POST', '/session/' + encodeURIComponent(this.sessionId) + '/prompt_async', {
+            ...(model ? { model } : {}), parts,
+          }, 60_000);
+        }
       })
       .catch((err) => {
         if (!this.busy) return;
@@ -323,7 +420,11 @@ class OpenCodeChat {
     this.queue = [];
     this.interrupted = true;
     if (this.child && this.sessionId) {
-      try { await this._api('POST', '/session/' + encodeURIComponent(this.sessionId) + '/abort', {}, 5000); } catch { /* the turn may have just ended */ }
+      try {
+        await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/interrupt', {}, 5000);
+      } catch {
+        try { await this._api('POST', '/session/' + encodeURIComponent(this.sessionId) + '/abort', {}, 5000); } catch { /* the turn may have just ended */ }
+      }
     }
     this.emit({ kind: 'interrupted', stillQueued });
     // An aborted turn goes idle by itself; if the server stays silent, end it here.
@@ -339,10 +440,40 @@ class OpenCodeChat {
     terminate(child);
   }
 
+  /** OpenCode: the model can be typed in (provider/model); its mode and effort are fixed when the server starts. */
+  get controls() { return { model: true, modes: null, effort: false, compact: false, context: false }; }
+
+  async models() {
+    try {
+      if (!this.child) await this._start();
+      const r = await this._api('GET', '/api/model', undefined, 5000);
+      const list = (r && r.data && Array.isArray(r.data)) ? r.data : (Array.isArray(r) ? r : []);
+      return list.map((m) => (typeof m === 'string' ? m : (m.id || m.name))).filter(Boolean);
+    } catch {
+      return [];
+    }
+  }
+
+  async setModel(model) {
+    this.model = String(model || '');
+    if (this.sessionId) {
+      const split = splitModel(this.model);
+      try {
+        await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/model', {
+          model: split ? { id: split.modelID, providerID: split.providerID } : { id: this.model, providerID: '' },
+        }, 5000);
+      } catch { /* ok */ }
+    }
+    return { model: this.model };
+  }
+
+  effortLevels() { return []; }
+
   _stub() {
     return stubQuery('OpenCode', {
       interrupt: () => this.interrupt(),
       usage: () => ({ totalTokens: this.usage.input_tokens, maxTokens: 0, percentage: 0, categories: [] }),
+      extra: { supportedModels: () => this.models(), setModel: (m) => this.setModel(m) },
     });
   }
 }

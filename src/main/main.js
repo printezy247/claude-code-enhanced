@@ -1825,6 +1825,7 @@ function registerIpc() {
   handle('chat:effort-levels', owned('chats', async ({ id }) => {
     const c = chats.chats.get(id);
     if (!c) throw new Error('chat not found');
+    if (c.engine) return { levels: c.runner.effortLevels ? await c.runner.effortLevels() : [], current: c.runner.effort || '' };
     const prov = c.providerInstance || null;
     return { levels: effortLevels(prov, c.model || (prov && prov.model) || ''), current: c.effort || '' };
   }));

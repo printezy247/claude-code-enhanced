@@ -97,9 +97,9 @@ export function showPermission(chat, evt) {
     const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode });
     if (r.ok) {
       chat.autoPolicy = !!r.autoPolicy;
-      chat.mode = uiMode(r.permissionMode || mode, chat.provider, chat.autoPolicy);
+      chat.mode = uiMode(r.permissionMode || mode, chat.provider, chat.autoPolicy, chat.caps && chat.caps.modes);
       chat.modeSel.value = chat.mode;
-      toast('Mode → ' + modeLabel(chat.mode), 'ok');
+      toast('Mode → ' + modeLabel(chat.mode, chat.caps && chat.caps.modes), 'ok');
     }
   };
   const finish = () => {

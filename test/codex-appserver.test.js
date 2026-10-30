@@ -121,3 +121,64 @@ describe('ChatManager wiring', () => {
     mgr.close(created.id);
   });
 });
+
+describe('Codex footbar controls', () => {
+  const logFile = () => path.join(tmp, 'turns-' + (++stateSeq) + '.log');
+  const turns = (f) => fs.readFileSync(f, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  function withLog() {
+    const f = logFile();
+    const events = []; const asks = [];
+    const c = new CodexChat({
+      command: FAKE, cwd: tmp, env: { ...process.env, FAKE_CODEX_STATE: STATE, FAKE_CODEX_LOG: f },
+      emit: (e) => events.push(e), ask: async (r) => { asks.push(r); return 'allow'; }, onThread: () => {},
+    });
+    live.push(c);
+    return { c, f, events };
+  }
+
+  it('lists the models Codex reports, without the hidden ones', async () => {
+    const h = withLog();
+    expect((await h.c.q.supportedModels()).map((m) => m.id)).toEqual(['m-fast', 'm-plain']);
+  });
+
+  it('offers the effort levels of the chosen model, and none for a model without any', async () => {
+    const h = withLog();
+    expect(await h.c.effortLevels()).toEqual(['low', 'high']);   // the default model
+    await h.c.q.setModel('m-plain');
+    expect(await h.c.effortLevels()).toEqual([]);
+  });
+
+  it('sends the chosen model, effort and mode with the next turn', async () => {
+    const h = withLog();
+    await h.c.q.setModel('m-fast');
+    await h.c.q.applyFlagSettings({ effort: 'high' });
+    await h.c.q.setPermissionMode('plan');
+    h.c.send('hello');
+    await until(() => result(h.events));
+    expect(turns(h.f)[0]).toEqual({ model: 'm-fast', effort: 'high', approvalPolicy: 'untrusted', sandboxPolicy: { type: 'readOnly' } });
+  });
+
+  it('yolo lifts the sandbox and never asks; ask mode keeps the workspace sandbox', async () => {
+    const h = withLog();
+    h.c.send('one');
+    await until(() => result(h.events));
+    await h.c.q.setPermissionMode('bypassPermissions');
+    h.c.send('two');
+    await until(() => msgs(h.events).filter((m) => m.type === 'result').length === 2);
+    const [a, b] = turns(h.f);
+    expect(a).toMatchObject({ approvalPolicy: 'untrusted', sandboxPolicy: { type: 'workspaceWrite' } });
+    expect(b).toMatchObject({ approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } });
+    await expect(h.c.q.setPermissionMode('nonsense')).rejects.toThrow(/no nonsense mode/);
+  });
+
+  it('/compact summarizes the thread in place and ends with a result', async () => {
+    const h = withLog();
+    h.c.send('start');
+    await until(() => result(h.events));
+    const before = msgs(h.events).filter((m) => m.type === 'result').length;
+    expect(h.c.send('/compact')).toEqual({ ok: true });
+    await until(() => msgs(h.events).filter((m) => m.type === 'result').length === before + 1);
+    expect(msgs(h.events).some((m) => m.type === 'system' && m.subtype === 'compact_boundary')).toBe(true);
+    expect(h.c.busy).toBe(false);
+  });
+});

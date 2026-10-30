@@ -6,7 +6,7 @@
 // init, assistant text/thinking/tool_use, user tool_result, result), so no
 // renderer code has to know which engine it is talking to. #feat-engine-chat
 'use strict';
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const { REGISTRY } = require('./engines');
 const { stripAnsi } = require('./ansi');
 const { aliasOf } = require('./toolcalls');
@@ -54,8 +54,27 @@ function providerSetup(engine, prov, model) {
   return { error: labelOf(engine) + ' uses its own login and models only' };
 }
 
+// Antigravity's footbar: its --mode values, plus yolo (--dangerously-skip-permissions).
+const AGY_MODES = [
+  ['default', 'ask', 'Headless runs cannot ask: anything that needs approval is blocked and reported.'],
+  ['acceptEdits', 'accept edits', 'File edits run without asking; other actions that need approval are blocked.'],
+  ['auto', 'auto', 'The agent decides which actions are safe to run without asking.'],
+  ['plan', 'plan', 'The agent explores and proposes a plan, and changes nothing.'],
+  ['bypassPermissions', 'yolo', 'Nothing is asked or checked. Only for throwaway folders or containers.'],
+];
+const AGY_MODE_FLAG = { acceptEdits: 'accept-edits', auto: 'auto', plan: 'plan' };
+const AGY_EFFORT = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+/** `agy models`: one model per line, best effort (an empty list leaves "CLI default" and Custom…). */
+function parseModelList(out) {
+  return String(out || '').split('\n')
+    .filter((l) => !/:\s*$/.test(l))   // a heading such as "Available models:"
+    .map((l) => l.replace(/^[\s*•>-]+/, '').trim().split(/\s+/)[0] || '')
+    .filter((t) => /^[\w][\w.:/-]*$/.test(t));
+}
+
 /** argv (and stdin) for one turn. The prompt never goes through a shell. */
-function argsFor(engine, { prompt, sessionId = null, yolo = false, model = '', extraArgs = [] } = {}) {
+function argsFor(engine, { prompt, sessionId = null, yolo = false, model = '', extraArgs = [], mode = '', effort = '' } = {}) {
   const text = String(prompt || '');
   if (engine === 'codex') {
     // `exec resume` takes no -s, so the sandbox is set through config on both.
@@ -73,8 +92,9 @@ function argsFor(engine, { prompt, sessionId = null, yolo = false, model = '', e
     return {
       args: ['--output-format', 'stream-json',
         ...(sessionId ? ['--conversation', sessionId] : []),
-        ...(yolo ? ['--dangerously-skip-permissions'] : []),
+        ...(yolo || mode === 'bypassPermissions' ? ['--dangerously-skip-permissions'] : AGY_MODE_FLAG[mode] ? ['--mode', AGY_MODE_FLAG[mode]] : []),
         ...(model ? ['--model', model] : []),
+        ...(effort ? ['--effort', effort] : []),
         '-p=' + text],
       stdin: null,
     };
@@ -285,6 +305,8 @@ class EngineChat {
     this.queue = [];
     this.child = null;
     this.initSent = false;
+    this.mode = this.yolo ? 'bypassPermissions' : 'default';
+    this.effort = '';
     this.lastUsage = { input_tokens: 0, output_tokens: 0 };
     this.q = this._stub();
   }
@@ -304,7 +326,7 @@ class EngineChat {
     this.busy = true;
     this.emit({ kind: 'status', busy: true });
     const t = createTranslator(this.engine, { sessionId: this.sessionId, initSent: this.initSent });
-    const { args, stdin } = argsFor(this.engine, { prompt, sessionId: this.sessionId, yolo: this.yolo, model: this.model, extraArgs: this.extraArgs });
+    const { args, stdin } = argsFor(this.engine, { prompt, sessionId: this.sessionId, yolo: this.yolo, model: this.model, extraArgs: this.extraArgs, mode: this.mode, effort: this.effort });
     const push = (msgs) => {
       for (const msg of msgs) {
         if (msg.type === 'result') this.lastUsage = msg.usage;
@@ -369,16 +391,51 @@ class EngineChat {
     if (this.child) terminate(this.child);
   }
 
+  /* ---- footbar controls: what each headless CLI takes per run ---------------- */
+
+  /** Antigravity runs take a model, a mode and an effort as flags on every run. */
+  get controls() {
+    return this.engine === 'antigravity'
+      ? { model: true, modes: AGY_MODES, effort: true, compact: false, context: false }
+      : { model: false, modes: null, effort: false, compact: false, context: false };
+  }
+
+  models() {
+    return new Promise((resolve) => {
+      execFile(this.command, ['models'], { env: this.env, cwd: this.cwd, timeout: 15_000 }, (err, stdout) => {
+        resolve(err ? [] : parseModelList(stdout).map((id) => ({ id, displayName: id })));
+      });
+    });
+  }
+
+  async setModel(model) { this.model = String(model || ''); return { model: this.model }; }
+
+  setMode(mode) {
+    if (!AGY_MODES.some((m) => m[0] === mode)) throw new Error(this.label + ' has no ' + mode + ' mode');
+    this.mode = mode;
+    return { permissionMode: mode };
+  }
+
+  setEffort(effort) { this.effort = String(effort || ''); return true; }
+
+  effortLevels() { return this.engine === 'antigravity' ? AGY_EFFORT : []; }
+
   /** Stand-in for the Agent SDK query object, so the chat panels that ask it
    *  for commands, models or context get an empty answer, not a crash. */
   _stub() {
     return stubQuery(this.label, {
       interrupt: () => this.interrupt(),
       usage: () => ({ totalTokens: Number(this.lastUsage.input_tokens) || 0, maxTokens: 0, percentage: 0, categories: [] }),
+      extra: this.controls.model ? {
+        supportedModels: () => this.models(),
+        setModel: (m) => this.setModel(m),
+        setPermissionMode: async (m) => this.setMode(m),
+        applyFlagSettings: async (patch) => this.setEffort(patch && patch.effort),
+      } : {},
     });
   }
 }
 
 const frames = { assistant, textMsg, thinkingMsg, toolUse, toolResult, initMsg, resultMsg };
 
-module.exports = { argsFor, createTranslator, EngineChat, labelOf, providerSetup, PROVIDER_KEY_ENV, frames };
+module.exports = { parseModelList, argsFor, createTranslator, EngineChat, labelOf, providerSetup, PROVIDER_KEY_ENV, frames };

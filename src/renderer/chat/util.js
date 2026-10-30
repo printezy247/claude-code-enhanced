@@ -71,7 +71,11 @@ export function el(tag, cls, text) {
 
 export const basename = (p) => String(p || '~').replace(/\/+$/, '').split('/').pop() || p;
 
-export const modeLabel = (m) => ({ default: 'accept edits', acceptEdits: 'accept edits', plan: 'plan', auto: 'auto', bypassPermissions: 'yolo' }[m] || m);
+// `modes` is an engine chat's own list (value, label, tip): its labels win.
+export const modeLabel = (m, modes) => {
+  const own = modes && modes.find((c) => c[0] === m);
+  return own ? own[1] : ({ default: 'accept edits', acceptEdits: 'accept edits', plan: 'plan', auto: 'auto', bypassPermissions: 'yolo' }[m] || m);
+};
 
 export const fmtAge = (ms) => {
   const m = Math.max(1, Math.round((Date.now() - ms) / 60000));

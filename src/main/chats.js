@@ -1256,8 +1256,22 @@ class ChatManager extends EventEmitter {
     };
     this.chats.set(id, chat);
     return {
-      id, cwd, engine, label: runner.label, model: chat.model, permissionMode: chat.permissionMode, provider: null, sandbox: false,
-      capabilities: { images: entry.images, approvals: entry.approvals },
+      id, cwd, engine, label: runner.label, model: chat.model, engineModel: model || '', permissionMode: chat.permissionMode, provider: null, sandbox: false,
+      capabilities: this._capabilities(entry, runner),
+    };
+  }
+
+  /**
+   * What the chat view may show for an engine chat: the registry's facts about
+   * the engine plus the footbar controls its runner implements. A control the
+   * CLI cannot do is false (or null), and the view leaves it out.
+   */
+  _capabilities(entry, runner) {
+    const c = runner.controls || {};
+    return {
+      images: entry.images, approvals: entry.approvals,
+      model: !!c.model, modes: c.modes || null, effort: !!c.effort, compact: !!c.compact, context: !!c.context,
+      folder: true, workflows: true,
     };
   }
 
@@ -1632,6 +1646,12 @@ class ChatManager extends EventEmitter {
   async setModel(id, model) {
     const chat = this.chats.get(id);
     if (!chat) throw new Error('chat not found');
+    if (chat.engine) {
+      await chat.runner.setModel(model || '');
+      chat.model = chat.runner.label + ' · ' + (model || 'CLI default');
+      chat.engineMeta.model = model || '';
+      return { model: model || '' };
+    }
     await chat.q.setModel(model || undefined);
     chat.model = model || chat.model;
     const uid = (chat.providerInstance && (chat.providerInstance._uid || chat.providerInstance.uid))
@@ -1645,6 +1665,12 @@ class ChatManager extends EventEmitter {
   async setMode(id, mode) {
     const chat = this.chats.get(id);
     if (!chat) throw new Error('chat not found');
+    if (chat.engine) {
+      const r = await chat.runner.setMode(mode);
+      chat.permissionMode = r.permissionMode;
+      chat.engineMeta.yolo = r.permissionMode === 'bypassPermissions';
+      return { permissionMode: r.permissionMode, autoPolicy: false, changed: false };
+    }
     const eff = normalizeMode(mode, chat.providerInstance);
     await chat.q.setPermissionMode(eff);
     chat.permissionMode = eff;
