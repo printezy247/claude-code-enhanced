@@ -16,6 +16,7 @@ All notable changes to Claude Code Enhanced are documented here.
 
 - Sidebar: the six section buttons now share the row equally and stay inside the sidebar (icons only, with tooltips). The active button no longer shows a "Conversations" label that pushed the last icon outside.
 - Jump-to-request rail: on wide windows, where the Overview floats over the chat's right margin, the rail and its tooltip now sit left of the Overview instead of on top of the Context card.
+- README brought up to date: new feature sections (Overview and Sessions, composer, side work, artifacts, Lightpanda, accessibility), the optional add-on setup commands, current shortcuts, and a longer proposed roadmap.
 
 ## 0.22.1
 
