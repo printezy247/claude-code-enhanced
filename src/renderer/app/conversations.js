@@ -2,6 +2,7 @@
 import { basenameOf, el, elIcon, lsGet, lsSet, paintDeclaredIcons, state, toast } from './core.js';
 import { activateSession, switchView, tabRegistry, toggleSidebar } from './tabs.js';
 import { Chat } from '../chat/index.js';
+import { dateCutoff, deepMatches } from './convosearch.js';
 import { openFolder } from './home.js';
 import { markManualTitle } from '../chat/titles.js';
 
@@ -86,26 +87,42 @@ function collapsedFolders() { return new Set(lsGet('cce.convoCollapsed', [])); }
 let convoSearchToken = 0;
 
 /**
- * Search the stored transcripts for text the conversation list does not
- * know about. The main process does the scan on a worker thread.
+ * Search the stored transcripts for text the list previews do not show, and
+ * list the conversations that mention it under the normal rows. The main
+ * process does the scan on a worker thread; typing is debounced so a big
+ * history is not rescanned on every key.
  */
-async function searchTranscripts(query, foot) {
-  if (!foot) return;
+let convoSearchTimer = null;
+function searchTranscripts(query, foot, root) {
+  clearTimeout(convoSearchTimer);
   const token = ++convoSearchToken;
-  const before = foot.textContent;
-  foot.textContent = 'Searching the stored transcripts…';
-  try {
-    const res = await ccx.invoke('chats:search', { query, limit: 50 });
-    // A newer search started, or the list was re-rendered: drop this answer.
-    if (token !== convoSearchToken) return;
-    const n = Number((res && res.count) || 0);
-    foot.textContent = n
-      ? n + ' transcript ' + (n === 1 ? 'entry' : 'entries') + ' mention "' + query + '"'
-      : (before || 'Nothing matches.');
-  } catch {
-    if (token !== convoSearchToken) return;
-    foot.textContent = before || 'Nothing matches.';
-  }
+  convoSearchTimer = setTimeout(async () => {
+    try {
+      const res = await ccx.invoke('chats:search', { query, limit: 400 });
+      // A newer search started, or the list was re-rendered: drop this answer.
+      if (token !== convoSearchToken || !root.isConnected) return;
+      const since = dateCutoff((document.querySelector('#convo-drop .convo-date') || {}).value, Date.now());
+      const folder = (document.querySelector('#convo-drop .convo-filter') || {}).value || '';
+      const shown = new Set([...root.querySelectorAll('[data-sid]')].map((n) => n.dataset.sid));
+      const hits = deepMatches(res && res.matches, convoSessions, query, (s) =>
+        !shown.has(s.sessionId) && (!since || s.mtime >= since)
+        && (!folder || String(s.cwd || s.folder || '~') === folder));
+      if (!hits.length) return;
+      const sec = el('div', 'convo-group convo-deep');
+      const head = el('div', 'convo-sec');
+      head.appendChild(el('span', 'cs-name', 'Mentioned inside'));
+      head.appendChild(el('span', 'cs-count', String(hits.length)));
+      sec.appendChild(head);
+      const rows = el('div', 'convo-rows');
+      for (const h of hits.slice(0, 30)) {
+        const row = convoRow(h.session, String(h.session.cwd || h.session.folder || '~'));
+        row.querySelector('.convo-main').appendChild(el('div', 'convo-meta convo-snip', h.snippet + ' (' + h.count + ')'));
+        rows.appendChild(row);
+      }
+      sec.appendChild(rows);
+      root.appendChild(sec);
+    } catch { /* the list stays as it is */ }
+  }, 300);
 }
 
 export function renderConversationList() {  // Async data can land after the window is gone; bail out instead of throwing.
@@ -134,6 +151,8 @@ export function renderConversationList() {  // Async data can land after the win
       || String(s.branch || '').toLowerCase().includes(q);
   });
   if (folder) items = items.filter((s) => String(s.cwd || s.folder || '~') === folder);
+  const since = dateCutoff((document.querySelector('#convo-drop .convo-date') || {}).value, Date.now());
+  if (since) items = items.filter((s) => s.mtime >= since);
   paintConvoTabs(pinned, openIds);
 
   // Sort first, then bucket: the bucket pass preserves this order inside groups.
@@ -142,6 +161,8 @@ export function renderConversationList() {  // Async data can land after the win
   else items.sort((a, b) => String(a.preview || '').localeCompare(String(b.preview || '')));
 
   root.innerHTML = '';
+  if (q && q.length >= 3) searchTranscripts(q, foot, root);
+  else { clearTimeout(convoSearchTimer); convoSearchToken++; }
   // Every stored conversation is already open in the list above: showing
   // "No conversations yet" under it (with a "0 of 3" counter) read as a bug.
   const allOpen = convoSessions.length > 0 && !q && !folder
@@ -173,7 +194,6 @@ export function renderConversationList() {  // Async data can land after the win
     // The list only knows the previews. When a search finds nothing there,
     // the stored transcripts are searched too — on a worker thread in the
     // main process, so a big history does not freeze the window. #t0-workers
-    if (q && q.length >= 3 && !folder) searchTranscripts(q, foot);
     return;
   }
 
@@ -291,6 +311,7 @@ function focusIfOpen(sessionId) {
 
 function convoRow(s, cwd) {
   const row = el('div', 'convo-row');
+  row.dataset.sid = s.sessionId;
   row.title = (s.preview || '(empty session)') + '\n' + cwd;
   const main = el('div', 'convo-main');
   main.appendChild(el('div', 'convo-preview', s.preview || '(empty session)'));
@@ -601,6 +622,12 @@ export function ensureConvoDrop() {
       <select class="convo-filter" title="Filter by project folder">
         <option value="">all folders</option>
       </select>
+      <select class="convo-date" title="Filter by date" aria-label="Filter by date">
+        <option value="">any time</option>
+        <option value="day">last 24 hours</option>
+        <option value="week">last 7 days</option>
+        <option value="month">last 30 days</option>
+      </select>
     </div>
     <div class="convo-tabs" role="tablist" aria-label="Conversation categories">
       <button class="convo-tab active" role="tab" data-view="all">All <span class="ct-n">0</span></button>
@@ -632,6 +659,7 @@ export function ensureConvoDrop() {
   drop.querySelector('.convo-search').addEventListener('input', () => renderConversationList());
   drop.querySelector('.convo-sort').addEventListener('change', () => renderConversationList());
   drop.querySelector('.convo-filter').addEventListener('change', () => renderConversationList());
+  drop.querySelector('.convo-date').addEventListener('change', () => renderConversationList());
   drop.querySelector('.convo-archived').addEventListener('change', () => renderConversationList());
   return drop;
 }

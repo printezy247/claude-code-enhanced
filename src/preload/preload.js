@@ -48,7 +48,7 @@ const INVOKE_CHANNELS = new Set([
   'plugins:list', 'plugins:pick', 'plugins:install', 'plugins:uninstall',
   'mcp:list-tools', 'mcp:call-tool', 'mcp:list-resources', 'mcp:read-resource', 'mcp:authenticate',
   'skills:toggle', 'agents:toggle',
-  'dialog:pickDir', 'dialog:pickFiles', 'draft:images', 'clipboard:write', 'shell:openExternal', 'shell:reveal', 'artifact:save', 'lightpanda:status', 'chat:browser', 'image:copy', 'image:save', 'dictation:status', 'dictation:transcribe', 'artifact:list', 'artifact:get', 'artifact:remove', 'artifact:export-pdf', 'file:share',
+  'dialog:pickDir', 'dialog:pickFiles', 'draft:images', 'clipboard:write', 'shell:openExternal', 'shell:reveal', 'artifact:save', 'lightpanda:status', 'chat:browser', 'image:copy', 'image:save', 'profile:export', 'profile:import', 'dictation:status', 'dictation:transcribe', 'artifact:list', 'artifact:get', 'artifact:remove', 'artifact:export-pdf', 'file:share',
 ]);
 const SEND_CHANNELS = new Set(['session:write']);
 
