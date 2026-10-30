@@ -30,7 +30,7 @@ const INVOKE_CHANNELS = new Set([
   'jobs:list', 'jobs:add', 'jobs:cancel', 'pipeline:start',
   'runs:interrupted', 'runs:ack',
   'session:create', 'session:list', 'session:resize', 'session:kill',
-  'session:fork', 'session:rename', 'session:tag', 'session:subagents',
+  'session:fork', 'session:rename', 'session:title', 'session:tag', 'session:subagents',
   'engines:list',
   'webremote:status', 'webremote:start', 'webremote:stop',
   'sshhosts:list', 'sshhosts:save', 'sshhosts:delete',

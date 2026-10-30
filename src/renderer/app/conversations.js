@@ -3,6 +3,7 @@ import { basenameOf, el, elIcon, lsGet, lsSet, paintDeclaredIcons, state, toast 
 import { activateSession, switchView, tabRegistry, toggleSidebar } from './tabs.js';
 import { Chat } from '../chat/index.js';
 import { openFolder } from './home.js';
+import { markManualTitle } from '../chat/titles.js';
 
 /* ================= conversation list (#34) ================= */
 /*
@@ -378,6 +379,7 @@ function openConvoMenu(anchor, s, cwd) {
     if (!r.ok) return toast(r.error || 'rename failed', 'err');
     s.preview = title.trim();
     s.renamed = true;
+    for (const c of Chat.chats.values()) if (c.sessionId === s.sessionId) markManualTitle(c, title);
     renderConversationList();
     toast('Renamed', 'ok');
   });

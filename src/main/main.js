@@ -2236,6 +2236,15 @@ function registerIpc() {
     return {};
   });
 
+  // What the CLI calls this session (its own generated title or a /rename), for the chat tab.
+  handle('session:title', async ({ sessionId, cwd }) => {
+    if (!isSessionIdLike(sessionId)) throw new Error('invalid session id');
+    const { getSessionInfo } = await chats.sdk();
+    if (typeof getSessionInfo !== 'function') return { info: null };
+    const i = await getSessionInfo(sessionId, cwd ? { dir: cwd } : undefined);
+    return { info: i ? { customTitle: i.customTitle || '', summary: i.summary || '', firstPrompt: i.firstPrompt || '' } : null };
+  });
+
   // Archive is a tag, not a delete: the transcript stays on disk and the row can
   // be unhidden. Deleting is still one click away in the same menu.
   handle('session:tag', async ({ sessionId, tag, cwd }) => {
