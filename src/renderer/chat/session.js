@@ -697,6 +697,7 @@ export function publishTabState(chat) {
   meta.busy = busy;
   meta.needsYou = needsYou;
   if (typeof window.updateNavState === 'function') window.updateNavState();
+  if (typeof window.refreshSessionsCard === 'function') window.refreshSessionsCard();
 }
 
 export function activateChat(id) {

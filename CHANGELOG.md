@@ -12,6 +12,11 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.21.0
+
+- Sessions card in the Overview (replaces the popout-windows idea): lists the open chats with what each is doing (needs you, working, idle). Click a row to switch. Hidden with only one chat; at most 8 rows.
+- It redraws only when a chat's state changes (no timer, no extra calls), and only that card is replaced.
+
 ## 0.20.0
 
 - Dictation: a mic button next to Attach records up to 60 s and puts the text in the message box. Speech to text runs on this computer only (faster-whisper in a virtualenv, model read from disk, network off); audio is never sent anywhere and the temp file is removed straight away.
