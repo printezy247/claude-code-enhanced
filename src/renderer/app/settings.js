@@ -584,6 +584,7 @@ function renderRemoteCards(body) {
   cAg.appendChild(agList);
   body.appendChild(cAg);
   ccx.invoke('agents:models').then(async (r) => {
+      if (!agList.isConnected) return;   // the view was redrawn or the window is gone
     const agents = (r && r.ok && r.agents) || [];
     const overrides = (r && r.ok && r.overrides) || {};
     agList.textContent = '';
