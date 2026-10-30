@@ -2043,3 +2043,21 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .budget-row .bud-set { padding: 1px 8px; flex: none; }
 .budget-row .bud-warn { color: var(--warn); }
 .budget-row .bud-over { color: var(--danger); }
+
+/* Artifact versions and diff */
+.artifact-versions { margin: 6px 0; max-width: 100%; }
+.artifact-diff { font-family: var(--mono, monospace); font-size: 12px; margin: 4px 0 8px; }
+.artifact-diff .d-add { color: var(--ok, #4cc38a); white-space: pre-wrap; }
+.artifact-diff .d-del { color: var(--danger); white-space: pre-wrap; }
+
+/* /compare columns */
+.compare-card { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; }
+.compare-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; margin: 6px 0; }
+.compare-col { border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; min-width: 0; }
+.compare-model { font-weight: 600; font-size: 12px; margin-bottom: 4px; }
+.compare-ans { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+
+/* /recipe pause card */
+.recipe-card { margin: 8px 0; padding: 8px 10px; border: 1px solid var(--accent); border-radius: 8px; }
+.recipe-title { font-weight: 600; font-size: 13px; }
+.recipe-next { white-space: pre-wrap; margin: 4px 0; }

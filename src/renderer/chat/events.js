@@ -16,6 +16,8 @@ import { chats, el, esc } from './util.js';
 import { formatRequestMetrics } from './metrics.js';
 import { pullCliTitle } from './titles.js';
 import { loopAfterTurn } from './loopgoal.js';
+import { recipeAfterTurn } from './recipes.js';
+import { showRecipePause } from './recipecard.js';
 import { btwChildren } from './btw.js';
 import { enqueue } from './qpanel.js';
 import { onHookEvent, onTaskEvent, renderHooks } from './events-tasks.js';
@@ -240,6 +242,13 @@ function handleMessage(chat, msg) {
       endTurnCleanup(chat);
       // /loop: queue the next round (a stop or an error already ended the loop).
       { const again = loopAfterTurn(chat, { error: chat.lastTurnError }); if (again) enqueue(chat, again); }
+      // /recipe: the next step goes on at once (auto) or waits behind a Continue button.
+      { const nx = recipeAfterTurn(chat, { error: chat.lastTurnError });
+        if (nx && nx.prompt) enqueue(chat, nx.prompt);
+        else if (nx && nx.pause) showRecipePause(chat, nx.pause, () => {
+          // Idle by the time the user clicks Continue: send it now; busy: queue it.
+          if (chat.busy) enqueue(chat, nx.pause.prompt); else { chat.composer.value = nx.pause.prompt; chat.send(); }
+        }); }
       // The transcript is on disk now — pick up the new/updated conversation.
       pullCliTitle(chat);
       if (typeof window.scheduleConvoRefresh === 'function') window.scheduleConvoRefresh(true);

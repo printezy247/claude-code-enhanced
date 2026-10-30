@@ -1,4 +1,5 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
+import { exportName, lineDiff, versionsOf } from './artifacthistory.js';
 import { envStrip } from './envstrip.js';
 import { load as loadBudgets, saveLimits, standing } from './budgets.js';
 import { convoSessions, renderConversationList } from './conversations.js';
@@ -304,6 +305,7 @@ export function renderSplit() {
     const view = el('div', 'artifact-view');
     body.appendChild(list);
     body.appendChild(view);
+    let allItems = [];
     const open = async (a, row) => {
       list.querySelectorAll('.artifact-row').forEach((r) => r.classList.toggle('sel', r === row));
       const r = await ccx.invoke('artifact:get', { id: a.id });
@@ -321,8 +323,41 @@ export function renderSplit() {
       });
       const del = el('button', 'btn small danger artifact-del', t('artifact.del'));
       del.addEventListener('click', async () => { await ccx.invoke('artifact:remove', { id: a.id }); load(); });
-      acts.appendChild(pdf); acts.appendChild(del);
+      const exp = el('button', 'btn small artifact-export', 'Export file');
+      exp.title = 'Save this version as ' + exportName(a);
+      exp.addEventListener('click', async () => {
+        const x = await ccx.invoke('artifact:export', { id: a.id, name: exportName(a) });
+        if (x && x.path) toast('Saved to ' + x.path, 'ok');
+      });
+      acts.appendChild(pdf); acts.appendChild(exp); acts.appendChild(del);
       view.appendChild(acts);
+      // Earlier saves with the same title are versions: pick one to see what changed since.
+      const versions = versionsOf(allItems, a);
+      const diffBox = el('div', 'artifact-diff');
+      if (versions.length > 1) {
+        const sel = el('select', 'artifact-versions');
+        sel.setAttribute('aria-label', 'Compare with an earlier version');
+        for (const v of versions) {
+          const o = el('option', '', (v.id === a.id ? 'this version · ' : 'changes since ') + new Date(v.at).toLocaleString() + ' · ' + v.bytes + ' B');
+          o.value = v.id;
+          sel.appendChild(o);
+        }
+        sel.value = a.id;
+        sel.addEventListener('change', async () => {
+          diffBox.textContent = '';
+          if (sel.value === a.id) return;
+          const old = await ccx.invoke('artifact:get', { id: sel.value });
+          const lines = old && old.ok ? lineDiff(old.content, r.content) : null;
+          if (!lines) { diffBox.appendChild(el('div', 'hint', 'These versions are too large to compare line by line.')); return; }
+          for (const l of lines) {
+            if (l.t === 'same') continue;
+            diffBox.appendChild(el('div', l.t === 'add' ? 'd-add' : 'd-del', (l.t === 'add' ? '+ ' : '- ') + l.s));
+          }
+          if (!diffBox.childNodes.length) diffBox.appendChild(el('div', 'hint', 'No difference.'));
+        });
+        view.appendChild(sel);
+      }
+      view.appendChild(diffBox);
       view.appendChild(doc);
     };
     const load = async () => {
@@ -330,6 +365,7 @@ export function renderSplit() {
       if (!body.contains(list)) return;
       list.textContent = ''; view.textContent = '';
       const items = (r && r.ok && r.artifacts) || [];
+      allItems = items;
       if (!items.length) list.appendChild(el('div', 'hint', t('artifact.empty')));
       for (const a of items) {
         const row = el('button', 'task-row artifact-row');

@@ -8,7 +8,9 @@ import { applySlashToken, highlightParts, loadRecent, pushRecent, rankCommands, 
 import { ensurePanes, LIST_H, ROW_H, setPreview } from './preview.js';
 
 import { parseLoop, parseGoal, parseBtw, saveGoal } from './loopgoal.js';
-import { askBtw } from './btw.js';
+import { askBtw, askCompare } from './btw.js';
+import { parseCompare } from './comparecmd.js';
+import { deleteRecipe, loadRecipes, parseRecipeCmd, saveRecipe } from './recipes.js';
 
 /** Show (or clear, with '') the goal banner above the transcript and remember it for the folder. */
 export function setGoal(chat, goal) {
@@ -68,6 +70,34 @@ async function doHandoff(chat) {
   }
 }
 
+/** Send `text` as the next message. The caller clears the composer right after a built-in returns, so refill it first. */
+function sendSoon(chat, text) {
+  setTimeout(() => { chat.composer.value = text; chat.send(); }, 0);
+}
+
+async function runRecipeCommand(chat, text) {
+  const r = parseRecipeCmd(text);
+  if (r.error) { toast(r.error, 'err'); return; }
+  const all = loadRecipes(localStorage);
+  if (r.action === 'list') {
+    const names = Object.keys(all);
+    toast(names.length ? 'Recipes: ' + names.join(', ') + ' (run with /recipe <name>)' : 'No recipes yet. Save one with /recipe save <name>.', 'ok');
+  } else if (r.action === 'delete') {
+    toast(deleteRecipe(localStorage, r.name) ? 'Deleted recipe ' + r.name : 'No recipe named ' + r.name, 'ok');
+  } else if (r.action === 'save') {
+    const v = await window.askText('Steps for ' + r.name + ' (separate steps with a --- line; first line "auto" skips the pause)', all[r.name] ? (all[r.name].auto ? 'auto\n' : '') + all[r.name].steps.join('\n---\n') : '', { multiline: true });
+    if (v === null) return;
+    const s = saveRecipe(localStorage, r.name, v);
+    toast(s.ok ? 'Saved recipe ' + s.name + ' (' + s.steps + ' steps)' : s.error, s.ok ? 'ok' : 'err');
+  } else {
+    const rec = all[r.name];
+    if (!rec) { toast('No recipe named ' + r.name + '. /recipe lists them.', 'err'); return; }
+    chat.recipe = { name: r.name, steps: rec.steps, i: 0, auto: !!rec.auto };
+    sendSoon(chat, rec.steps[0]);
+    toast('Recipe ' + r.name + ': step 1 of ' + rec.steps.length, 'ok');
+  }
+}
+
 export function handleBuiltin(chat, text) {
   const cmd = text.split(/\s/)[0];
   if (cmd === '/compact') { doCompact(chat, text.slice(cmd.length).trim()); return true; }
@@ -78,12 +108,21 @@ export function handleBuiltin(chat, text) {
     chat.composer.value = '';
     return true;
   }
+  if (cmd === '/compare') {
+    const r = parseCompare(text);
+    if (r.error) toast(r.error, 'err'); else { askCompare(chat, r.models, r.question); chat.composer.value = ''; }
+    return true;
+  }
+  if (cmd === '/recipe') {
+    runRecipeCommand(chat, text);
+    chat.composer.value = '';
+    return true;
+  }
   if (cmd === '/loop') {
     const r = parseLoop(text);
     if (r.error) { toast(r.error, 'err'); return true; }
     chat.loop = { left: r.n - 1, prompt: r.prompt };
-    chat.composer.value = r.prompt;
-    setTimeout(() => send(), 0);
+    sendSoon(chat, r.prompt);
     toast('Looping ' + r.n + ' times. Stop ends it.', 'ok');
     return true;
   }
@@ -109,8 +148,7 @@ export function handleBuiltin(chat, text) {
   if (cmd === '/model') { openCustomModel(chat); return true; }
   if (cmd === '/review') {
     const focus = text.slice(cmd.length).trim();
-    chat.composer.value = 'Review the current changes' + (focus ? ' focusing on ' + focus : '') + ': run git diff, identify bugs, risks, missing tests, and style issues; report findings as a numbered list with file:line references.';
-    setTimeout(() => send(), 0);
+    sendSoon(chat, 'Review the current changes' + (focus ? ' focusing on ' + focus : '') + ': run git diff, identify bugs, risks, missing tests, and style issues; report findings as a numbered list with file:line references.');
     return true;
   }
   if (PANE_COMMANDS[cmd] === 'tasks') {   // /context: the Overview is always on screen; refresh it
@@ -140,6 +178,8 @@ export function handleBuiltin(chat, text) {
 // Handled by cce itself, so they work before the engine has said anything.
 const OWN_SLASH = [
   { name: 'compact', description: 'Summarise the conversation and carry on in a fresh session' },
+  { name: 'compare', description: 'Ask several models the same thing: /compare opus,sonnet <prompt>' },
+  { name: 'recipe', description: 'Run a saved chain of prompts: /recipe <name>, /recipe save <name>' },
   { name: 'btw', description: 'Ask a side question while a turn runs: /btw <question>' },
   { name: 'loop', description: 'Run a prompt n times: /loop 3 run the tests' },
   { name: 'goal', description: 'Keep a goal in view: /goal <text>, /goal clear' },

@@ -2892,6 +2892,16 @@ function registerIpc() {
   handle('artifact:remove', async ({ id }) => { const r = artifactStore.remove(id); if (!r.ok) throw new Error(r.error); return {}; });
   // PDF: a hidden window with no script and no network (the page's own policy blocks both),
   // fed only the saved text. Markdown arrives already sanitized by the renderer; code is escaped here.
+  // Save one stored artifact as a plain file the user picks the place for.
+  handle('artifact:export', async ({ id, name }, e) => {
+    const art = artifactStore.get(id);
+    if (!art.ok) throw new Error(art.error);
+    const safe = String(name || '').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'artifact.txt';
+    const res = await dialog.showSaveDialog(senderWin(e), { defaultPath: path.join(store.settings.defaultCwd || os.homedir(), safe) });
+    if (res.canceled || !res.filePath) return { saved: false };
+    fs.writeFileSync(res.filePath, art.content);
+    return { saved: true, path: res.filePath };
+  });
   handle('artifact:export-pdf', async ({ id, html }, e) => {
     const art = artifactStore.get(id);
     if (!art.ok) throw new Error(art.error);

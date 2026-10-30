@@ -59,6 +59,7 @@ const SCHEMAS = {
   'dictation:transcribe': { audio: 'nonempty' },
   'artifact:save': { title: { type: 'text', optional: true }, kind: 'nonempty', content: 'nonempty' },
   'artifact:get': { id: 'nonempty' },
+  'artifact:export': { id: 'nonempty', name: { type: 'text', optional: true } },
   'artifact:remove': { id: 'nonempty' },
   'artifact:export-pdf': { id: 'nonempty', html: { type: 'text', optional: true } },
   'session:resize': { id: 'id', cols: 'number', rows: 'number' },
