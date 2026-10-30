@@ -2832,6 +2832,34 @@ function registerIpc() {
     return { canceled: res.canceled, path: res.canceled ? null : res.filePaths[0] };
   });
 
+  // A composer image: copy it to the clipboard or save it where the user picks.
+  const imageio = require('./imageio');
+  handle('image:copy', async (p) => {
+    const r = imageio.decodeImage(p);
+    if (!r.ok) throw new Error(r.error);
+    const img = nativeImage.createFromBuffer(r.buffer);
+    if (img.isEmpty()) throw new Error('That is not a readable image.');
+    clipboard.writeImage(img);
+    return { ok: true };
+  });
+  handle('image:save', async (p, e) => {
+    const r = imageio.decodeImage(p);
+    if (!r.ok) throw new Error(r.error);
+    const res = await dialog.showSaveDialog(senderWin(e), { defaultPath: path.join(app.getPath('pictures'), 'image.' + r.ext) });
+    if (res.canceled || !res.filePath) return { ok: true, canceled: true };
+    fs.writeFileSync(res.filePath, r.buffer);
+    return { ok: true, path: res.filePath };
+  });
+
+  // Lightpanda browser: the user installs it; each chat switches it on for itself.
+  const lightpanda = require('./lightpanda').createLightpanda();
+  handle('lightpanda:status', async () => lightpanda.status());
+  handle('chat:browser', owned('chats', async ({ id, enabled }) => {
+    if (enabled && !lightpanda.status().ready) throw new Error('Lightpanda is not installed.');
+    await chats.setBrowser(id, !!enabled, enabled ? lightpanda.serverConfig() : null);
+    return { enabled: !!enabled };
+  }));
+
   // Dictation: local speech to text through a venv the user installed.
   const dictation = require('./dictation').createDictation({
     python: path.join(os.homedir(), '.local', 'share', 'cce-dictation', 'bin', 'python'),

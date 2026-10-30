@@ -17,7 +17,7 @@ import { toggleSkillsPanel } from './panel-skills.js';
 import { toggleMcpPanel } from './panel-mcp.js';
 import { toggleHistoryPanel, toggleRewindPanel } from './panel-history.js';
 import { openPlanViewer, showFind, updatePlanViewer } from './panel-plan.js';
-import { editChatEnv, setOutputStyle } from './panel-opts.js';
+import { editChatEnv, setOutputStyle, toggleBrowser } from './panel-opts.js';
 export { maybeProbeMemory, collectMemoryProbe, maybeProbeSkill, collectSkillProbe, showPendingChip, openPalette, openPlanViewer, showFind, updatePlanViewer, setOutputStyle };
 
 /* ---------------- side panels (one frame for all of them) ---------------- */
@@ -122,6 +122,7 @@ export function wireHeaderMenu(chat, forkConversation) {
       menu.appendChild(item('pencil', 'Output style: ' + st.label, () => setOutputStyle(chat, st.id), { on: (chat.outputStyle || '') === st.id }));
     }
     menu.appendChild(item('gear', 'Environment variables…', () => editChatEnv(chat)));
+    menu.appendChild(item('globe', 'Web browser (Lightpanda)', () => toggleBrowser(chat), { on: !!chat.browserOn }));
     menu.appendChild(item('undo', 'Rewind files', () => toggleRewindPanel(chat)));
     menu.appendChild(item('download', 'Export as markdown', async () => {
       if (!chat.sessionId) { toast('Nothing to export yet', 'err'); return; }

@@ -2024,3 +2024,12 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .sess-st { font-size: 11px; color: var(--muted); flex: none; }
 .sess-st.st-working { color: var(--accent); }
 .sess-st.st-needs-you { color: var(--warn); }
+.img-thumb { position: relative; display: inline-block; margin: 0 6px 6px 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg3); vertical-align: top; }
+.img-thumb img { display: block; width: 72px; height: 72px; object-fit: cover; cursor: zoom-in; }
+.img-actions { position: absolute; inset: auto 0 0 0; display: flex; justify-content: center; gap: 2px; padding: 2px; background: rgba(0, 0, 0, .6); opacity: 0; transition: opacity .12s; }
+.img-thumb:hover .img-actions, .img-thumb:focus-within .img-actions { opacity: 1; }
+.img-actions button { background: none; border: 0; color: #fff; cursor: pointer; padding: 2px 3px; border-radius: 4px; display: inline-flex; }
+.img-actions button:hover, .img-actions button:focus-visible { background: rgba(255, 255, 255, .25); }
+.img-actions .img-del:hover { color: var(--danger); }
+.img-lightbox { position: fixed; inset: 0; z-index: 2000; background: rgba(0, 0, 0, .8); display: flex; align-items: center; justify-content: center; cursor: zoom-out; }
+.img-lightbox img { max-width: 92vw; max-height: 92vh; border-radius: 6px; }

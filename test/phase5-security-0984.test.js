@@ -135,8 +135,8 @@ describe('unsent pasted images', () => {
     await flush(10);
     const chat = h.window.Chat.chats.get('c1');
     expect(chat.pendingImages).toEqual([png]);
-    expect(chat.imgs.querySelectorAll('.img-chip')).toHaveLength(1);
-    chat.imgs.querySelector('.img-chip .close').click();
+    expect(chat.imgs.querySelectorAll('.img-thumb')).toHaveLength(1);
+    chat.imgs.querySelector('.img-thumb .img-del').click();
     await new Promise((r) => setTimeout(r, 350));
     const saves = h.calls.filter((c) => c.channel === 'draft:images' && c.payload.op === 'save');
     expect(saves.at(-1).payload).toEqual({ op: 'save', key: '/tmp/p', images: [] });

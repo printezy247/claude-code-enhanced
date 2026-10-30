@@ -106,17 +106,60 @@ export function restoreUnsent(chat, text, blocks) {
   }
 }
 
+const dataUrl = (img) => 'data:' + img.media_type + ';base64,' + img.data;
+
+/** A larger view of one image; Escape or a click on the backdrop closes it. */
+function openLightbox(img, label) {
+  const old = document.querySelector('.img-lightbox');
+  if (old) old.remove();
+  const box = el('div', 'img-lightbox');
+  box.setAttribute('role', 'dialog');
+  box.setAttribute('aria-label', label);
+  const big = document.createElement('img');
+  big.src = dataUrl(img);
+  big.alt = label;
+  box.appendChild(big);
+  const close = () => { box.remove(); document.removeEventListener('keydown', onKey, true); };
+  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  box.addEventListener('click', close);
+  document.addEventListener('keydown', onKey, true);
+  document.body.appendChild(box);
+}
+
+async function imageAction(channel, img, done) {
+  try {
+    const r = await ccx.invoke(channel, { media_type: img.media_type, data: img.data });
+    if (!r || !r.ok) toast((r && r.error) || 'Could not do that', 'err');
+    else if (!r.canceled) toast(done);
+  } catch { toast('Could not do that', 'err'); }
+}
+
 export function renderImageChips(chat) {
   chat.imgs.innerHTML = '';
   chat.imgs.classList.toggle('hidden', !chat.pendingImages.length);
   chat.pendingImages.forEach((img, i) => {
-    const chip = elIcon('span', 'img-chip', CCEIcons.svg('file', 13) + ' image ' + (i + 1));
-    const x = elIcon('button', 'close', CCEIcons.svg('close', 13));
-    x.title = 'Remove';
-    x.setAttribute('aria-label', 'Remove image');
-    x.addEventListener('click', () => { chat.pendingImages.splice(i, 1); renderImageChips(chat); });
-    chip.appendChild(x);
-    chat.imgs.appendChild(chip);
+    const label = 'image ' + (i + 1);
+    const thumb = el('div', 'img-thumb');
+    const pic = document.createElement('img');
+    pic.src = dataUrl(img);
+    pic.alt = 'Preview of ' + label;
+    pic.title = 'Click to enlarge';
+    pic.addEventListener('click', () => openLightbox(img, label));
+    thumb.appendChild(pic);
+    const bar = el('div', 'img-actions');
+    const btn = (cls, icon, name, fn) => {
+      const b = elIcon('button', cls, CCEIcons.svg(icon, 13));
+      b.type = 'button';
+      b.title = name;
+      b.setAttribute('aria-label', name + ' (' + label + ')');
+      b.addEventListener('click', fn);
+      bar.appendChild(b);
+    };
+    btn('img-copy', 'copy', 'Copy image', () => imageAction('image:copy', img, 'Image copied'));
+    btn('img-save', 'save', 'Save image', () => imageAction('image:save', img, 'Image saved'));
+    btn('img-del', 'trash', 'Remove image', () => { chat.pendingImages.splice(i, 1); renderImageChips(chat); });
+    thumb.appendChild(bar);
+    chat.imgs.appendChild(thumb);
   });
   persistImages(chat);
 }
