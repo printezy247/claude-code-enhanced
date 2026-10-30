@@ -1,6 +1,6 @@
 // Keyboard navigation as plain functions: which chord means what, which tab
 // comes next in most-recently-used order, and what a palette prefix selects.
-export const SPLIT_KINDS = ['changes', 'files', 'terminal', 'diff', 'review', 'preview'];
+export const SPLIT_KINDS = ['changes', 'files', 'terminal', 'diff', 'review', 'preview', 'artifacts'];
 
 /** { tab: index } for Ctrl+1..9, { split: kind } for Alt+1..6, else null. */
 export function chordAction(e, tabCount) {

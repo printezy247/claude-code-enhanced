@@ -1,6 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { t } from '../i18n.js';
-import { elIcon, loadMonaco } from '../app/core.js';
+import { elIcon, loadMonaco, toast } from '../app/core.js';
 import { sendToTerminal, switchView } from '../app/tabs.js';
 import { makePanel } from './panels.js';
 import { codeFileName, isShellBlock, shellText } from './cmdmatch.js';
@@ -49,7 +49,11 @@ function addCodeHeader(pre, code, plain) {
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   });
+  const keep = el('button', 'code-act code-keep', t('artifact.keep'));
+  keep.type = 'button';
+  keep.addEventListener('click', () => keepArtifact('code', lang ? lang + ' snippet' : 'snippet', plain));
   head.appendChild(wrap);
+  head.appendChild(keep);
   head.appendChild(save);
   if (isShellBlock(lang, plain)) {
     const term = el('button', 'code-act', t('code.sendTerminal'));
@@ -65,8 +69,22 @@ function addCodeHeader(pre, code, plain) {
   pre.insertBefore(head, pre.firstChild);
 }
 
+/** Save a reply or a code block in the Artifacts store. */
+async function keepArtifact(kind, title, content) {
+  try {
+    const r = await ccx.invoke('artifact:save', { kind, title, content });
+    toast(r && r.ok ? t('artifact.kept') : t('artifact.keepFail'), r && r.ok ? 'ok' : 'err');
+  } catch (e) { toast(t('artifact.keepFail') + ': ' + ((e && e.message) || e), 'err'); }
+}
+
 export function enhanceMarkdown(container, rawText) {
   addCopyBtn(container, () => rawText, 'msg-copy');
+  if (rawText && String(rawText).trim().length > 40) {
+    const k = el('button', 'msg-keep', t('artifact.keep'));
+    k.type = 'button';
+    k.addEventListener('click', () => keepArtifact('markdown', String(rawText).trim().split('\n')[0].replace(/^#+\s*/, '').slice(0, 80), rawText));
+    container.appendChild(k);
+  }
   container.querySelectorAll('pre').forEach(pre => {
     // Take the text BEFORE the copy button is added and before highlighting:
     // Monaco's colorized HTML uses &nbsp; for spaces and <br> for line breaks,

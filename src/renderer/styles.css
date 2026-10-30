@@ -1996,3 +1996,8 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .variant-list { margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
 .variant-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 2px 0; }
 .variant-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
+.code-keep:hover, .msg-keep:hover { color: var(--text); border-color: var(--accent); }
+.msg-keep { font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg2); color: var(--muted); cursor: pointer; margin-top: 6px; }
+.artifact-row.sel { background: var(--accent-soft); }
+.artifact-view { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.artifact-doc { overflow-wrap: anywhere; }

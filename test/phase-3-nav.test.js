@@ -16,10 +16,11 @@ describe('chordAction', () => {
     expect(chordAction(key('1', { ctrlKey: true }), 0)).toBe(null);
   });
   it('Alt+1..6 opens the split tabs in order', () => {
-    expect(SPLIT_KINDS).toEqual(['changes', 'files', 'terminal', 'diff', 'review', 'preview']);
+    expect(SPLIT_KINDS).toEqual(['changes', 'files', 'terminal', 'diff', 'review', 'preview', 'artifacts']);
     expect(chordAction(key('1', { altKey: true }), 2)).toEqual({ split: 'changes' });
     expect(chordAction(key('6', { altKey: true }), 2)).toEqual({ split: 'preview' });
-    expect(chordAction(key('7', { altKey: true }), 2)).toBe(null);
+    expect(chordAction(key('7', { altKey: true }), 2)).toEqual({ split: 'artifacts' });
+    expect(chordAction(key('8', { altKey: true }), 2)).toBe(null);
   });
   it('other combinations are left alone', () => {
     expect(chordAction(key('1'), 3)).toBe(null);

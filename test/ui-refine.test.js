@@ -179,7 +179,7 @@ describe('right rail', () => {
   it('uses tabs, foldable cards and shows the session', async () => {
     await flush(4);
     // The Overview is docked on the right with no toggle; the tool panel has five tabs.
-    expect(doc().querySelectorAll('#splitpane .split-tab').length).toBe(6);
+    expect(doc().querySelectorAll('#splitpane .split-tab').length).toBe(7);
     const sess = doc().querySelector(".task-card[data-card=\"environment\"]");
     expect(sess.textContent).toContain('model');
     const head = doc().querySelector('.task-card[data-card="context"] .task-card-head');
