@@ -12,6 +12,11 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.13.6
+- Added: the Context card in the Overview tells you when the window is filling up ("compact soon" from 75%, "compact now" from 90%) and shows how many tokens came from the prompt cache.
+- Added: a chat is named by the CLI's own session title after its first turn (once). A name you typed yourself is never replaced.
+- Checked, no change needed: per-model temperature and top_p defaults, OpenRouter prompt caching and per-message model and effort in the queue were already in place.
+
 ## 0.13.5
 - Changed: auto mode's shell check is now pinned by tests for every hidden-command trick (`;`, `&&`, `||`, `|`, `$(...)`, backticks, redirects, subshells, newlines, unclosed quotes). It already refused them; chains of plainly read-only commands are still approved.
 - Fixed: the 0.9.95 entry was in this file twice.

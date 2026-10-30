@@ -54,6 +54,7 @@ const SCHEMAS = {
   },
   'session:resize': { id: 'id', cols: 'number', rows: 'number' },
   'session:kill': { id: 'id' },
+  'session:title': { sessionId: 'id', cwd: { type: 'nonempty', optional: true } },
   'session:rename': { sessionId: 'id', title: 'nonempty', cwd: { type: 'nonempty', optional: true } },
 
   // chat tabs

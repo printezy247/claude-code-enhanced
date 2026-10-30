@@ -4,6 +4,7 @@ import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, s
 import { tabRegistry, updateStatusbar } from './tabs.js';
 import { Chat } from '../chat/index.js';
 import { openMdEditor } from './mdedit.js';
+import { contextAdvice, cacheLine } from '../chat/ctxadvice.js';
 
 /* ================= split view (#44) ================= */
 
@@ -668,6 +669,12 @@ function renderTasks(target, cwd, only) {
   ctx.inner.appendChild(bar);
   const ctxBreak = el('div', 'task-rows ctx-rows');
   ctx.inner.appendChild(ctxBreak);
+  const ctxAdvice = el('div', 'ctx-advice');
+  ctxAdvice.hidden = true;
+  ctx.inner.appendChild(ctxAdvice);
+  const ctxCache = el('div', 'ctx-cache hint');
+  ctxCache.hidden = true;
+  ctx.inner.appendChild(ctxCache);
   if (chat) {
     const compact = el('button', 'btn small', 'Compact in place');
     compact.title = 'Summarize earlier turns; the same chat continues';
@@ -687,6 +694,13 @@ function renderTasks(target, cwd, only) {
       ctxHead.title = total.toLocaleString() + ' / ' + max.toLocaleString() + ' tokens';
       ctx.badge.textContent = pct.toFixed(0) + '%';
       ctx.badge.classList.toggle('warn', pct > 65);
+      const adv = contextAdvice(pct);
+      ctxAdvice.hidden = !adv;
+      ctxAdvice.textContent = adv ? adv.text : '';
+      ctxAdvice.dataset.level = adv ? adv.level : '';
+      const cached = cacheLine(chat.lastResult && chat.lastResult.usage);
+      ctxCache.hidden = !cached;
+      ctxCache.textContent = cached;
       bar.innerHTML = '';
       ctxBreak.innerHTML = '';
       for (const c of (u.categories || [])) {
@@ -844,6 +858,11 @@ function renderTasks(target, cwd, only) {
           const oldRows = old[i].querySelector('.ctx-rows');
           const newRows = c.querySelector('.ctx-rows');
           if (oldRows && newRows && oldRows.innerHTML !== newRows.innerHTML) oldRows.innerHTML = newRows.innerHTML;
+          for (const sel of ['.ctx-advice', '.ctx-cache']) {
+            const o = old[i].querySelector(sel);
+            const n = c.querySelector(sel);
+            if (o && n && o.outerHTML !== n.outerHTML) o.replaceWith(n);
+          }
           const oldBadge = old[i].querySelector('.tc-badge');
           const newBadge = c.querySelector('.tc-badge');
           if (oldBadge && newBadge && oldBadge.textContent !== newBadge.textContent) oldBadge.textContent = newBadge.textContent;
