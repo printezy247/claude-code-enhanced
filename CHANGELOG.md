@@ -12,6 +12,9 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.13.4
+- Fixed: the OpenCode model picker and effort picker stayed empty. A just-started `opencode serve` lists no models for a few seconds while it reads the logins, and CCE asked once and kept the empty answer. It now asks again for up to 15 s and never keeps an empty list.
+- New: the OpenCode model picker lists the models of every provider your OpenCode login connects, one section per provider, with OpenCode Go and OpenCode (Zen) first. Disabled and deprecated models are left out. "CLI default" names the model it stands for, and the caption (context, images, tools, reasoning) comes from OpenCode instead of "no catalog entry". Effort lists the chosen model's own levels.
 ## 0.13.3
 - New: **OpenCode chats get the full footbar.** Mode picks OpenCode's agent (build, plan, or build with YOLO) and can change mid-chat. Effort lists the current model's variants and sets one on the session. The context ring shows the last step's tokens against the model's window, and Compact (or `/compact`) summarizes the session in place. The model picker lists every enabled model as `provider/model` with its name.
 - Fixed: an OpenCode chat on a chosen model failed every message, because the model was sent in the v2 prompt body, which the server refuses. The model (and variant) now goes on the session.

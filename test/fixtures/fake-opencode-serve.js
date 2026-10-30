@@ -19,11 +19,19 @@ const waits = new Map();   // permission id -> resolve(reply)
 let active = null;         // { sessionID, aborted }
 const calls = [];          // every POST under /api, for the tests to read back
 // /api/model rows in the real v2 shape (Model.Info), trimmed.
+const row = (providerID, id, name, extra) => ({ id, modelID: id, providerID, name, enabled: true, status: 'active', variants: [], capabilities: { tools: true, input: ['text'], output: ['text'] }, limit: { context: 32000, output: 4096 }, ...extra });
 const MODELS = [
-  { id: 'fake-coder', modelID: 'fake-coder', providerID: 'fake', name: 'Fake Coder', enabled: true, variants: [{ id: 'low' }, { id: 'high' }], limit: { context: 128000, output: 8192 } },
-  { id: 'plain', modelID: 'plain', providerID: 'fake', name: 'Plain', enabled: true, variants: [], limit: { context: 32000, output: 4096 } },
-  { id: 'old', modelID: 'old', providerID: 'fake', name: 'Old', enabled: false, variants: [], limit: { context: 8000, output: 1000 } },
+  row('fake', 'fake-coder', 'Fake Coder', { variants: [{ id: 'low' }, { id: 'high' }], capabilities: { tools: true, input: ['text', 'image'], output: ['text'] }, limit: { context: 128000, output: 8192 } }),
+  row('fake', 'plain', 'Plain'),
+  row('fake', 'old', 'Old', { enabled: false }),
+  row('fake', 'gone', 'Gone', { status: 'deprecated' }),
+  row('opencode', 'zen-free', 'Zen Free'),
+  row('opencode-go', 'kimi', 'Kimi', { variants: [{ id: 'max' }], limit: { context: 256000, output: 8192 } }),
 ];
+// The providers the login connects, with their display names.
+const PROVIDERS = [{ id: 'fake', name: 'Fake Cloud' }, { id: 'opencode', name: 'OpenCode' }, { id: 'opencode-go', name: 'OpenCode Go' }];
+// The real server answers an empty model list for a moment after it starts.
+let emptyModels = Number(process.env.FAKE_OC_EMPTY_MODELS) || 0;
 const PROMPT_KEYS = ['id', 'text', 'files', 'agents', 'skills', 'metadata', 'delivery', 'resume'];
 
 async function run(sess, parts) {
@@ -87,8 +95,10 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET' && p === '/_calls') return json(calls);
     if (req.method === 'POST' && p.startsWith('/api/')) calls.push({ path: p, body: j });
     if (req.method === 'GET' && (p === '/api/model' || p === '/model')) {
+      if (emptyModels > 0) { emptyModels--; return json({ location: { directory: '/x' }, data: [] }); }
       return json({ location: { directory: '/x' }, data: MODELS });
     }
+    if (req.method === 'GET' && p === '/api/provider') return json({ location: { directory: '/x' }, data: PROVIDERS });
     if (req.method === 'GET' && p === '/api/model/default') return json({ location: { directory: '/x' }, data: MODELS[0] });
     let m = p.match(/^\/api\/session\/([^/]+)\/agent$/);
     if (m && req.method === 'POST') return json(true);
