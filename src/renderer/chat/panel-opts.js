@@ -24,3 +24,16 @@ export async function editChatEnv(chat) {
   chat.chatEnvNames = Object.keys(env);
   toast(chat.chatEnvNames.length ? 'Set ' + redactEnv(env) : 'Chat variables cleared', 'ok');
 }
+
+/** Web browser (Lightpanda) for this chat only. Off until switched on; the binary is the user's own install. */
+export async function toggleBrowser(chat) {
+  const want = !chat.browserOn;
+  if (want) {
+    const st = await ccx.invoke('lightpanda:status');
+    if (!st || !st.ready) { toast('Lightpanda is not installed. Setup commands: see the changelog (0.22.0).', 'err'); return; }
+  }
+  const r = await ccx.invoke('chat:browser', { id: chat.id, enabled: want });
+  if (!r || !r.ok) { toast('Browser: ' + ((r && r.error) || 'could not switch'), 'err'); return; }
+  chat.browserOn = want;
+  toast(want ? 'Web browser on for this chat' : 'Web browser off', 'ok');
+}

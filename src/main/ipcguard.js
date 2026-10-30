@@ -16,6 +16,8 @@ const CHANNEL_CAPS = new Map([
   ['chat:steer', LARGE_CAP],
   ['draft:images', LARGE_CAP],
   ['dictation:transcribe', LARGE_CAP],
+  ['image:copy', LARGE_CAP],
+  ['image:save', LARGE_CAP],
 ]);
 
 /** The largest JSON payload, in bytes, a channel accepts. */

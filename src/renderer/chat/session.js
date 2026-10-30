@@ -1,5 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { wireDictation } from './dictate.js';
+import { continueList } from './listkeys.js';
 import { expandMentions } from './mentions.js';
 import { tf } from '../i18n.js';
 import { turnsForTitle } from './mentions-live.js';
@@ -552,6 +553,11 @@ export async function createSession(opts) {
         return;
       }
       if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); hideSlash(chat); return; }
+    }
+    if (e.key === 'Enter' && e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const c = chat.composer;
+      const r = c.selectionStart === c.selectionEnd ? continueList(c.value, c.selectionStart) : null;
+      if (r) { e.preventDefault(); c.value = r.value; c.setSelectionRange(r.caret, r.caret); autosize(c); return; }
     }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();

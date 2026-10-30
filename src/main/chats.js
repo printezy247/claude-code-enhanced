@@ -1629,6 +1629,23 @@ class ChatManager extends EventEmitter {
     chat.mcpQueue = turn.catch(() => {});
     return turn;
   }
+  /**
+   * Switch the browser server on or off for one chat. Like every dynamic MCP
+   * change this sends the complete accumulated set (a partial one drops servers).
+   */
+  async setBrowser(id, enabled, config) {
+    const chat = this._chat(id);
+    const run = async () => {
+      const next = { ...(chat.dynamicMcp || {}) };
+      if (enabled) next.lightpanda = config; else delete next.lightpanda;
+      const res = await chat.q.setMcpServers(next);
+      chat.dynamicMcp = next;
+      return res;
+    };
+    const turn = (chat.mcpQueue || Promise.resolve()).then(run, run);
+    chat.mcpQueue = turn.catch(() => {});
+    return turn;
+  }
   async agents(id) {
     const skilltoggle = require('./skilltoggle');
     const raw = await this._chat(id).q.supportedAgents();

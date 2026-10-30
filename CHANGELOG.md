@@ -12,6 +12,13 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.22.0
+
+- Composer images show as thumbnails with Copy, Save and Remove, and a click opens a larger view (Escape closes). Copy and Save go through the main process, which checks the type (png, jpeg, gif, webp) and size (20 MB).
+- Shift+Enter in a bullet (`-`, `*`, `+`) or numbered (`1.`) line starts the next item; on an empty item it ends the list. Plain Enter still sends.
+- Web browser (Lightpanda), per chat and off by default: chat menu, "Web browser (Lightpanda)". CCE never bundles or downloads it; it looks for `~/.local/share/lightpanda/lightpanda` and talks to it over a pipe (no network listener). Tool calls follow the chat's normal permission mode. Side and scheduled sessions never get it.
+- Setup (once): `mkdir -p ~/.local/share/lightpanda`, then `curl -L -o ~/.local/share/lightpanda/lightpanda https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux`, then `chmod a+x ~/.local/share/lightpanda/lightpanda`. Lightpanda is AGPL-3.0 licensed.
+
 ## 0.21.0
 
 - Sessions card in the Overview (replaces the popout-windows idea): lists the open chats with what each is doing (needs you, working, idle). Click a row to switch. Hidden with only one chat; at most 8 rows.
