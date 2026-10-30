@@ -12,6 +12,12 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.20.0
+
+- Dictation: a mic button next to Attach records up to 60 s and puts the text in the message box. Speech to text runs on this computer only (faster-whisper in a virtualenv, model read from disk, network off); audio is never sent anywhere and the temp file is removed straight away.
+- Setup (once): `python3 -m venv ~/.local/share/cce-dictation`, then `~/.local/share/cce-dictation/bin/pip install faster-whisper`, then `~/.local/share/cce-dictation/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('base.en')"` (downloads the model once).
+- The window may now use the microphone (audio only, our own window); every other permission is still refused.
+
 ## 0.19.1
 
 - Environment card shows one compact line (status, model, branch, changes), also when the card is folded.

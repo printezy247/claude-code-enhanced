@@ -52,6 +52,7 @@ const SCHEMAS = {
     engine: { enum: CHAT_ENGINES, optional: true, message: 'unknown engine' },
     sshHost: { type: 'text', optional: true },
   },
+  'dictation:transcribe': { audio: 'nonempty' },
   'artifact:save': { title: { type: 'text', optional: true }, kind: 'nonempty', content: 'nonempty' },
   'artifact:get': { id: 'nonempty' },
   'artifact:remove': { id: 'nonempty' },

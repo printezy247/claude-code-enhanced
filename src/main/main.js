@@ -486,9 +486,12 @@ function createWindow(initialState) {
     if (ipcguard.isExternalLink(url)) shell.openExternal(url);
     return { action: 'deny' };
   });
-  // Refuse every permission request the renderer could make: the app needs no
-  // camera, mic, geolocation or notifications permission from the page itself.
-  w.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+  // Refuse every permission request the renderer could make, except the
+  // microphone (audio only, our own window): dictation records on this machine.
+  w.webContents.session.setPermissionRequestHandler((wc, permission, callback, details) => {
+    const types = (details && details.mediaTypes) || [];
+    callback(permission === 'media' && wc === w.webContents && types.length === 1 && types[0] === 'audio');
+  });
 
   w.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'))
     .catch((err) => console.error('[cce] page load failed:', String(err)));
@@ -2828,6 +2831,15 @@ function registerIpc() {
     });
     return { canceled: res.canceled, path: res.canceled ? null : res.filePaths[0] };
   });
+
+  // Dictation: local speech to text through a venv the user installed.
+  const dictation = require('./dictation').createDictation({
+    python: path.join(os.homedir(), '.local', 'share', 'cce-dictation', 'bin', 'python'),
+    tmpDir: app.getPath('temp'),
+    execFile,
+  });
+  handle('dictation:status', async () => dictation.status());
+  handle('dictation:transcribe', async (p) => dictation.transcribe(p));
 
   // Artifacts: documents and code worth keeping, stored once per content hash.
   const artifactStore = require('./artifacts').createStore(path.join(app.getPath('userData'), 'artifacts'));

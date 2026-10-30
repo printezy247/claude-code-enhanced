@@ -1,4 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
+import { wireDictation } from './dictate.js';
 import { expandMentions } from './mentions.js';
 import { tf } from '../i18n.js';
 import { turnsForTitle } from './mentions-live.js';
@@ -70,6 +71,7 @@ export async function createSession(opts) {
         <div class="chat-slash hidden"></div>
         <div class="chat-input-row">
           <button class="chat-attach" title="Attach an image or a file" aria-label="Attach a file"><span data-icon="clip2"></span></button>
+          <button class="chat-mic" title="Dictate (speech to text on this computer)" aria-label="Dictate" aria-pressed="false"><span data-icon="mic"></span></button>
           <textarea class="chat-input" rows="1" placeholder="Message… (@ files · / commands)"></textarea>
           <button class="chat-busy-mode hidden" title="Toggle Queue vs Steer mode when busy"><span class="busy-mode-badge queue">⏭ Queue</span></button>
           <button class="chat-send" title="Send (Enter)" aria-label="Send"><span data-icon="send"></span></button>
@@ -103,7 +105,7 @@ export async function createSession(opts) {
     projEl: pane.querySelector('.chat-project'), titleEl: pane.querySelector('.chat-title'),
     headerEl: pane.querySelector('.chat-header'),
     modelSel: pane.querySelector('.chat-model-foot'), modelBtn: pane.querySelector('.chat-model-btn'), modeSel: pane.querySelector('.chat-mode-foot'),
-    effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'), targetBtn: pane.querySelector('.chat-target-btn'),
+    effortBtn: pane.querySelector('.chat-effort'), attachBtn: pane.querySelector('.chat-attach'), micBtn: pane.querySelector('.chat-mic'), targetBtn: pane.querySelector('.chat-target-btn'),
     // Element ref and queue *counter* must not share a name: showQueued used
     // to overwrite the element with a number and the next send threw.
     queuedEl: pane.querySelector('.chat-queued'),
@@ -509,6 +511,7 @@ export async function createSession(opts) {
   });
   // Attach + drag-and-drop. The native dialog reads the file in main, so the
   // renderer never has to synthesise a File-like object. #32
+  wireDictation(chat);
   chat.attachBtn.addEventListener('click', async () => {
     const r = await ccx.invoke('dialog:pickFiles');
     if (r.ok && (r.files || []).length) applyAttachedFiles(chat, r.files);
