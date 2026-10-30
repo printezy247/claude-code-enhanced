@@ -32,13 +32,14 @@ const click = (h, el) => el.dispatchEvent(new h.window.MouseEvent('click', { bub
 const CAPS = {
   codex: { images: true, approvals: true, model: true, effort: true, compact: true, context: true, folder: true, workflows: true, modes: [['default', 'ask', 'asks'], ['plan', 'read-only', 'ro'], ['bypassPermissions', 'yolo', 'no asks']] },
   antigravity: { images: false, approvals: false, model: true, effort: true, compact: false, context: false, folder: true, workflows: true, modes: [['default', 'ask', 'a'], ['acceptEdits', 'accept edits', 'b'], ['auto', 'auto', 'c'], ['plan', 'plan', 'd'], ['bypassPermissions', 'yolo', 'e']] },
-  opencode: { images: true, approvals: true, model: true, effort: false, compact: false, context: false, folder: true, workflows: true, modes: null },
+  opencode: { images: true, approvals: true, model: true, effort: true, compact: true, context: true, folder: true, workflows: true, modes: [['default', 'build', 'a'], ['plan', 'plan', 'b'], ['bypassPermissions', 'yolo', 'c']] },
 };
 
-async function openEngineChat(engine, caps = CAPS[engine]) {
+async function openEngineChat(engine, caps = CAPS[engine], extraIpc = {}) {
   const h = loadRenderer({
     ipc: {
       ...ipc,
+      ...extraIpc,
       'chat:set-mode': { ok: true, permissionMode: 'plan', autoPolicy: false },
       'chat:create': { ok: true, id: 'c9', cwd: '/home/jack/alpha', engine, label: engine, model: engine + ' · CLI default', engineModel: '', permissionMode: 'default', provider: null, capabilities: caps },
     },
@@ -81,11 +82,24 @@ describe('engine chat footbar', () => {
     expect(pane.querySelector('.chat-effort').classList.contains('hidden')).toBe(false);
   });
 
-  it('OpenCode: model only; no mode picker, no effort, no context ring', async () => {
-    const { pane } = await openEngineChat('opencode', CAPS.opencode);
-    expect(pane.classList.contains('no-mode')).toBe(true);
-    expect(pane.classList.contains('no-ctx')).toBe(true);
-    expect(pane.classList.contains('no-model')).toBe(false);
+  it('OpenCode: every control; the model picker has a group per provider and OpenCode\'s own model facts', async () => {
+    const { h, pane } = await openEngineChat('opencode', CAPS.opencode, { 'chat:supported-models': { ok: true, models: [
+      { value: 'opencode-go/kimi', displayName: 'Kimi', group: 'OpenCode Go', context: 256000, vision: false, tools: true, reasoning: true, isDefault: false },
+      { value: 'fake/fake-coder', displayName: 'Fake Coder', group: 'Fake Cloud', context: 128000, vision: true, tools: true, reasoning: true, isDefault: true },
+    ] } });
+    for (const c of ['no-mode', 'no-ctx', 'no-model']) expect(pane.classList.contains(c)).toBe(false);
+    const sel = pane.querySelector('.chat-model-foot');
+    expect([...sel.querySelectorAll('optgroup')].map((g) => [g.label, [...g.children].map((o) => o.value)])).toEqual([
+      ['OpenCode Go', ['opencode-go/kimi']],
+      ['Fake Cloud', ['fake/fake-coder']],
+    ]);
+    // "CLI default" names the model it stands for, and its caption comes from OpenCode.
+    expect(sel.options[0].textContent).toBe('CLI default · Fake Coder');
+    click(h, pane.querySelector('.chat-model-btn'));
+    await flush(5);
+    const doc = h.window.document;
+    expect(doc.querySelector('.model-cap').textContent).toBe('128k context · images · tools · reasoning');
+    expect([...doc.querySelectorAll('.model-group')].map((g) => g.textContent)).toEqual(expect.arrayContaining(['OpenCode Go', 'Fake Cloud']));
   });
 
   it('a CLI without a model switch gets no model chip', async () => {

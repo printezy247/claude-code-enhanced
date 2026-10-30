@@ -63,6 +63,8 @@ const modelInfoCache = new Map();
 
 /** Catalog facts for a picker value ('' = provider default, '__pm:uid\u0001model' = another provider). */
 async function modelInfoFor(chat, value) {
+  const own = chat.engineModelInfo && chat.engineModelInfo.get(value || '');
+  if (own) return own;
   const pm = String(value || '').startsWith('__pm:');
   const [uid, m] = pm ? value.slice(5).split('\u0001') : [null, value];
   const key = (pm ? uid : (chat.provider && chat.provider.uid) || '') + '\u0001' + (m || '');
@@ -233,15 +235,28 @@ function fillEngineModels(chat) {
   if (cur) add(cur, cur);   // the model this chat started on
   add('__custom', 'Custom…');
   sel.value = cur;
+  chat.engineModelInfo = new Map();
   ccx.invoke('chat:supported-models', { id: chat.id }).then((r) => {
     if (!r || !r.ok || !r.models || !r.models.length) return;
-    const group = document.createElement('optgroup');
-    group.label = 'from ' + (chat.engine || 'the CLI');
+    // One group per provider when the CLI says which (OpenCode), else one for the CLI.
+    const groups = new Map();
     for (const m of r.models) {
       const id2 = m.value || m.id || m.name;
-      if (id2) add(id2, m.displayName || id2, group);
+      if (!id2) continue;
+      const g = m.group || ('from ' + (chat.engine || 'the CLI'));
+      if (!groups.has(g)) { const og = document.createElement('optgroup'); og.label = g; groups.set(g, og); }
+      const label = m.displayName || id2;
+      add(id2, label, groups.get(g));
+      // The CLI's own facts for the picker caption, where it gives them.
+      if (m.context || m.vision != null || m.tools != null) {
+        const info = { model: label, context: m.context || 0, vision: m.vision ?? null, tools: m.tools ?? null, reasoning: !!m.reasoning };
+        chat.engineModelInfo.set(id2, info);
+        if (m.isDefault) chat.engineModelInfo.set('', info);
+      }
+      if (m.isDefault) sel.querySelector('option[value=""]').textContent = 'CLI default · ' + label;
     }
-    sel.insertBefore(group, sel.querySelector('[value="__custom"]'));
+    const custom = sel.querySelector('[value="__custom"]');
+    for (const og of groups.values()) sel.insertBefore(og, custom);
     sel.value = [...sel.options].some((o) => o.value === cur) ? cur : '';
     if (chat.syncModelBtn) chat.syncModelBtn();
   }).catch(() => {});

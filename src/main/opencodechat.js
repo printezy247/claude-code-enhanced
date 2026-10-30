@@ -26,6 +26,11 @@ const MODES = [
   ['bypassPermissions', 'yolo', 'The build agent, and nothing is asked. Only for throwaway folders or containers.'],
 ];
 const AGENT = { default: 'build', plan: 'plan', bypassPermissions: 'build' };
+// OpenCode's own subscriptions, listed first in the model picker.
+const OWN_PROVIDERS = ['opencode-go', 'opencode'];
+// A just-started server lists no models for a few seconds: ask for up to ~15 s.
+const MODEL_TRIES = 30;
+const MODEL_RETRY_MS = 500;
 // Input keys the chat view's cards read (Edit/Read take file_path).
 function toolInput(tool, input) {
   const i = input && typeof input === 'object' ? { ...input } : {};
@@ -88,6 +93,8 @@ class OpenCodeChat {
     this.effort = '';
     this.modelList = null;     // /api/model rows, for the picker, variants and context window
     this.defaultModel = null;  // /api/model/default, when no model is chosen
+    this.modelsLoading = null;
+    this.providerNames = new Map();   // provider id -> display name, for the picker groups
     this.contextTokens = 0;    // what the last step sent and got back
     this.sessionId = sessionId;
     this.busy = false;
@@ -474,13 +481,37 @@ class OpenCodeChat {
   get controls() { return { model: true, modes: MODES, effort: true, compact: true, context: true }; }
 
   /** /api/model rows (enabled only) and the default model, read once per chat. */
-  async _loadModels() {
-    if (this.modelList) return this.modelList;
+  _loadModels() {
+    if (this.modelList) return Promise.resolve(this.modelList);
+    // One load at a time: the picker, the effort picker and the context poll all ask at once.
+    if (!this.modelsLoading) {
+      this.modelsLoading = this._fetchModels().finally(() => { this.modelsLoading = null; });
+    }
+    return this.modelsLoading;
+  }
+
+  /**
+   * The models of every provider the CLI login connects (OpenCode Go, Zen,
+   * OpenRouter…), as the server lists them. A just-started server answers an
+   * empty list while it reads the logins, so ask again for a while; an empty
+   * answer is never kept, so the next open asks again.
+   */
+  async _fetchModels() {
     await this._start();
-    const r = await this._api('GET', '/api/model', undefined, 10_000);
-    this.modelList = ((r && Array.isArray(r.data)) ? r.data : []).filter((m) => m && m.id && m.enabled !== false);
+    let rows = [];
+    for (let i = 0; i < MODEL_TRIES && !rows.length; i++) {
+      if (i) await new Promise((r) => setTimeout(r, MODEL_RETRY_MS));
+      const r = await this._api('GET', '/api/model', undefined, 10_000);
+      rows = ((r && Array.isArray(r.data)) ? r.data : []).filter((m) => m && m.id && m.providerID && m.enabled !== false && m.status !== 'deprecated');
+    }
+    if (!rows.length) return rows;
+    try {
+      const p = await this._api('GET', '/api/provider', undefined, 5000);
+      for (const x of (p && p.data) || []) if (x && x.id) this.providerNames.set(x.id, x.name || x.id);
+    } catch { /* ids stand in for names */ }
     try { this.defaultModel = (await this._api('GET', '/api/model/default', undefined, 5000)).data || null; } catch { /* none */ }
-    return this.modelList;
+    this.modelList = rows;
+    return rows;
   }
 
   /** The model this chat runs on: the chosen one, else OpenCode's default. */
@@ -490,12 +521,31 @@ class OpenCodeChat {
     return (want && list.find((m) => m.providerID === want.providerID && m.id === want.modelID)) || (!want && this.defaultModel) || null;
   }
 
+  /**
+   * Picker rows, one group per provider: OpenCode's own subscriptions (Go,
+   * then Zen) first, the rest by name. Each row carries what the picker
+   * caption shows (context, images, tools, reasoning) straight from OpenCode.
+   */
   async models() {
-    try {
-      return (await this._loadModels()).map((m) => ({ value: m.providerID + '/' + m.id, displayName: m.name || m.id }));
-    } catch {
-      return [];
-    }
+    let rows;
+    try { rows = await this._loadModels(); } catch { return []; }
+    const rank = (id) => { const i = OWN_PROVIDERS.indexOf(id); return i < 0 ? OWN_PROVIDERS.length : i; };
+    const name = (id) => this.providerNames.get(id) || id;
+    const d = this.defaultModel;
+    return rows
+      .map((m, i) => ({ m, i }))
+      .sort((a, b) => rank(a.m.providerID) - rank(b.m.providerID) || name(a.m.providerID).localeCompare(name(b.m.providerID)) || a.i - b.i)
+      .map(({ m }) => {
+        const caps = m.capabilities || {};
+        return {
+          value: m.providerID + '/' + m.id, displayName: m.name || m.id, group: name(m.providerID),
+          context: (m.limit && Number(m.limit.context)) || 0,
+          vision: Array.isArray(caps.input) ? caps.input.includes('image') : null,
+          tools: typeof caps.tools === 'boolean' ? caps.tools : null,
+          reasoning: Array.isArray(m.variants) && m.variants.length > 0,
+          isDefault: !!d && d.providerID === m.providerID && d.id === m.id,
+        };
+      });
   }
 
   /** The current model's variants (OpenCode's reasoning levels). */

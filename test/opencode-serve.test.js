@@ -24,10 +24,10 @@ beforeEach(() => { STATE = newState(); });
 const live = [];
 afterEach(() => { while (live.length) live.pop().close(); });
 
-function chat({ answer = 'allow', sessionId = null, yolo = false, model = '' } = {}) {
+function chat({ answer = 'allow', sessionId = null, yolo = false, model = '', env = {} } = {}) {
   const events = []; const asks = []; let thread = null;
   const c = new OpenCodeChat({
-    command: FAKE, cwd: tmp, env: { ...process.env, FAKE_OC_STATE: STATE }, sessionId, yolo, model,
+    command: FAKE, cwd: tmp, env: { ...process.env, FAKE_OC_STATE: STATE, ...env }, sessionId, yolo, model,
     emit: (e) => events.push(e), ask: async (req) => { asks.push(req); return typeof answer === 'function' ? answer(req) : answer; },
     onThread: (id) => { thread = id; },
   });
@@ -129,16 +129,29 @@ describe('OpenCode over serve', () => {
   const calls = async (c, suffix) => (await (await fetch(c.base + '/_calls', { headers: { authorization: c.auth } })).json())
     .filter((x) => x.path.endsWith(suffix));
 
-  it('lists enabled models as provider/model for the picker and sets the session model', async () => {
+  it('lists the login\'s models by provider, OpenCode Go and Zen first, and sets the session model', async () => {
     const h = chat();
     h.c.send('hello');
     await until(() => result(h.events));
-    expect(await h.c.models()).toEqual([
-      { value: 'fake/fake-coder', displayName: 'Fake Coder' },
-      { value: 'fake/plain', displayName: 'Plain' },
+    const models = await h.c.models();
+    // Disabled and deprecated models are left out.
+    expect(models.map((m) => [m.group, m.value])).toEqual([
+      ['OpenCode Go', 'opencode-go/kimi'],
+      ['OpenCode', 'opencode/zen-free'],
+      ['Fake Cloud', 'fake/fake-coder'],
+      ['Fake Cloud', 'fake/plain'],
     ]);
+    // What the picker caption shows, from OpenCode rather than CCE's catalog.
+    expect(models[2]).toMatchObject({ displayName: 'Fake Coder', context: 128000, vision: true, tools: true, reasoning: true, isDefault: true });
+    expect(models[3]).toMatchObject({ vision: false, reasoning: false, isDefault: false });
     expect(await h.c.setModel('fake/plain')).toEqual({ model: 'fake/plain' });
     expect((await calls(h.c, '/model')).pop().body).toEqual({ model: { id: 'plain', providerID: 'fake' } });
+  });
+
+  it('waits out the empty model list a just-started server answers, without a message sent first', async () => {
+    const h = chat({ env: { FAKE_OC_EMPTY_MODELS: '3' } });
+    expect((await h.c.models()).length).toBe(4);
+    expect(await h.c.effortLevels()).toEqual(['low', 'high']);
   });
 
   it('a chat started on a model sets it on the session; the prompt still goes through', async () => {
