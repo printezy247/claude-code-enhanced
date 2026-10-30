@@ -20,6 +20,8 @@ const DEFAULT_SETTINGS = {
   theme: 'dark',            // 'dark' | 'light' (#47)
   failoverChain: [],        // ordered provider uids to retry a turn on (#42)
   closeToTray: false,       // keep chats alive when the window closes (#46)
+  modelRouting: false,      // pick a model by task size for chats with no pinned model
+  modelRouteTiers: {},      // { trivial, medium, heavy } model overrides for that routing
   notifyOnDone: true,       // desktop notification when a turn finishes (#36)
   // Per-provider lean tool set: fewer tool schemas = a smaller base prompt,
   // which is what lets 3-4B local models clear the ~70K context floor. #41

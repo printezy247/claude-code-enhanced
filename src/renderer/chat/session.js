@@ -11,11 +11,13 @@ import { enhanceMarkdown, wireRunMenu } from './markdown.js';
 import { renderProjectInfo, wireHeaderMenu } from './panels.js';
 import { endPermCountdown } from './permissions.js';
 import { discoverModels, fillModelSelector, guardSwitch, openCustomModel, refreshEffort, setEffort, switchModel, switchProvider, wireModelPicker } from './picker.js';
-import { applySlash, doCompact, handleBuiltin, hideSlash, jumpSlash, maybeSlash, moveSlash, noteSlashUsed } from './slash.js';
+import { loadGoal } from './loopgoal.js';
+import { applySlash, doCompact, setGoal, handleBuiltin, hideSlash, jumpSlash, maybeSlash, moveSlash, noteSlashUsed } from './slash.js';
 import { enqueue, restoreQueue, setQueue } from './qpanel.js';
 import { wireTargetChip } from './target.js';
 import { cancelChain, finishWorkflowRun, wireWorkflowPicker } from './workflows.js';
-import { drainQueue, setBusy, setStatusLine, updateBusyUi } from './status.js';
+import { applyOverrides, drainQueue, setBusy, setStatusLine, updateBusyUi } from './status.js';
+import { routeFor } from './route.js';
 import { thoughtNode } from './stream.js';
 import { clearTodos, makeToolCard, renderTodoItems, seedTodosFromPrompt } from './tools.js';
 import { appendCommandNote, appendError, appendSummary, appendUser, installVirtualization, nearBottom, scrollDown, scrollDownSoft, setupRequestRail, updateLatestBtn } from './transcript.js';
@@ -198,6 +200,7 @@ export async function createSession(opts) {
   } catch { /* ignore */ }
   chat.drainQueue = () => drainQueue(chat);
   restoreQueue(chat);
+  { const g = loadGoal(chat.cwd); if (g) setGoal(chat, g); }
   restoreDraftImages(chat);
   // The nav badge counts every open tab, chat tabs included.
   if (typeof window.updateTabCount === 'function') window.updateTabCount();
@@ -374,7 +377,10 @@ export async function createSession(opts) {
     clearImages(chat);
     updateBusyUi(chat);
     if (blocks.some((b) => b && b.type === 'image')) chat.sentImages = true;
-    ccx.invoke('chat:send', { id: chat.id, text: sendText, blocks: blocks.length ? blocks : null }).then((r) => {
+    // Model routing (Settings > Interface): a small task goes to a small model for this turn only.
+    const s = window.state && window.state.settings;
+    const routed = routeFor({ enabled: !!(s && s.modelRouting), tiers: s && s.modelRouteTiers }, chat, text, { images: blocks.filter((b) => b && b.type === 'image').length });
+    (routed ? applyOverrides(chat, { model: routed }) : Promise.resolve()).then(() => ccx.invoke('chat:send', { id: chat.id, text: sendText, blocks: blocks.length ? blocks : null })).then((r) => {
       if (!r || !r.ok) {
         appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)') + ' (your message is back in the box)');
         restoreUnsent(chat, text, blocks);

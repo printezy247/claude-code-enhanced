@@ -14,6 +14,8 @@ import { appendCommandNote, appendError, appendSummary, appendUser, scrollDownSo
 import { chats, el, esc } from './util.js';
 import { formatRequestMetrics } from './metrics.js';
 import { pullCliTitle } from './titles.js';
+import { loopAfterTurn } from './loopgoal.js';
+import { enqueue } from './qpanel.js';
 
 /* ---------------- background tasks ---------------- */
 
@@ -188,6 +190,7 @@ export function handleEvent(evt) {
   else if (kind === 'hook') onHookEvent(chat, evt.msg);
   else if (kind === 'auth') onAuth(chat, evt);
   else if (kind === 'interrupted') {
+    chat.loop = null;
     endTurnCleanup(chat);
     if (evt.stillQueued) {
       chat.msgs.appendChild(elIcon('div', 'sys-note', CCEIcons.svg('stop', 12) + ' interrupted — ' + evt.stillQueued + ' queued message(s) still run next'));
@@ -362,6 +365,8 @@ function handleMessage(chat, msg) {
       noteRequestMetrics(chat, msg);
       finishWorkflowRun(chat, chat.lastTurnError ? 'error' : 'finished');
       endTurnCleanup(chat);
+      // /loop: queue the next round (a stop or an error already ended the loop).
+      { const again = loopAfterTurn(chat, { error: chat.lastTurnError }); if (again) enqueue(chat, again); }
       // The transcript is on disk now — pick up the new/updated conversation.
       pullCliTitle(chat);
       if (typeof window.scheduleConvoRefresh === 'function') window.scheduleConvoRefresh(true);

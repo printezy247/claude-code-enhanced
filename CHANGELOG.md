@@ -12,6 +12,13 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.14.0
+- Added: model routing (Settings, off by default): in chats with no model chosen, small tasks go to Haiku, medium to Sonnet, big ones to Opus, for that message only.
+- Added: `/loop <times> <prompt>` runs a prompt several times in a row (Stop ends it, an error ends it). `/goal <text>` keeps a goal banner above the chat until `/goal clear`; it is remembered per folder.
+- Added: a quarantine triage skill template in `docs/templates/quarantine-triage`: a read-only reader looks first, a person confirms, only then an agent that can write acts.
+- Changed: when a provider's model list cannot be asked (key refused, no list), CCE now keeps a plain-words reason instead of failing silently.
+- Tested: tool-call streams from OpenAI, Kimi, GLM, Qwen and OpenRouter-Anthropic shapes (no code change needed) and speed budgets for the slash menu and the queue.
+
 ## 0.13.6
 - Added: the Context card in the Overview tells you when the window is filling up ("compact soon" from 75%, "compact now" from 90%) and shows how many tokens came from the prompt cache.
 - Added: a chat is named by the CLI's own session title after its first turn (once). A name you typed yourself is never replaced.

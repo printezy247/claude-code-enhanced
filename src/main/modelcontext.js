@@ -13,6 +13,7 @@ const contextCache = new Map();
 const PROBE_FAIL_TTL_MS = 5 * 60_000;
 const PROBE_TIMEOUT_MS = 8_000;
 const probeFailures = new Map();
+const probeReasons = new Map();   // cacheKey -> what to tell the user
 
 // First match wins, so a specific family comes before the general one. Where
 // the window differs across a family the lower figure is used: claiming more
@@ -144,6 +145,21 @@ function effortLevels(provider, model) {
 }
 
 /** Probe provider's /models endpoint for context window (#A4) */
+const PROBE_REASONS = {
+  auth: 'The key was not accepted when asking the provider for its model list, so the built-in context size is used. Check the key in Providers.',
+  none: 'This provider has no model list to ask, so the built-in context size is used.',
+  nomodel: 'The provider\'s model list does not give a context size for this model, so the built-in size is used.',
+  net: 'Could not reach the provider to ask for its model list, so the built-in context size is used.',
+  other: 'The provider could not give its model list right now, so the built-in context size is used.',
+};
+/** Why the last probe of this model failed, in plain words ('' if it did not fail). */
+function probeProblem(provider, model) {
+  const id = String(model || (provider && provider.model) || '').trim();
+  const baseUrl = provider && (provider.baseUrl || '');
+  const pid = provider && (provider.presetId || provider.modelsDevId || provider.id || '');
+  return probeReasons.get(`${pid || baseUrl}:${id}`) || '';
+}
+
 async function probeContextWindow(provider, model) {
   const id = String(model || (provider && provider.model) || '').trim();
   if (!id) return 0;
@@ -155,11 +171,11 @@ async function probeContextWindow(provider, model) {
   if (failedAt && Date.now() - failedAt < PROBE_FAIL_TTL_MS) return 0;
 
   if (!baseUrl) return 0;
-  const fail = () => { probeFailures.set(cacheKey, Date.now()); return 0; };
+  const fail = (reason) => { probeFailures.set(cacheKey, Date.now()); probeReasons.set(cacheKey, reason || PROBE_REASONS.other); return 0; };
   try {
     const url = baseUrl.replace(/\/+$/, '') + '/models';
     const res = await fetch(url, { headers: probeHeaders(provider, baseUrl), signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
-    if (!res || !res.ok) return fail();
+    if (!res || !res.ok) return fail(res && (res.status === 401 || res.status === 403) ? PROBE_REASONS.auth : res && res.status === 404 ? PROBE_REASONS.none : PROBE_REASONS.other);
     const json = await res.json();
     const list = Array.isArray(json) ? json : (Array.isArray(json && json.data) ? json.data : []);
     const hit = list.find(m => m && (m.id === id || m.name === id));
@@ -171,9 +187,9 @@ async function probeContextWindow(provider, model) {
         return ctx;
       }
     }
-    return fail();
+    return fail(PROBE_REASONS.nomodel);
   } catch {
-    return fail();
+    return fail(PROBE_REASONS.net);
   }
 }
 
@@ -223,6 +239,6 @@ function samplingDefaults(provider, model) {
   return out;
 }
 
-function clearProbeFailures() { probeFailures.clear(); }
+function clearProbeFailures() { probeFailures.clear(); probeReasons.clear(); }
 
-module.exports = { probeHeaders, clearProbeFailures, PROBE_FAIL_TTL_MS, samplingDefaults, SAMPLING_DEFAULTS, modelContext, modelCaps, effortLevels, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };
+module.exports = { probeProblem, probeHeaders, clearProbeFailures, PROBE_FAIL_TTL_MS, samplingDefaults, SAMPLING_DEFAULTS, modelContext, modelCaps, effortLevels, ENGINE_DEFAULT_WINDOW, contextCache, probeContextWindow };
