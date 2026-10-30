@@ -30,6 +30,19 @@ function toUserInput(text, blocks) {
   return input;
 }
 
+// What the footbar offers for Codex: the permission modes it can run in.
+const MODES = [
+  ['default', 'ask', 'Asks before running commands and editing files; edits stay inside this folder.'],
+  ['plan', 'read-only', 'Read-only sandbox: Codex explores and proposes, and changes nothing.'],
+  ['bypassPermissions', 'yolo', 'Nothing is asked or checked. Only for throwaway folders or containers.'],
+];
+// Mode -> what turn/start takes (the sandbox policy and approval policy).
+const POLICY = {
+  default: { approvalPolicy: APPROVAL_POLICY, sandboxPolicy: { type: 'workspaceWrite' } },
+  plan: { approvalPolicy: APPROVAL_POLICY, sandboxPolicy: { type: 'readOnly' } },
+  bypassPermissions: { approvalPolicy: 'never', sandboxPolicy: { type: 'dangerFullAccess' } },
+};
+
 const fileKind = (c) => (c && c.kind && c.kind.type) || 'update';
 
 class CodexChat {
@@ -53,6 +66,9 @@ class CodexChat {
     this.lastText = '';
     this.usage = { input_tokens: 0, output_tokens: 0 };
     this.initSent = false;
+    this.mode = this.yolo ? 'bypassPermissions' : 'default';
+    this.effort = '';
+    this.modelList = null;           // model/list, kept for the effort levels
     this.closed = false;
     this.interrupted = false;
     this.q = this._stub();
@@ -175,7 +191,10 @@ class CodexChat {
       case 'plan':
         if (done && it.text) this._frame(frames.textMsg(sid, it.text));
         break;
-      default: break;   // userMessage echoes, sleeps, review/compaction markers
+      case 'contextCompaction':
+        if (done) this._frame({ type: 'system', subtype: 'compact_boundary', session_id: sid, compact_metadata: { trigger: 'manual' } });
+        break;
+      default: break;   // userMessage echoes, sleeps, review markers
     }
   }
 
@@ -262,6 +281,7 @@ class CodexChat {
   }
 
   send(text, blocks) {
+    if (/^\/compact\b/.test(String(text || '').trim())) return this.compact();
     const input = toUserInput(text, blocks);
     if (!input.length) return { ok: false };
     if (this.busy) { this.queue.push(input); return { ok: true, queued: true }; }
@@ -276,7 +296,12 @@ class CodexChat {
     this.started = Date.now();
     this.emit({ kind: 'status', busy: true });
     this._start()
-      .then(() => this._request('turn/start', { threadId: this.sessionId, input }, 60_000))
+      // Model, effort and mode ride on every turn, so a change in the footbar
+      // applies from the next message on.
+      .then(() => this._request('turn/start', {
+        threadId: this.sessionId, input, ...POLICY[this.mode],
+        ...(this.model ? { model: this.model } : {}), ...(this.effort ? { effort: this.effort } : {}),
+      }, 60_000))
       .then((r) => { this.turnId = (r && r.turn && r.turn.id) || this.turnId; })
       .catch((err) => {
         if (!this.busy) return;
@@ -303,6 +328,55 @@ class CodexChat {
     this.emit({ kind: 'interrupted', stillQueued });
   }
 
+  /* ---- footbar controls ---------------------------------------------------- */
+
+  get controls() { return { model: true, modes: MODES, effort: true, compact: true, context: true }; }
+
+  async models() {
+    if (!this.modelList) {
+      await this._start();
+      const r = await this._request('model/list', { limit: 100 }, 15_000);
+      this.modelList = (r && r.data) || [];
+    }
+    return this.modelList.filter((m) => !m.hidden).map((m) => ({ id: m.model || m.id, displayName: m.displayName || m.model || m.id }));
+  }
+
+  async setModel(model) { this.model = String(model || ''); return { model: this.model }; }
+
+  setMode(mode) {
+    if (!POLICY[mode]) throw new Error('Codex has no ' + mode + ' mode');
+    this.mode = mode;
+    this.yolo = mode === 'bypassPermissions';   // yolo never asks
+    return { permissionMode: mode };
+  }
+
+  setEffort(effort) { this.effort = String(effort || ''); return true; }
+
+  /** Reasoning levels the current model accepts (the default model before one is picked). */
+  async effortLevels() {
+    await this.models();
+    const m = this.modelList.find((x) => (x.model || x.id) === this.model) || this.modelList.find((x) => x.isDefault) || this.modelList[0];
+    return ((m && m.supportedReasoningEfforts) || []).map((e) => e.reasoningEffort).filter(Boolean);
+  }
+
+  /** Summarize the thread in place. The server runs it as a turn of its own. */
+  compact() {
+    if (this.busy) return { ok: false, error: 'wait for the current turn to finish, then compact' };
+    this.busy = true;
+    this.interrupted = false;
+    this.lastText = ''; this.lastError = '';
+    this.started = Date.now();
+    this.emit({ kind: 'status', busy: true });
+    this._start()
+      .then(() => this._request('thread/compact/start', { threadId: this.sessionId }, 30_000))
+      .catch((err) => {
+        if (!this.busy) return;
+        this._frame(frames.resultMsg(this.sessionId, { ok: false, text: String((err && err.message) || err), usage: this.usage, started: this.started }));
+        this._turnEnded();
+      });
+    return { ok: true };
+  }
+
   close() {
     this.closed = true;
     this.queue = [];
@@ -316,8 +390,14 @@ class CodexChat {
     return stubQuery('Codex', {
       interrupt: () => this.interrupt(),
       usage: () => ({ totalTokens: this.usage.input_tokens, maxTokens: this.contextWindow || 0, percentage: 0, categories: [] }),
+      extra: {
+        supportedModels: () => this.models(),
+        setModel: (m) => this.setModel(m),
+        setPermissionMode: async (m) => this.setMode(m),
+        applyFlagSettings: async (patch) => this.setEffort(patch && patch.effort),
+      },
     });
   }
 }
 
-module.exports = { CodexChat, toUserInput, APPROVAL_POLICY };
+module.exports = { CodexChat, toUserInput, APPROVAL_POLICY, MODES };

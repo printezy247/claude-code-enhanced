@@ -952,11 +952,14 @@ body.split-open #splitpane { display: flex; }
 :root[data-theme="light"] .perm-path,
 :root[data-theme="light"] .tool-group { background: var(--bg3); }
 
-/* Engine chats (Codex / Antigravity / OpenCode): the CLI owns model, mode,
-   effort and context, and takes text only. #feat-engine-chat */
-.engine-chat .chat-footbar,
+/* Engine chats (Codex / Antigravity / OpenCode): the footbar shows only the
+   controls that CLI really has. session.js adds a no-* class for each it
+   lacks. The model manager is for local models and never applies. #feat-engine-chat */
+.engine-chat .chat-mgr-btn,
 .engine-chat:not(.engine-images) .chat-attach,
-.engine-chat .chat-mgr-btn { display: none !important; }
+.engine-chat.no-model .chat-model-btn,
+.engine-chat.no-mode .chat-mode-foot,
+.engine-chat.no-ctx .chat-compact-btn { display: none !important; }
 
 /* ---------- composer footer (#32) ---------- */
 .chat-footbar {

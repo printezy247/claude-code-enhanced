@@ -126,7 +126,7 @@ async function runWorkflow(chat, send, key, once = {}) {
       delete chat.restoreAfterTurn.mode;   // the user wants the new mode to stay
       if (!Object.keys(chat.restoreAfterTurn).length) chat.restoreAfterTurn = null;
     }
-    if (apply.mode) toast('Mode → ' + modeLabel(chat.mode));
+    if (apply.mode) toast('Mode → ' + modeLabel(chat.mode, chat.caps && chat.caps.modes));
   }
 
   const text = buildPrompt(basePrompt(key, s, chat), wf, o, command);

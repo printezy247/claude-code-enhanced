@@ -56,8 +56,15 @@ describe('OpenCode helpers', () => {
   it('asks for commands and edits unless YOLO, keeping the provider config', () => {
     const cfg = JSON.parse(withPermissions('{"provider":{"cce":{}}}', false));
     expect(cfg.permission).toMatchObject({ bash: 'ask', edit: 'ask' });
+    expect(cfg.permissions).toEqual(expect.arrayContaining([
+      { action: 'shell', resource: '*', effect: 'ask' },
+      { action: 'edit', resource: '*', effect: 'ask' },
+      { action: 'webfetch', resource: '*', effect: 'ask' },
+    ]));
     expect(cfg.provider).toEqual({ cce: {} });
-    expect(JSON.parse(withPermissions('', true)).permission).toMatchObject({ bash: 'allow', edit: 'allow' });
+    const yoloCfg = JSON.parse(withPermissions('', true));
+    expect(yoloCfg.permission).toMatchObject({ bash: 'allow', edit: 'allow' });
+    expect(yoloCfg.permissions).toEqual([{ action: '*', resource: '*', effect: 'allow' }]);
   });
   it('names tools the way the chat view does', () => {
     expect(toolName('bash')).toBe('Bash');
@@ -117,6 +124,17 @@ describe('OpenCode over serve', () => {
     await until(() => !h.c.busy);
     expect(h.events.some((e) => e.kind === 'interrupted')).toBe(true);
     expect(result(h.events).result).toBe('Interrupted');
+  });
+
+  it('queries models from /api/model and sets the session model', async () => {
+    const h = chat();
+    h.c.send('hello');
+    await until(() => result(h.events));
+    const models = await h.c.models();
+    expect(models).toEqual(['fake-coder']);
+    const res = await h.c.setModel('fake-coder');
+    expect(res).toEqual({ model: 'fake-coder' });
+    expect(h.c.model).toBe('fake-coder');
   });
 
   it('the server rejects a request without the password', async () => {

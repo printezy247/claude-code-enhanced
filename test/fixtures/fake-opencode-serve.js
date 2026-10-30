@@ -14,14 +14,14 @@ const expect = 'Basic ' + Buffer.from('opencode:' + (process.env.OPENCODE_SERVER
 let n = 0;
 const id = (p) => p + '_' + Date.now().toString(36) + (++n);
 const streams = new Set();
-const emit = (type, properties) => { for (const r of streams) r.write('data: ' + JSON.stringify({ type, properties }) + '\n\n'); };
+const emit = (type, properties) => { for (const r of streams) r.write('data: ' + JSON.stringify({ type, properties, data: properties }) + '\n\n'); };
 const waits = new Map();   // permission id -> resolve(reply)
 let active = null;         // { sessionID, aborted }
 
 async function run(sess, parts) {
   active = { sessionID: sess.id, aborted: false };
   const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join(' ');
-  const hasImage = parts.some((p) => p.type === 'file' && /^data:image\//.test(p.url));
+  const hasImage = parts.some((p) => (p.type === 'file' && /^data:image\//.test(p.url)) || (p.uri && /^data:image\//.test(p.uri)));
   const um = { id: id('msg'), role: 'user', sessionID: sess.id };
   const userParts = parts.map((p) => ({ ...p, id: id('prt'), messageID: um.id, sessionID: sess.id }));
   sess.messages.push({ info: um, parts: userParts });
@@ -67,28 +67,55 @@ const server = http.createServer((req, res) => {
     const j = body ? JSON.parse(body) : {};
     const json = (o, s = 200) => { res.writeHead(s, { 'content-type': 'application/json' }); res.end(JSON.stringify(o)); };
     const p = url.pathname;
-    if (req.method === 'GET' && p === '/event') {
+    if (req.method === 'GET' && (p === '/event' || p === '/api/event')) {
       res.writeHead(200, { 'content-type': 'text/event-stream' });
-      res.write('data: {"type":"server.connected","properties":{}}\n\n');
+      res.write('data: {"type":"server.connected","properties":{},"data":{}}\n\n');
       streams.add(res); res.on('close', () => streams.delete(res));
       return;
     }
-    if (req.method === 'POST' && p === '/session') { const s = { id: id('ses'), title: j.title || '', messages: [] }; sessions.set(s.id, s); save(); return json({ id: s.id, title: s.title }); }
-    let m = p.match(/^\/session\/([^/]+)$/);
-    if (m && req.method === 'GET') { const s = sessions.get(m[1]); return s ? json({ id: s.id, title: s.title }) : json({ error: 'not found' }, 404); }
-    m = p.match(/^\/session\/([^/]+)\/message$/);
-    if (m && req.method === 'GET') { const s = sessions.get(m[1]); return s ? json(s.messages) : json({ error: 'not found' }, 404); }
-    m = p.match(/^\/session\/([^/]+)\/prompt_async$/);
-    if (m && req.method === 'POST') { const s = sessions.get(m[1]); if (!s) return json({ error: 'not found' }, 404); res.writeHead(204).end(); run(s, j.parts || []); return; }
-    m = p.match(/^\/session\/([^/]+)\/abort$/);
+    if (req.method === 'GET' && (p === '/info' || p === '/api/info')) {
+      return json({ version: '2.0.21', data: { version: '2.0.21' } });
+    }
+    if (req.method === 'GET' && (p === '/api/model' || p === '/model')) {
+      return json({ data: [{ id: 'fake-coder', name: 'Fake Coder' }] });
+    }
+    if (req.method === 'POST' && (p === '/session' || p === '/api/session')) {
+      const s = { id: id('ses'), title: j.title || '', messages: [] };
+      sessions.set(s.id, s);
+      save();
+      return json(p.startsWith('/api') ? { data: { id: s.id, title: s.title }, id: s.id, title: s.title } : { id: s.id, title: s.title });
+    }
+    let m = p.match(/^\/(?:api\/)?session\/([^/]+)$/);
+    if (m && req.method === 'GET') {
+      const s = sessions.get(m[1]);
+      return s ? json(p.startsWith('/api') ? { data: { id: s.id, title: s.title }, id: s.id, title: s.title } : { id: s.id, title: s.title }) : json({ error: 'not found' }, 404);
+    }
+    m = p.match(/^\/(?:api\/)?session\/([^/]+)\/message$/);
+    if (m && req.method === 'GET') {
+      const s = sessions.get(m[1]);
+      return s ? json(p.startsWith('/api') ? { data: s.messages } : s.messages) : json({ error: 'not found' }, 404);
+    }
+    m = p.match(/^\/(?:api\/)?session\/([^/]+)\/(?:prompt_async|prompt)$/);
     if (m && req.method === 'POST') {
-      json(true);
+      const s = sessions.get(m[1]);
+      if (!s) return json({ error: 'not found' }, 404);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ data: { id: id('msg'), sessionID: s.id } }));
+      const parts = j.parts || (j.text ? [{ type: 'text', text: j.text }, ...(j.files || []).map((f) => ({ type: 'file', url: f.uri, filename: f.name }))] : []);
+      run(s, parts);
+      return;
+    }
+    m = p.match(/^\/(?:api\/)?session\/([^/]+)\/(?:abort|interrupt)$/);
+    if (m && req.method === 'POST') {
+      json({ interrupted: true });
       if (active) { active.aborted = true; for (const r of waits.values()) r('reject'); waits.clear(); if (active.release) active.release(); }
       return;
     }
-    m = p.match(/^\/permission\/([^/]+)\/reply$/);
-    if (m && req.method === 'POST') { const r = waits.get(m[1]); waits.delete(m[1]); if (r) r(j.reply); return json(true); }
-    m = p.match(/^\/question\/([^/]+)\/reject$/);
+    m = p.match(/^\/(?:api\/)?session\/([^/]+)\/model$/);
+    if (m && req.method === 'POST') return json(true);
+    m = p.match(/^\/(?:api\/)?(?:session\/[^/]+\/)?permission\/([^/]+)\/reply$/);
+    if (m && req.method === 'POST') { const r = waits.get(m[1]); waits.delete(m[1]); if (r) r(j.decision || j.reply); return json(true); }
+    m = p.match(/^\/(?:api\/)?question\/([^/]+)\/reject$/);
     if (m && req.method === 'POST') return json(true);
     json({ error: 'unknown ' + req.method + ' ' + p }, 404);
   });

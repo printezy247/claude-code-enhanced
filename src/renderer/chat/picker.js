@@ -219,7 +219,36 @@ export function fillModelSelector(chat) {
   try { fillModelSelectorInner(chat); } finally { if (chat.syncModelBtn) chat.syncModelBtn(); }
 }
 
+/**
+ * Model list of an engine chat: the CLI's own default, the models the CLI
+ * reports (Codex model/list, agy models), and a typed-in name. No providers to
+ * switch to: the CLI runs on its own login or the provider chosen at start.
+ */
+function fillEngineModels(chat) {
+  const sel = chat.modelSel;
+  sel.innerHTML = '';
+  const add = (value, label, parent) => { const o = el('option', '', label); o.value = value; (parent || sel).appendChild(o); };
+  const cur = String(chat.engineModel || '');
+  add('', 'CLI default');
+  if (cur) add(cur, cur);   // the model this chat started on
+  add('__custom', 'Custom…');
+  sel.value = cur;
+  ccx.invoke('chat:supported-models', { id: chat.id }).then((r) => {
+    if (!r || !r.ok || !r.models || !r.models.length) return;
+    const group = document.createElement('optgroup');
+    group.label = 'from ' + (chat.engine || 'the CLI');
+    for (const m of r.models) {
+      const id2 = m.value || m.id || m.name;
+      if (id2) add(id2, m.displayName || id2, group);
+    }
+    sel.insertBefore(group, sel.querySelector('[value="__custom"]'));
+    sel.value = [...sel.options].some((o) => o.value === cur) ? cur : '';
+    if (chat.syncModelBtn) chat.syncModelBtn();
+  }).catch(() => {});
+}
+
 function fillModelSelectorInner(chat) {
+  if (chat.engine) { fillEngineModels(chat); return; }
   const sel = chat.modelSel;
   sel.innerHTML = '';
   const add = (value, label) => { const o = el('option', '', label); o.value = value; sel.appendChild(o); };
@@ -300,6 +329,7 @@ export async function switchModel(chat, model) {
     const r = await ccx.invoke('chat:set-model', { id: chat.id, model });
     if (r.ok) {
       chat.model = r.model || model;
+      if (chat.engine) chat.engineModel = model;
       if (window.refreshOverview) window.refreshOverview(chat.id, 300);
       if (r.model && r.model !== model) toast('model name corrected → ' + r.model);
       setStatusLine(chat);
@@ -346,7 +376,7 @@ export async function switchProvider(chat, uid, model) {
   chat.provider = r.provider;
   chat.model = r.model || '';
   chat.autoPolicy = !!r.autoPolicy;
-  chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider, chat.autoPolicy);
+  chat.mode = uiMode(r.permissionMode || chat.mode, chat.provider, chat.autoPolicy, chat.caps && chat.caps.modes);
   // The old session's exit event can land during the swap and mark the tab
   // dead — the chat is alive again on the new engine.
   chat.alive = true;
@@ -355,7 +385,7 @@ export async function switchProvider(chat, uid, model) {
   const mgr = chat.headerEl.querySelector('.chat-mgr-btn');
   if (mgr) mgr.classList.toggle('hidden', !(chat.provider && chat.provider.baseUrl));
   fillModelSelector(chat);
-  fillModeSelect(chat.modeSel, chat.provider);
+  fillModeSelect(chat.modeSel, chat.provider, chat.caps && chat.caps.modes);
   chat.modeSel.value = chat.mode;
   chat.modelSel.value = [...chat.modelSel.options].some(o => o.value === chat.model) ? chat.model : '';
   setStatusLine(chat);

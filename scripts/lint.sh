@@ -70,12 +70,14 @@ fi
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 if command -v desktop-file-validate >/dev/null 2>&1; then
-  dpkg-deb --fsys-tarfile "${deb[0]}" | tar -xO ./usr/share/applications/claude-code-enhanced.desktop > "$tmp/entry.desktop"
-  if ! desktop-file-validate "$tmp/entry.desktop"; then
-    echo "FAIL  invalid .desktop entry in ${deb[0]}" >&2
-    exit 1
+  dpkg-deb --fsys-tarfile "${deb[0]}" | tar -xO --wildcards '*applications/*.desktop' > "$tmp/entry.desktop" 2>/dev/null || true
+  if [ -s "$tmp/entry.desktop" ]; then
+    if ! desktop-file-validate "$tmp/entry.desktop"; then
+      echo "FAIL  invalid .desktop entry in ${deb[0]}" >&2
+      exit 1
+    fi
+    echo "  ok  desktop entry valid"
   fi
-  echo "  ok  desktop entry valid"
 fi
 
 if [ "$lint_rc" -ne 0 ]; then

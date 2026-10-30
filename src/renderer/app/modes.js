@@ -18,19 +18,23 @@ const MODE_CHOICES = [
  * engine then reports accept-edits, and `auto` (the flag the main process
  * sends back) says the user picked auto.
  */
-export function uiMode(mode, provider, auto) {
+export function uiMode(mode, provider, auto, engineModes) {
+  // An engine chat has the modes its CLI offers (value, label, tip), not these four.
+  if (engineModes) return engineModes.some((c) => c[0] === mode) ? mode : engineModes[0][0];
   if (auto && (mode === 'acceptEdits' || mode === 'auto')) return 'auto';
   return MODE_CHOICES.some(c => c[0] === mode) ? mode : 'acceptEdits';
 }
 
-export function fillModeSelect(sel, provider) {
+export function fillModeSelect(sel, provider, choices) {
   const keep = sel.value;
   sel.innerHTML = '';
-  MODE_CHOICES.forEach(([value, label, tip]) => {
+  // An engine chat passes the modes its CLI has (value, label, tip).
+  const list = choices || MODE_CHOICES;
+  list.forEach(([value, label, tip]) => {
     const o = el('option', '', label);
     o.value = value; o.title = tip;
     sel.appendChild(o);
   });
-  sel.title = MODE_CHOICES.map(c => c[1] + ' — ' + c[2]).join('\n\n');
-  if (keep) sel.value = uiMode(keep, provider);
+  sel.title = list.map(c => c[1] + ' — ' + c[2]).join('\n\n');
+  if (keep) sel.value = choices ? (list.some((c) => c[0] === keep) ? keep : list[0][0]) : uiMode(keep, provider);
 }

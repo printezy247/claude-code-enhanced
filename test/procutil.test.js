@@ -70,7 +70,10 @@ describe('engine registry drives the chat', () => {
   it('createEngine returns the registry capabilities and a notification title', () => {
     const cm = new ChatManager({});
     const made = cm.createEngine({ engine: 'antigravity', command: '/bin/true', cwd: '/tmp', env: {} });
-    expect(made.capabilities).toEqual({ images: false, approvals: false });
+    expect(made.capabilities).toMatchObject({
+      images: false, approvals: false, model: true, effort: true, compact: false, context: false, folder: true, workflows: true,
+    });
+    expect(made.capabilities.modes.map((m) => m[0])).toEqual(['default', 'acceptEdits', 'auto', 'plan', 'bypassPermissions']);
     expect(cm.chats.get(made.id).title).toBe('Antigravity CLI');
     cm.close(made.id);
     expect(() => cm.createEngine({ engine: 'nope', command: 'x', cwd: '/tmp', env: {} })).toThrow(/unknown engine/);

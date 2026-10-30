@@ -12,6 +12,10 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.13.2
+- New: **OpenCode v2 CLI Chat integration.** Full compatibility with `opencode serve` v2.0+ and SDK contract (`/api/session`, `/api/event`, `/api/session/:id/prompt`, `/api/session/:id/interrupt`, `/api/session/:id/permission/:id/reply`, `/api/model`, `/api/session/:id/model`), streaming event normalization (`session.text.*`, `session.reasoning.*`, `session.tool.*`, `permission.asked`), permission rules (`permissions` v2 and `permission` v1), and seamless fallback to v1 serve routes.
+- New: **Engine footbar controls** for OpenCode, Codex, and Antigravity. Model selection and switching via runner APIs, capabilities-driven footbar visibility, and effort/mode controls.
+- Fixed: `.desktop` validation in lint suite when `desktop-file-validate` is present.
 ## 0.13.1
 - Changed: engine chats are driven by the engine registry. Each engine in `engines.js` now says which runner it uses and whether it takes images, asks before acting, and can run on a CCE provider; the chat view, the New session dialog (CLI list and model hints) and `createEngine` read that instead of checking engine names, so a new engine is one registry entry. The Codex, OpenCode and Antigravity runners share one process-stop helper (SIGTERM to the group, then SIGKILL), one stderr tail, one text flattener and one stand-in query object (`src/main/procutil.js`), and OpenCode tool names reuse the shared alias table.
 - Changed: a tool result shown in an engine chat is cut to its first and last 20,000 characters with a note of what was left out, so one `cat` of a big file or build log cannot flood the chat.
