@@ -58,10 +58,12 @@ describe('Ctrl+K / Ctrl+E only act on the chat itself', () => {
     expect(paletteOpen()).toBe(false);
   });
 
-  it('do nothing while another view is showing', () => {
+  it('open from another view too (Ctrl+K works everywhere)', () => {
     h.window.state.view = 'settings';
     keydown(doc().body, 'k');
-    expect(paletteOpen()).toBe(false);
+    expect(paletteOpen()).toBe(true);
+    keydown(doc().body, 'k');   // toggles it closed again
+    h.window.state.view = 'conversations';
   });
 
   it('do nothing from an input in a dialog', () => {

@@ -271,15 +271,15 @@ function wireChrome() {
     // Command palette from anywhere in a chat tab.
     const mod = (e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey;
     const k = String(e.key).toLowerCase();
-    if (mod && k === 'k' && inChat && window.Chat && state.view === 'conversations') {
-      const c = Chat.chats.get(state.activeId);
+    if (mod && k === 'k' && window.Chat) {
+      const c = inChat ? Chat.chats.get(state.activeId) : null;
       // Only when focus is in the chat itself (or nowhere). The side-panel
       // shell, the diff editor, other views and dialogs keep their own keys.
       const t = e.target;
       const home = !t || t === document.body || t === document.documentElement
         || (c && c.pane.contains(t)) || !!(t.closest && t.closest('.palette-back'));
       const own = !!(t && t.closest && t.closest('.xterm, .monaco-editor'));
-      if (c && home && !own) {
+      if ((!c || state.view !== 'conversations' || (home && !own)) && !(t && t.closest && t.closest('.xterm, .monaco-editor, .modal'))) {
         e.preventDefault();
         Chat.openPalette(c);
       }

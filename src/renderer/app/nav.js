@@ -31,3 +31,11 @@ export function paletteMode(input) {
   const mode = PREFIX[s[0]];
   return mode ? { mode, q: s.slice(1).trim() } : { mode: 'all', q: s.trim() };
 }
+
+const MODE_KINDS = {
+  commands: ['command', 'panel', 'chat', 'view'],
+  chats: ['session', 'open'],
+  models: ['model'],
+};
+/** Which palette entries a mode lists (null: all of them; files are built on the fly). */
+export function paletteKinds(mode) { return MODE_KINDS[mode] || null; }

@@ -286,7 +286,9 @@ export function renderSplit() {
         });
         files.appendChild(row);
       }
-      if (list.length) files.querySelector('button')?.click();
+      const pick = window.__reviewPick; window.__reviewPick = null;
+      const want = pick && [...files.querySelectorAll('button')].find((b) => b.querySelector('.fr-name').textContent === pick);
+      if (want) want.click(); else if (list.length) files.querySelector('button')?.click();
     };
     load();
     return;
@@ -664,7 +666,18 @@ function renderTasks(target, cwd, only) {
     for (const f of r.files) {
       const row = el('div', 'task-row mono', f);
       row.title = cwd + '/' + f;
-      row.addEventListener('click', () => ccx.invoke('shell:reveal', { path: cwd + '/' + f }));
+      row.title = cwd + '/' + f + '\nClick: review · Shift+click: add to message · Alt+click: show in folder';
+      row.tabIndex = 0;
+      row.addEventListener('click', (ev) => {
+        if (ev.altKey) { ccx.invoke('shell:reveal', { path: cwd + '/' + f }); return; }
+        if (ev.shiftKey) {
+          const c = window.Chat && Chat.chats.get(state.activeId);
+          if (c) { c.composer.value += (c.composer.value && !/\s$/.test(c.composer.value) ? ' ' : '') + '@' + f + ' '; c.composer.focus(); }
+          return;
+        }
+        window.__reviewPick = f;
+        openSplitTab('review');
+      });
       chList.appendChild(row);
     }
   }));

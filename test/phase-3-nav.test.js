@@ -143,3 +143,46 @@ describe('flat styles', () => {
     expect(css).toMatch(/\.req-tick\.tick-err/);
   });
 });
+
+import { paletteKinds } from '../src/renderer/app/nav.js';
+describe('paletteKinds', () => {
+  it('maps each prefix to the entries it lists', () => {
+    expect(paletteKinds('commands')).toContain('command');
+    expect(paletteKinds('chats')).toEqual(['session', 'open']);
+    expect(paletteKinds('models')).toEqual(['model']);
+    expect(paletteKinds('all')).toBe(null);
+    expect(paletteKinds('files')).toBe(null);
+  });
+});
+
+describe('palette from any view', () => {
+  it('Ctrl+K opens it on the Usage view, and # lists only conversations', async () => {
+    const h = loadRenderer({ ipc: {
+      'app:info': { ok: true, appVersion: '0.0.0-test', electron: '0.0.0', claude: { found: true, path: '/x', version: '1' }, home: '/home/test' },
+      'providers:all': { ok: true, presets: [], instances: [], defaultUid: null },
+      'settings:get': { ok: true, settings: { defaultCwd: '/home/test', fontSize: 14, scrollback: 1000 }, claude: { found: true, path: '', version: '' } },
+      'connectors:presets': { ok: true, presets: [] },
+      'chat:create': { ok: true, id: 'c1', cwd: '/work/proj', model: '', permissionMode: 'default', provider: null },
+      'chats:index': { ok: true, sessions: [{ sessionId: 's1', cwd: '/w', preview: 'fix the login', mtime: 1 }] },
+    } });
+    await flush(4);
+    const w = h.window;
+    w.switchView('usage');
+    w.document.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'k', ctrlKey: true, bubbles: true, cancelable: true }));
+    await flush(4);
+    const input = w.document.querySelector('.palette input');
+    expect(input).toBeTruthy();
+    input.value = '#';
+    input.dispatchEvent(new w.Event('input'));
+    const kinds = [...w.document.querySelectorAll('.palette-item .pi-kind')].map((k) => k.textContent);
+    expect(kinds.length).toBeGreaterThan(0);
+    expect(kinds.every((k) => k === 'session' || k === 'open')).toBe(true);
+  });
+});
+
+describe('composer', () => {
+  it('has a short placeholder', () => {
+    const src = fs.readFileSync(new URL('../src/renderer/chat/session.js', import.meta.url), 'utf8');
+    expect(src).toContain('placeholder="Message… (@ files · / commands)"');
+  });
+});
