@@ -63,6 +63,7 @@ graph TD
 - [x] `Ctrl+Shift+N` (or the **⧉ window** button) opens a second app window
 - [x] Each window owns its own chats and terminal sessions
 - [x] A window that closes takes its engine processes and ptys with it
+- [x] `/detach` moves a chat to its own window (closes it here first, then the new window resumes the same conversation); the conversation list has *Open in new window*
 
 </details>
 
@@ -100,6 +101,9 @@ graph TD
 - [x] `Ctrl+K` palette with prefixes: `>` commands, `@` files, `#` chats, `:` models
 - [x] Jump-to-request rail on the chat's right edge (clears the floating Overview)
 - [x] Tool panel: Changes, Files, Terminal, Diff, Review, Preview, Artifacts
+- [x] **Search across conversations**: the sidebar search also looks inside stored conversation text ("Mentioned inside", with a snippet), plus a date filter (24 h / 7 d / 30 d)
+- [x] **Monthly budget per project folder**: set a limit in the Environment card; warnings at 80% and when passed. Totals stay on this computer
+- [x] **Remote folders over SSH**: for a chat that runs on another machine, the Files tab browses that machine's folders, shows a file as text and the folder's `git diff` (read-only)
 
 </details>
 
@@ -119,6 +123,8 @@ graph TD
 
 - [x] **Side chat** from any of your messages: a read-only session branched from that turn, never reaches the main chat
 - [x] `/btw <question>`: one side question while a turn runs
+- [x] `/compare opus,sonnet <prompt>`: the same prompt to 2-4 models, answers side by side, each in its own read-only session
+- [x] `/recipe`: saved chains of prompts (`/recipe save <name>`, steps split by `---`, `/recipe <name>` runs it). It pauses between steps with Continue / Stop; start the text with `auto` to skip the pause
 - [x] **Scheduled prompts** on the Board (`every 30m`, `hourly`, `daily 09:00`): run while CCE is open, always read-only
 - [x] Side and scheduled sessions fail closed: permission and connector questions are denied automatically
 - [x] **Variants**: re-asked messages are remembered and reopenable after a restart
@@ -130,6 +136,7 @@ graph TD
 
 - [x] Keep button on replies and code blocks; the same text is stored once
 - [x] Artifacts tab (`Alt+7`): sanitized view, delete, PDF export through a hidden no-script, no-network window
+- [x] **Versions**: saves with the same title are versions; pick an older one to see a line diff. *Export file* saves the shown version as .md or .txt
 
 </details>
 
@@ -141,6 +148,7 @@ graph TD
 - [x] `/loop` and `/goal` with a goal banner
 - [x] Per-chat output style and environment variables
 - [x] CLI session titles kept in sync
+- [x] **Export / Import settings**: one file with settings, workflows, recipes, shortcuts, pins and budget limits (no provider keys, connector logins or usage logs)
 
 </details>
 
@@ -151,6 +159,7 @@ graph TD
 - [x] You install the binary; CCE only looks for it and talks to it over a pipe (no network listener)
 - [x] Tool calls follow the chat's permission mode; side and scheduled sessions never get it
 - [x] Text browser: reads pages as text, no drawing, so it does not feed the Preview tab
+- [x] Settings: sites to block (Lightpanda has no allow-list option, so this is a block list), block private network addresses, and keep cookies between chats in one file (all off by default)
 
 </details>
 
@@ -316,6 +325,8 @@ tabs and every stored session — no separate Sessions or History tabs:
 `Alt+V` tool panel · `Alt+1..7` tool-panel tabs · `Shift+Enter` newline, continues a list ·
 `Esc` stop / close panel · `Ctrl+Shift+C/V` copy/paste (terminal tabs only)
 
+Slash commands added by CCE: `/compare` · `/recipe` · `/detach` · `/btw` · `/loop` · `/goal` · `/compact` · `/review`
+
 ## References
 
 - [anthropics/claude-code](https://github.com/anthropics/claude-code) — the wrapped CLI
@@ -383,33 +394,33 @@ every push to `main` via GitHub Actions (`.github/workflows/ci.yml`).
 
 ### Shipped
 
-- [x] Multi-window (one engine process per window)
+- [x] Multi-window (one engine process per window) and `/detach`
 - [x] Streaming Bash output inside tool cards
 - [x] RTK-style output filtering to cut token usage
 - [x] Overview with a Sessions card, chord navigation, palette prefixes
-- [x] Artifacts, side chat, `/btw`, scheduled prompts, variants
-- [x] Local dictation and a per-chat Lightpanda browser
+- [x] Artifacts (with versions and export), side chat, `/btw`, scheduled prompts, variants
+- [x] Local dictation and a per-chat Lightpanda browser (block list, cookies)
 - [x] Composer image previews and list continuation
 - [x] Front-End Checklist accessibility pass (run through Lightpanda inside CCE)
+- [x] Search across conversations, monthly folder budgets, settings export / import
+- [x] `/compare` and `/recipe`
+- [x] Read-only remote folders over SSH
 
 ### Proposed (options, not promises)
 
 **Agents and automation**
-- [ ] Fan-out compare: send one prompt to several models and read the answers side by side
 - [ ] Scheduled prompts that also run while CCE is closed (opt-in, still read-only, via a user systemd timer)
-- [ ] Reusable multi-step recipes: chain side chats with a review step between them
-- [ ] Per-site allowlist and a shared cookie file for the Lightpanda browser
 - [ ] A text "what the model saw" view next to the Preview tab
+- [ ] Recipes that fan out: run a step on several models and carry the best answer on
+- [ ] Compare answers token by token as they stream, with a cost estimate before sending
 
 **Workspace**
-- [ ] Detachable chat windows (needs a two-way event relay through the main process)
-- [ ] Artifact history: versions, diff between versions, export to markdown or a zip
-- [ ] Search across all past conversations, with filters by folder, model and date
-- [ ] Remote folders over SSH: browse, diff and open files, not only run chats
-- [ ] Settings, workflows and connectors export / import as one file
+- [ ] Artifact export as a zip, and a model filter in conversation search
+- [ ] Edit and save files on a remote machine (today it is read-only)
+- [ ] Settings sync between two of your own computers through a folder you choose
 
 **Cost and models**
-- [ ] Budgets and spend alerts per project, with a weekly digest on the Board
+- [ ] A weekly spend digest on the Board
 - [ ] Local model benchmark and a "best model for this task" suggestion from your own history
 - [ ] A bundled offline speech engine option, so dictation needs no setup
 
