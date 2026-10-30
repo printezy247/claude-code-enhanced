@@ -70,9 +70,8 @@ body {
 .nav-btn.active { background: var(--accent-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--accent); }
 .nav-btn .ico { width: 18px; text-align: center; opacity: .85; }
 /* Icon dock: only the open view shows its name. */
-#nav .nav-btn { padding: 8px; gap: 6px; flex: 0 1 auto; position: relative; }
+#nav .nav-btn { padding: 8px 0; gap: 6px; flex: 1 1 0; min-width: 0; justify-content: center; position: relative; }
 #nav .nav-btn > span:not(.ico):not(.badge) { display: none; }
-#nav .nav-btn.active > span:not(.ico):not(.badge) { display: inline; font-size: 12px; }
 #nav .nav-btn .badge { position: absolute; top: 0; right: 0; min-width: 14px; font-size: 11px; padding: 0 3px; }
 .banner-toggle { margin-left: auto; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border); background: transparent; color: var(--muted); cursor: pointer; font-size: 12px; }
 .banner-toggle:hover, .banner-toggle[aria-expanded="true"] { color: var(--text); border-color: var(--accent); }
@@ -1794,6 +1793,9 @@ body[data-view]:not([data-view="conversations"]) #tabbar { display: none; }
   body:not(.split-open) #overviewpane .ov-head,
   body:not(.split-open) #overview-body .task-card { pointer-events: auto; }
   body:not(.split-open) #overview-body { overflow: hidden auto; }
+  /* The jump rail and its tooltip step left of the floating Overview instead of sitting under it. */
+  body:not(.split-open):not(.ov-hidden) .req-rail:not(.empty) { right: calc(var(--ov-w, 304px) + 4px); }
+  body:not(.split-open):not(.ov-hidden) .req-tip:not(.hidden) { right: calc(var(--ov-w, 304px) + 40px); }
 }
 
 /* The chat's side columns belong to Conversations only. */

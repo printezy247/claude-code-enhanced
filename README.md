@@ -91,6 +91,78 @@ graph TD
 
 </details>
 
+<details>
+<summary><b>🧭 Navigation and Overview</b></summary>
+
+- [x] Overview side panel: Environment (one-line status, model, branch), Context, Connectors, Changes, Tasks, Background
+- [x] **Sessions card**: every open chat with what it is doing (needs you, working, idle); click to switch. Redraws only when a chat's state changes
+- [x] `Ctrl+1..9` jump to a tab, `Ctrl+Tab` cycles in most-recently-used order, `Alt+1..7` opens a tool-panel tab
+- [x] `Ctrl+K` palette with prefixes: `>` commands, `@` files, `#` chats, `:` models
+- [x] Jump-to-request rail on the chat's right edge (clears the floating Overview)
+- [x] Tool panel: Changes, Files, Terminal, Diff, Review, Preview, Artifacts
+
+</details>
+
+<details>
+<summary><b>✍️ Composer</b></summary>
+
+- [x] Image thumbnails with Copy, Save, Remove and a larger view; images of an unsent message survive a crash (0600 files, never localStorage)
+- [x] `Shift+Enter` continues a bullet or numbered list (`-`, `*`, `+`, `1.`); on an empty item it ends the list. Plain `Enter` sends
+- [x] URL mentions, `@` file mentions, "Send again" when a send is refused
+- [x] **Dictation**: a mic button, speech to text on this computer only (see *Optional local add-ons*)
+- [x] Queue or steer while a turn is running
+
+</details>
+
+<details>
+<summary><b>🧪 Side work, safely</b></summary>
+
+- [x] **Side chat** from any of your messages: a read-only session branched from that turn, never reaches the main chat
+- [x] `/btw <question>`: one side question while a turn runs
+- [x] **Scheduled prompts** on the Board (`every 30m`, `hourly`, `daily 09:00`): run while CCE is open, always read-only
+- [x] Side and scheduled sessions fail closed: permission and connector questions are denied automatically
+- [x] **Variants**: re-asked messages are remembered and reopenable after a restart
+
+</details>
+
+<details>
+<summary><b>📎 Artifacts</b></summary>
+
+- [x] Keep button on replies and code blocks; the same text is stored once
+- [x] Artifacts tab (`Alt+7`): sanitized view, delete, PDF export through a hidden no-script, no-network window
+
+</details>
+
+<details>
+<summary><b>🧠 Model and chat control</b></summary>
+
+- [x] Context advice at 75% and 90%, cache hit line
+- [x] Model routing by task type (optional, per tier)
+- [x] `/loop` and `/goal` with a goal banner
+- [x] Per-chat output style and environment variables
+- [x] CLI session titles kept in sync
+
+</details>
+
+<details>
+<summary><b>🌍 Web browser for the model (Lightpanda)</b></summary>
+
+- [x] Per chat, **off by default**: chat menu → *Web browser (Lightpanda)*
+- [x] You install the binary; CCE only looks for it and talks to it over a pipe (no network listener)
+- [x] Tool calls follow the chat's permission mode; side and scheduled sessions never get it
+- [x] Text browser: reads pages as text, no drawing, so it does not feed the Preview tab
+
+</details>
+
+<details>
+<summary><b>♿ Accessibility</b></summary>
+
+- [x] Skip-to-content link, a page heading, named controls (a live-UI test fails on any unnamed button, field or image)
+- [x] Contrast and focus-ring ratios computed from the palette in both themes
+- [x] 11 px text floor, icon-only controls always have a tooltip and a name
+
+</details>
+
 ---
 
 ## Install
@@ -107,6 +179,26 @@ Launch **Claude Code Enhanced** from your application menu, or run `claude-code-
 Requirements: the [claude CLI](https://github.com/anthropics/claude-code)
 (`curl -fsSL https://claude.ai/install.sh | bash`) — the app auto-detects it at
 `~/.local/bin/claude`, `/usr/local/bin/claude`, etc.; you can override the path in Settings.
+
+## Optional local add-ons
+
+CCE never downloads anything on its own. Both add-ons are commands you run yourself.
+
+**Dictation** (speech to text, offline after the one-time model fetch):
+
+```bash
+python3 -m venv ~/.local/share/cce-dictation
+~/.local/share/cce-dictation/bin/pip install faster-whisper
+~/.local/share/cce-dictation/bin/python -c "from faster_whisper import WhisperModel; WhisperModel('base.en')"
+```
+
+**Lightpanda** (headless browser the model can use; AGPL-3.0 licensed):
+
+```bash
+mkdir -p ~/.local/share/lightpanda
+curl -L -o ~/.local/share/lightpanda/lightpanda https://github.com/lightpanda-io/browser/releases/download/nightly/lightpanda-x86_64-linux
+chmod a+x ~/.local/share/lightpanda/lightpanda
+```
 
 ## Build from source
 
@@ -218,9 +310,11 @@ tabs and every stored session — no separate Sessions or History tabs:
 
 ## Keyboard
 
-`Ctrl+Shift+T` new session · `Ctrl+Shift+W` close tab · `Ctrl+Tab` next tab ·
-`Ctrl+Shift+N` new window · `Ctrl+K` command palette · `Ctrl+B` conversation list ·
-`Alt+V` split view · `Esc` stop / close panel · `Ctrl+Shift+C/V` copy/paste (terminal tabs only)
+`Ctrl+Shift+T` new session · `Ctrl+Shift+W` close tab · `Ctrl+1..9` jump to tab ·
+`Ctrl+Tab` next tab (most recently used) · `Ctrl+Shift+N` new window · `Ctrl+K` command palette
+(`>` commands, `@` files, `#` chats, `:` models) · `Ctrl+B` conversation list · `Ctrl+\` sidebar ·
+`Alt+V` tool panel · `Alt+1..7` tool-panel tabs · `Shift+Enter` newline, continues a list ·
+`Esc` stop / close panel · `Ctrl+Shift+C/V` copy/paste (terminal tabs only)
 
 ## References
 
@@ -287,6 +381,41 @@ every push to `main` via GitHub Actions (`.github/workflows/ci.yml`).
 
 ## 🚀 Roadmap
 
+### Shipped
+
 - [x] Multi-window (one engine process per window)
 - [x] Streaming Bash output inside tool cards
 - [x] RTK-style output filtering to cut token usage
+- [x] Overview with a Sessions card, chord navigation, palette prefixes
+- [x] Artifacts, side chat, `/btw`, scheduled prompts, variants
+- [x] Local dictation and a per-chat Lightpanda browser
+- [x] Composer image previews and list continuation
+- [x] Front-End Checklist accessibility pass (run through Lightpanda inside CCE)
+
+### Proposed (options, not promises)
+
+**Agents and automation**
+- [ ] Fan-out compare: send one prompt to several models and read the answers side by side
+- [ ] Scheduled prompts that also run while CCE is closed (opt-in, still read-only, via a user systemd timer)
+- [ ] Reusable multi-step recipes: chain side chats with a review step between them
+- [ ] Per-site allowlist and a shared cookie file for the Lightpanda browser
+- [ ] A text "what the model saw" view next to the Preview tab
+
+**Workspace**
+- [ ] Detachable chat windows (needs a two-way event relay through the main process)
+- [ ] Artifact history: versions, diff between versions, export to markdown or a zip
+- [ ] Search across all past conversations, with filters by folder, model and date
+- [ ] Remote folders over SSH: browse, diff and open files, not only run chats
+- [ ] Settings, workflows and connectors export / import as one file
+
+**Cost and models**
+- [ ] Budgets and spend alerts per project, with a weekly digest on the Board
+- [ ] Local model benchmark and a "best model for this task" suggestion from your own history
+- [ ] A bundled offline speech engine option, so dictation needs no setup
+
+**Platform and quality**
+- [ ] Signed auto-update channel from the CI artifact
+- [ ] macOS and Windows builds
+- [ ] Mod API for panels and slash commands
+- [ ] Full WCAG 2.2 AA pass with real screen-reader testing, reduced motion, a high-contrast theme
+- [ ] More interface languages (English, Spanish and German exist)
