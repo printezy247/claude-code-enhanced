@@ -652,9 +652,11 @@ export function clearLive(chat, parentId) {
   for (const [, b] of live.blocks) if (b.type === 'text' && b.text) flushMarkdown(b);
   // Go through the patched removeChild so the virtualization list drops them
   // too; a bare remove() left stale entries that rebuildWindow re-appended.
+  // A block streamed while scrolled up sits in _allNodes but not in the DOM;
+  // a bare remove() left it there and it was drawn again above the final copy.
   const drop = (n) => {
     if (!n) return;
-    if (n.parentNode === chat.msgs) chat.msgs.removeChild(n); else n.remove();
+    if (n.parentNode === chat.msgs || chat._allNodes?.includes(n)) chat.msgs.removeChild(n); else n.remove();
   };
   // The finished message can carry a thought with its text left out (the
   // provider redacted or omitted it). Keep what streamed, in order, so the
