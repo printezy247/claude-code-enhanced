@@ -12,6 +12,9 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.13.5
+- Changed: auto mode's shell check is now pinned by tests for every hidden-command trick (`;`, `&&`, `||`, `|`, `$(...)`, backticks, redirects, subshells, newlines, unclosed quotes). It already refused them; chains of plainly read-only commands are still approved.
+- Fixed: the 0.9.95 entry was in this file twice.
 ## 0.13.4
 - Fixed: the OpenCode model picker and effort picker stayed empty. A just-started `opencode serve` lists no models for a few seconds while it reads the logins, and CCE asked once and kept the empty answer. It now asks again for up to 15 s and never keeps an empty list.
 - New: the OpenCode model picker lists the models of every provider your OpenCode login connects, one section per provider, with OpenCode Go and OpenCode (Zen) first. Disabled and deprecated models are left out. "CLI default" names the model it stands for, and the caption (context, images, tools, reasoning) comes from OpenCode instead of "no catalog entry". Effort lists the chosen model's own levels.
@@ -74,8 +77,6 @@ All notable changes to Claude Code Enhanced are documented here.
 - New: Codex and OpenCode chats can run on a CCE provider. Codex gets it through `-c model_providers` config, OpenCode through an inline config; the API key goes in the environment, never on the command line.
 - New: Codex, OpenCode and Antigravity chats can start in an isolated git worktree.
 - The dialog shows only the options the chosen type and CLI support.
-## 0.9.95
-- Fixed: chats failed to start in the installed app with "Cannot find module 'zod'". The Agent SDK's peer dependencies (`zod`, `@modelcontextprotocol/sdk`, `@anthropic-ai/sdk`) are now direct dependencies, so the package includes them.
 ## 0.9.95
 - Fixed: chats failed to start in the installed app with "Cannot find module 'zod'". The Agent SDK's peer dependencies (`zod`, `@modelcontextprotocol/sdk`, `@anthropic-ai/sdk`) are now direct dependencies, so the package includes them.
 ## 0.9.94
