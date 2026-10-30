@@ -15,6 +15,7 @@ import { chats, el, esc } from './util.js';
 import { formatRequestMetrics } from './metrics.js';
 import { pullCliTitle } from './titles.js';
 import { loopAfterTurn } from './loopgoal.js';
+import { btwChildren } from './btw.js';
 import { enqueue } from './qpanel.js';
 import { onHookEvent, onTaskEvent, renderHooks } from './events-tasks.js';
 export { renderHooks };
@@ -33,6 +34,12 @@ function onAuth(chat, evt) {
 export function handleEvent(evt) {
   if (window.__CCE_SMOKE) console.log('[chat-event]', evt && evt.id, evt && evt.kind, evt && evt.msg && evt.msg.type);
   const { id, kind } = evt;
+  if (btwChildren.has(id)) {   // a side session (/btw, side chat, scheduled prompt): read-only, so it never asks anyone
+    if (kind === 'permission') ccx.invoke('chat:permission-answer', { id, requestId: evt.requestId, decision: 'deny' }).catch(() => {});
+    else if (kind === 'elicitation') ccx.invoke('chat:elicit-answer', { id, requestId: evt.requestId, action: 'decline' }).catch(() => {});
+    else btwChildren.get(id)(evt);
+    return;
+  }
   const chat = chats.get(id);
   if (!chat) { if (window.__CCE_SMOKE) console.log('[chat-event] DROPPED — have ids:', [...chats.keys()].join(',')); return; }
   if (kind === 'message') handleMessage(chat, evt.msg);

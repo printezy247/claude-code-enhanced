@@ -2829,6 +2829,35 @@ function registerIpc() {
     return { canceled: res.canceled, path: res.canceled ? null : res.filePaths[0] };
   });
 
+  // Artifacts: documents and code worth keeping, stored once per content hash.
+  const artifactStore = require('./artifacts').createStore(path.join(app.getPath('userData'), 'artifacts'));
+  handle('artifact:save', async (p) => { const r = artifactStore.save(p); if (!r.ok) throw new Error(r.error); return r; });
+  handle('artifact:list', async () => ({ artifacts: artifactStore.list() }));
+  handle('artifact:get', async ({ id }) => { const r = artifactStore.get(id); if (!r.ok) throw new Error(r.error); return r; });
+  handle('artifact:remove', async ({ id }) => { const r = artifactStore.remove(id); if (!r.ok) throw new Error(r.error); return {}; });
+  // PDF: a hidden window with no script and no network (the page's own policy blocks both),
+  // fed only the saved text. Markdown arrives already sanitized by the renderer; code is escaped here.
+  handle('artifact:export-pdf', async ({ id, html }, e) => {
+    const art = artifactStore.get(id);
+    if (!art.ok) throw new Error(art.error);
+    const arts = require('./artifacts');
+    const body = art.kind === 'code' ? arts.codeToHtml(art.content) : String(html || '').slice(0, 2_000_000) || arts.codeToHtml(art.content);
+    const res = await dialog.showSaveDialog(senderWin(e), {
+      defaultPath: path.join(store.settings.defaultCwd || os.homedir(), art.title.replace(/[^\w.-]+/g, '_').slice(0, 60) + '.pdf'),
+      filters: [{ name: 'PDF', extensions: ['pdf'] }],
+    });
+    if (res.canceled || !res.filePath) return { saved: false };
+    const win = new BrowserWindow({ show: false, webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: false } });
+    try {
+      win.webContents.on('will-navigate', (ev) => ev.preventDefault());
+      win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+      await win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(arts.pdfDocument(art.title, body)));
+      const pdf = await win.webContents.printToPDF({ printBackground: false });
+      fs.writeFileSync(res.filePath, pdf);
+      return { saved: true, path: res.filePath, bytes: pdf.length };
+    } finally { win.destroy(); }
+  });
+
   // Images pasted into a message not sent yet, kept across a crash in 0600
   // files instead of localStorage. #phase5
   const drafts = createDraftStore(path.join(app.getPath('userData'), 'drafts'));

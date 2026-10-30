@@ -16,6 +16,7 @@ import { openNewSessionModal, openProviderEditor } from './app/provider-forms.js
 import { parseForceCtx, renderClaudeBanner, renderSettings } from './app/settings.js';
 import { activateSession, createSession, killSession, paintReopenButton, recentlyClosedCount, reopenLastClosed, resumeLatest, switchView, tabRegistry, toggleSidebar, usedAt } from './app/tabs.js';
 import { chordAction, mruCycle } from './app/nav.js';
+import { startScheduler } from './app/scheduler.js';
 import { initHome } from './app/home.js';
 import { renderBoard } from './app/board.js';
 import { renderUsage } from './app/usage.js';
@@ -353,6 +354,7 @@ function wireChrome() {
     if (state.view === 'connectors') refreshMcpList();
   });
   if (window.__CCE_SMOKE || window.__CCE_DEBUG) setTimeout(() => console.log('[monaco]', !!(window.monaco && window.monaco.editor)), 3000);
+  startScheduler();
   // Connectors and Settings draw themselves the first time their view opens (switchView).
   switchView('terminal');
 

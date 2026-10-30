@@ -102,6 +102,14 @@
         <div class="banner">
           Every live chat with what it is doing, the background jobs, and any run that was cut short when CCE last stopped.
         </div>
+        <h3>Scheduled prompts</h3>
+        <div class="sched-form">
+          <input id="sched-name" type="text" placeholder="Name" aria-label="Task name">
+          <input id="sched-prompt" type="text" placeholder="Prompt, read-only" aria-label="Prompt">
+          <input id="sched-when" type="text" placeholder="every 30m · hourly · daily 09:00" aria-label="When">
+          <button id="sched-add" class="btn small">Add</button>
+        </div>
+        <div id="sched-list"></div>
         <h3>Live chats</h3>
         <div id="board-chats"></div>
         <div id="board-queues-wrap" class="hidden">
@@ -178,6 +186,7 @@
           <button class="split-tab" role="tab" data-kind="diff" title="Last edit diff"><span data-icon="pencil"></span><span>Diff</span></button>
           <button class="split-tab" role="tab" data-kind="review" title="Review the working-tree diff"><span data-icon="branch"></span><span>Review</span></button>
           <button class="split-tab" role="tab" data-kind="preview" title="Preview a dev server"><span data-icon="globe"></span><span>Preview</span></button>
+          <button class="split-tab" role="tab" data-kind="artifacts" title="Saved replies and code"><span data-icon="archive"></span><span>Artifacts</span></button>
         </div>
         <span class="spacer"></span>
         <button class="icon-btn" id="btn-split-tabs" title="Choose which tabs to show" aria-label="Choose which tool tabs to show" aria-haspopup="true"><span data-icon="dots"></span></button>
@@ -189,6 +198,7 @@
           <option value="diff">Last edit diff</option>
           <option value="review">Review</option>
           <option value="preview">Preview</option>
+          <option value="artifacts">Artifacts</option>
         </select>
         <button class="icon-btn" id="btn-split-close" title="Close the tool panel (Alt+V)" aria-label="Close the tool panel"><span data-icon="close"></span></button>
       </div>

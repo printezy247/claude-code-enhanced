@@ -725,6 +725,8 @@ export async function closeChat(id) {
     d.__ed = null;
     d.__init = null;
   }
+  // Side chats branched from this one end with it.
+  chat.pane.querySelectorAll('.side-card').forEach((c) => { if (c.__close) c.__close(); });
   if (chat.alive) { try { await ccx.invoke('chat:close', { id }); } catch { /* tear down anyway */ } }
   chat.pane.remove(); chat.tabEl.remove(); chats.delete(id);
   if (window.__tabs) {

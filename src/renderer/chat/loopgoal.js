@@ -41,3 +41,8 @@ export function loadGoal(cwd) {
 export function saveGoal(cwd, goal) {
   try { if (goal) localStorage.setItem(goalKey(cwd), JSON.stringify(goal)); else localStorage.removeItem(goalKey(cwd)); } catch { /* private mode */ }
 }
+
+export function parseBtw(text) {
+  const q = String(text || '').replace(/^\/btw\b/, '').trim();
+  return q ? { question: q } : { error: 'Use /btw <question>, for example /btw what does this function do?' };
+}

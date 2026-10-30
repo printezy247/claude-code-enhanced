@@ -1,6 +1,8 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
 import { convoSessions, renderConversationList } from './conversations.js';
-import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, state } from './core.js';
+import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, state, toast } from './core.js';
+import { t } from '../i18n.js';
+import { md as mdHtml } from '../chat/util.js';
 import { tabRegistry, updateStatusbar } from './tabs.js';
 import { Chat } from '../chat/index.js';
 import { openMdEditor } from './mdedit.js';
@@ -293,6 +295,50 @@ export function renderSplit() {
     load();
     return;
   }
+  if (kind === 'artifacts') {
+    // Things kept from chats. Markdown is sanitized by md(); code is set as text.
+    const list = el('div', 'task-rows');
+    const view = el('div', 'artifact-view');
+    body.appendChild(list);
+    body.appendChild(view);
+    const open = async (a, row) => {
+      list.querySelectorAll('.artifact-row').forEach((r) => r.classList.toggle('sel', r === row));
+      const r = await ccx.invoke('artifact:get', { id: a.id });
+      view.textContent = '';
+      if (!r || !r.ok) { view.textContent = (r && r.error) || 'could not open'; return; }
+      const doc = el('div', 'artifact-doc');
+      if (r.kind === 'code') doc.appendChild(el('pre', 'mono', r.content));
+      else doc.innerHTML = mdHtml(r.content);
+      const acts = el('div', 'rail-actions');
+      const pdf = el('button', 'btn small artifact-pdf', t('artifact.pdf'));
+      pdf.addEventListener('click', async () => {
+        const x = await ccx.invoke('artifact:export-pdf', { id: a.id, html: r.kind === 'markdown' ? mdHtml(r.content) : '' });
+        if (x && x.ok && x.saved) toast(t('artifact.pdfSaved') + ': ' + x.path, 'ok');
+        else if (x && !x.ok) toast(x.error, 'err');
+      });
+      const del = el('button', 'btn small danger artifact-del', t('artifact.del'));
+      del.addEventListener('click', async () => { await ccx.invoke('artifact:remove', { id: a.id }); load(); });
+      acts.appendChild(pdf); acts.appendChild(del);
+      view.appendChild(acts);
+      view.appendChild(doc);
+    };
+    const load = async () => {
+      const r = await ccx.invoke('artifact:list');
+      if (!body.contains(list)) return;
+      list.textContent = ''; view.textContent = '';
+      const items = (r && r.ok && r.artifacts) || [];
+      if (!items.length) list.appendChild(el('div', 'hint', t('artifact.empty')));
+      for (const a of items) {
+        const row = el('button', 'task-row artifact-row');
+        row.appendChild(el('span', 'artifact-title', a.title));
+        row.appendChild(el('span', 'hint', ' ' + a.kind));
+        row.addEventListener('click', () => open(a, row));
+        list.appendChild(row);
+      }
+    };
+    load();
+    return;
+  }
   if (kind === 'preview') {
     // Dev-server / artifact preview: sandboxed iframe with a URL bar. The
     // frame is an isolated origin — it cannot reach ccx. #feat-preview-pane
@@ -371,7 +417,7 @@ export function renderSplit() {
  * is never offered here, it is always on.
  */
 const HIDEABLE_TABS = [
-  ['changes', 'Changes'], ['files', 'Files'], ['terminal', 'Terminal'], ['diff', 'Diff'], ['review', 'Review'], ['preview', 'Preview'],
+  ['changes', 'Changes'], ['files', 'Files'], ['terminal', 'Terminal'], ['diff', 'Diff'], ['review', 'Review'], ['preview', 'Preview'], ['artifacts', 'Artifacts'],
 ];
 
 function hiddenTabs() {
