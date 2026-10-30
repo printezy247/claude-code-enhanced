@@ -12,6 +12,11 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.22.1
+
+- Accessibility fixes from the Front-End Checklist audit (run through Lightpanda inside CCE): a hidden page heading (`h1`) so headings start at the top, a "Skip to content" link that appears on first Tab, and a name for the connector scope dropdown.
+- Colour fixes in newer styles: the skip link uses the theme's on-accent text colour (readable in the light theme), the recording mic uses the theme's danger colour, and the thumbnail Remove button no longer recolours on its dark bar. A new test renders the live app and checks every button, field and image has a name.
+
 ## 0.22.0
 
 - Composer images show as thumbnails with Copy, Save and Remove, and a click opens a larger view (Escape closes). Copy and Save go through the main process, which checks the type (png, jpeg, gif, webp) and size (20 MB).
