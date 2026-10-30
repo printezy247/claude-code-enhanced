@@ -12,6 +12,14 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.25.0
+
+Phase 3 of the roadmap: workspace.
+
+- Detachable chats: `/detach` moves the current chat to its own window (it closes here first, then the new window resumes the same conversation, so two sessions never write one transcript). In the conversation list, "Open in new window" does the same for any stored conversation. Not possible while a turn is running or before the first message is sent.
+- Remote folders over SSH: the Files tab of a chat that runs on another machine now browses that machine's folders (read-only), shows a file as plain text and shows the folder's `git diff`. Folders list first, large folders and files are capped, and nothing is ever written to the remote.
+- Web browser (Lightpanda) settings: a list of sites it must not load, a switch to block private network addresses, and an option to keep cookies between chats in one file. Lightpanda has no allow-list option, so this is a block list rather than an allow list.
+
 ## 0.24.0
 
 Phase 2 of the roadmap: compare and reuse.

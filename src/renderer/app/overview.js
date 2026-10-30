@@ -1,6 +1,7 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
 import { exportName, lineDiff, versionsOf } from './artifacthistory.js';
 import { envStrip } from './envstrip.js';
+import { renderRemoteFiles } from './remotefiles.js';
 import { load as loadBudgets, saveLimits, standing } from './budgets.js';
 import { convoSessions, renderConversationList } from './conversations.js';
 import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, state, toast } from './core.js';
@@ -158,6 +159,9 @@ export function renderSplit() {
   body.classList.remove('preview-body');
   const cwd2 = activeCwd();
   if (kind === 'files') {
+    // A chat running on another machine: browse that machine's folders instead.
+    const remote = Chat.chats.get(state.activeId);
+    if (remote && remote.ssh && remote.ssh.id) { renderRemoteFiles(body, remote); return; }
     // File tree of the active folder, the way the desktop app's Files pane
     // lists the working directory. #feat-desktop-layout
     const filter = el('input', 'rail-filter');

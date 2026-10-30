@@ -1,7 +1,7 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { toast } from '../app/core.js';
 import { openCustomModel } from './picker.js';
-import { createSession } from './session.js';
+import { closeChat, createSession } from './session.js';
 import { appendError, scrollDownSoft } from './transcript.js';
 import { el, fmtTok } from './util.js';
 import { applySlashToken, highlightParts, loadRecent, pushRecent, rankCommands, slashTokenAt, windowRange, SECTION_ORDER } from './cmdmatch.js';
@@ -75,6 +75,17 @@ function sendSoon(chat, text) {
   setTimeout(() => { chat.composer.value = text; chat.send(); }, 0);
 }
 
+/** Move this chat to its own window: close it here, then open a window that resumes the same conversation. */
+async function detachChat(chat) {
+  if (chat.busy) { toast('Wait for the current turn to finish, then /detach.', 'err'); return; }
+  if (!chat.sessionId) { toast('Nothing to move yet: send a message first so there is a conversation to resume.', 'err'); return; }
+  const { sessionId, cwd } = chat;
+  // Close first: two live sessions on one transcript would race two writers on one file.
+  await closeChat(chat.id);
+  const r = await ccx.invoke('window:detach', { sessionId, cwd });
+  if (!r || !r.ok) toast((r && r.error) || 'Could not open a new window', 'err');
+}
+
 async function runRecipeCommand(chat, text) {
   const r = parseRecipeCmd(text);
   if (r.error) { toast(r.error, 'err'); return; }
@@ -111,6 +122,11 @@ export function handleBuiltin(chat, text) {
   if (cmd === '/compare') {
     const r = parseCompare(text);
     if (r.error) toast(r.error, 'err'); else { askCompare(chat, r.models, r.question); chat.composer.value = ''; }
+    return true;
+  }
+  if (cmd === '/detach') {
+    detachChat(chat);
+    chat.composer.value = '';
     return true;
   }
   if (cmd === '/recipe') {
@@ -180,6 +196,7 @@ const OWN_SLASH = [
   { name: 'compact', description: 'Summarise the conversation and carry on in a fresh session' },
   { name: 'compare', description: 'Ask several models the same thing: /compare opus,sonnet <prompt>' },
   { name: 'recipe', description: 'Run a saved chain of prompts: /recipe <name>, /recipe save <name>' },
+  { name: 'detach', description: 'Move this chat to its own window' },
   { name: 'btw', description: 'Ask a side question while a turn runs: /btw <question>' },
   { name: 'loop', description: 'Run a prompt n times: /loop 3 run the tests' },
   { name: 'goal', description: 'Keep a goal in view: /goal <text>, /goal clear' },
