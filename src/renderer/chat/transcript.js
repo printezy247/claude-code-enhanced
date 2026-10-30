@@ -359,14 +359,19 @@ export function installVirtualization(chat) {
     return node;
   };
 
+  // Also accepts a node outside the painted window (scrolled away): it must
+  // still leave chat._allNodes, or the next rebuild paints it again.
   msgs.removeChild = function(node) {
     const idx = chat._allNodes.indexOf(node);
     if (idx !== -1) {
       chat._allNodes.splice(idx, 1);
+      if (idx < chat._winStart) chat._winStart--;
+      if (idx < chat._winEnd) chat._winEnd--;
       if (chat._winEnd > chat._allNodes.length) chat._winEnd = chat._allNodes.length;
       chat._renderedStart = chat._winStart;
       chat._renderedEnd = chat._winEnd;
     }
+    if (node.parentNode !== msgs) return node;
     return origRemove(node);
   };
 

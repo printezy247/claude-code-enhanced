@@ -12,6 +12,10 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.22.3
+
+- Chat: a reply that streamed while you were scrolled up is no longer shown twice. The unfinished live copy (with the orange caret, and any "Thinking…" pill) stayed in the scrolled-away part of the transcript and came back above the final reply when you scrolled down.
+
 ## 0.22.2
 
 - Sidebar: the six section buttons now share the row equally and stay inside the sidebar (icons only, with tooltips). The active button no longer shows a "Conversations" label that pushed the last icon outside.
