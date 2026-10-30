@@ -54,3 +54,18 @@ describe('performance budgets', () => {
     expect(took, `queueing and drawing 50 rows took ${took.toFixed(0)} ms, budget 3000 ms`).toBeLessThan(3000);
   });
 });
+
+describe('workflow menu with 100 custom workflows', async () => {
+  const { filterRows, customToWorkflow, exportCustom, importCustom } = await import('../src/renderer/chat/wfoptions.js');
+  const rows = Array.from({ length: 100 + 30 }, (_, i) => ({ key: 'custom-wf-' + i, icon: 'pencil', label: 'Workflow ' + i, hint: 'does job ' + i, group: 'Build', cls: 'wf-c-build', custom: true }));
+  it('filtering per keystroke', () => {
+    for (const q of ['', 'w', 'workflow 9', 'job 5', 'zzzz']) within('filter 130 rows for "' + q + '"', 50, () => filterRows(rows, q));
+  });
+  it('building, exporting and re-importing 100 customs', () => {
+    const list = rows.slice(0, 100).map((r) => ({ key: r.key, label: r.label, hint: r.hint, group: r.group, icon: r.icon, prompt: 'Do the thing ' + r.key }));
+    within('customToWorkflow x100', 50, () => list.forEach((c) => customToWorkflow(c)));
+    let text;
+    within('export 100', 50, () => { text = exportCustom(list); });
+    within('import 100', 100, () => { importCustom(text, []); });
+  });
+});
