@@ -18,6 +18,7 @@ import { wireTargetChip } from './target.js';
 import { cancelChain, finishWorkflowRun, wireWorkflowPicker } from './workflows.js';
 import { applyOverrides, drainQueue, setBusy, setStatusLine, updateBusyUi } from './status.js';
 import { routeFor } from './route.js';
+import { closeCtxPop, toggleCtxPop } from './ctxpop.js';
 import { thoughtNode } from './stream.js';
 import { clearTodos, makeToolCard, renderTodoItems, seedTodosFromPrompt } from './tools.js';
 import { appendCommandNote, appendError, appendSummary, appendUser, installVirtualization, nearBottom, scrollDown, scrollDownSoft, setupRequestRail, updateLatestBtn } from './transcript.js';
@@ -48,8 +49,14 @@ export async function createSession(opts) {
           <div class="chat-empty">
             <div class="chat-empty-icon" data-icon="terminal"></div>
             <h3>Claude Code</h3>
-            <p>Ask anything about this project. Claude can read & edit files, run commands, use skills and MCP tools — you approve each step.</p>
-            <p class="chat-empty-hint">Type <b>/</b> for commands · <b>Enter</b> to send · <b>Shift+Enter</b> newline</p>
+            <p>Ask anything about this project.</p>
+            <div class="chat-pills">
+              <button type="button" class="chat-pill" data-pill="review">Review changes</button>
+              <button type="button" class="chat-pill" data-pill="tests">Run tests</button>
+              <button type="button" class="chat-pill" data-pill="explain">Explain repo</button>
+              <button type="button" class="chat-pill" data-pill="workflows">Workflows</button>
+            </div>
+            <p class="chat-empty-hint"><b>/</b> commands · <b>@</b> files</p>
           </div>
         </div>
         <button class="chat-latest hidden" title="Jump to the latest response (End)" aria-label="Jump to the latest response">
@@ -490,8 +497,20 @@ export async function createSession(opts) {
 
   // Compact in place: the engine summarizes earlier turns and the same chat
   // keeps going (no new tab, no lost context).
-  if (chat.compactBtn) chat.compactBtn.addEventListener('click', () => doCompact(chat));
+  if (chat.compactBtn) chat.compactBtn.addEventListener('click', (e) => { if (e.shiftKey) { closeCtxPop(chat); doCompact(chat); } else toggleCtxPop(chat); });
   wireWorkflowPicker(chat, send);
+  const PILL_PROMPTS = {
+    review: 'Review my uncommitted changes (git diff): correctness, tests, naming. Severity-ranked, file:line, concrete fixes.',
+    tests: 'Run the project\'s tests and summarise any failures with the likely cause.',
+    explain: 'Give me a short tour of this repo: what it does, how it is laid out, and where to start reading.',
+  };
+  chat.msgs.querySelector('.chat-pills')?.addEventListener('click', (e) => {
+    const b = e.target.closest && e.target.closest('.chat-pill');
+    if (!b) return;
+    if (b.dataset.pill === 'workflows') { if (chat.wfBtn) chat.wfBtn.click(); return; }
+    chat.composer.value = PILL_PROMPTS[b.dataset.pill] || '';
+    send();
+  });
   // Attach + drag-and-drop. The native dialog reads the file in main, so the
   // renderer never has to synthesise a File-like object. #32
   chat.attachBtn.addEventListener('click', async () => {

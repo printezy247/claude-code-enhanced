@@ -16,6 +16,15 @@ import { ProvidersUI } from '../providers/ui.js';
 // Every ⋯ panel used to be a bare box: no title bar, no close button, and
 // two could stack on top of each other. They now share one frame — title,
 // close (✕ / Esc), and only one open at a time.
+// Label, panel class, opener. Functions below are hoisted, so this can sit first.
+const PANEL_TABS = [
+  ['Skills', 'chat-skills-main', (c) => toggleSkillsPanel(c)],
+  ['MCP', 'chat-mcp-panel', (c) => toggleMcpPanel(c)],
+  ['Memory', 'chat-memory-panel', (c) => toggleMemoryPanel(c)],
+  ['Rewind', 'chat-rewind-panel', (c) => toggleRewindPanel(c)],
+  ['History', 'chat-history-panel', (c) => toggleHistoryPanel(c)],
+];
+
 export function makePanel(chat, cls, icon, title, hint) {
   chat.pane.querySelectorAll('.chat-skills-panel').forEach(p => p.remove());
   const panel = el('div', 'chat-skills-panel ' + cls);
@@ -29,6 +38,21 @@ export function makePanel(chat, cls, icon, title, hint) {
   x.addEventListener('click', () => panel.remove());
   head.appendChild(x);
   panel.appendChild(head);
+  const here = PANEL_TABS.find(([, c]) => c === cls);
+  if (here) {
+    // One click to any sibling panel, no trip back through the ⋯ menu.
+    const tabs = el('div', 'panel-tabs');
+    tabs.setAttribute('role', 'tablist');
+    for (const [label, c, open] of PANEL_TABS) {
+      const b = el('button', 'panel-tab', label);
+      b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', String(c === cls));
+      if (c !== cls) b.addEventListener('click', () => open(chat));
+      tabs.appendChild(b);
+    }
+    panel.appendChild(tabs);
+  }
   if (hint) panel.appendChild(el('p', 'hint', hint));
   panel.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); panel.remove(); chat.composer.focus(); }

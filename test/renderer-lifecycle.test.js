@@ -210,7 +210,7 @@ describe('spilled tool output offers the file (#50)', () => {
 describe('stuck-state guards (0.9.34)', () => {
   it('re-enables the compact button when chat:send throws', async () => {
     const { chat } = await open({ 'chat:send': () => { throw new Error('ipc down'); } });
-    chat.compactBtn.click();
+    chat.compactBtn.dispatchEvent(new chat.compactBtn.ownerDocument.defaultView.MouseEvent('click', { bubbles: true, shiftKey: true }));
     await flush();
     expect(chat.compactBtn.disabled).toBe(false);
   });

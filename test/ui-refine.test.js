@@ -87,6 +87,8 @@ describe('compact in place', () => {
   it('sends the engine /compact to the same chat, no new session', async () => {
     click(chat().compactBtn);
     await flush(4);
+    click(pane().querySelector('.ctx-pop-compact'));
+    await flush(4);
     const sent = h.calls.filter(c => c.channel === 'chat:send').pop();
     expect(sent.payload).toMatchObject({ id: 'c1', text: '/compact' });
     expect(h.calls.filter(c => c.channel === 'chat:create').length).toBe(1);

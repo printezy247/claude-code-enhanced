@@ -550,6 +550,7 @@ function renderRemoteCards(body) {
   body.appendChild(cSsh);
   const refreshSsh = async () => {
     const r = await ccx.invoke('sshhosts:list');
+    if (!sshList.isConnected) return;   // the view was redrawn or the window is gone
     const hosts = (r && r.ok && r.hosts) || [];
     sshList.textContent = '';
     for (const h of hosts) {
@@ -583,6 +584,7 @@ function renderRemoteCards(body) {
   cAg.appendChild(agList);
   body.appendChild(cAg);
   ccx.invoke('agents:models').then(async (r) => {
+      if (!agList.isConnected) return;   // the view was redrawn or the window is gone
     const agents = (r && r.ok && r.agents) || [];
     const overrides = (r && r.ok && r.overrides) || {};
     agList.textContent = '';

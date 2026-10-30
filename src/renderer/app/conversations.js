@@ -244,30 +244,36 @@ export function renderConversationList() {  // Async data can land after the win
     sec.appendChild(head);
     const listEl = el('div', 'convo-rows');
     if (isCollapsed) { listEl.classList.add('hidden'); sec.classList.add('collapsed'); }
+    // Rows are built when the folder is open, and only once: a collapsed
+    // folder in a long list costs nothing until it is expanded.
+    let built = false;
+    const build = () => {
+      if (built) return;
+      built = true;
+      let bi = 0;
+      while (bi < CONVO_BUCKETS.length) {
+        const [label, within] = CONVO_BUCKETS[bi];
+        const prev = bi === 0 ? 0 : CONVO_BUCKETS[bi - 1][1];
+        const inBucket = rows.filter((s) => now - s.mtime <= within && now - s.mtime > prev);
+        if (inBucket.length) {
+          listEl.appendChild(el('div', 'convo-bucket', label));
+          for (const s of inBucket) listEl.appendChild(convoRow(s, cwd));
+        }
+        bi++;
+      }
+    };
     head.addEventListener('click', () => {
       const set = collapsedFolders();
       const nowCollapsed = !set.has(cwd);
       if (nowCollapsed) set.add(cwd); else set.delete(cwd);
       lsSet('cce.convoCollapsed', [...set]);
+      if (!nowCollapsed) build();
       listEl.classList.toggle('hidden', nowCollapsed);
       sec.classList.toggle('collapsed', nowCollapsed);
       head.setAttribute('aria-expanded', nowCollapsed ? 'false' : 'true');
     });
     sec.appendChild(listEl);
-
-    // Time buckets inside the folder, preserving the chosen sort within a bucket.
-    let bi = 0;
-    while (bi < CONVO_BUCKETS.length) {
-      const [label, within] = CONVO_BUCKETS[bi];
-      const prev = bi === 0 ? 0 : CONVO_BUCKETS[bi - 1][1];
-      const inBucket = rows.filter((s) => now - s.mtime <= within && now - s.mtime > prev);
-      if (inBucket.length) {
-        const bhead = el('div', 'convo-bucket', label);
-        listEl.appendChild(bhead);
-        for (const s of inBucket) listEl.appendChild(convoRow(s, cwd));
-      }
-      bi++;
-    }
+    if (!isCollapsed) build();
     root.appendChild(sec);
   }
 }

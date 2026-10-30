@@ -36,6 +36,21 @@ function wireChrome() {
   // "← Conversations" and the breadcrumb's Home on the other views.
   document.querySelectorAll('[data-back]').forEach(b =>
     b.addEventListener('click', (e) => { e.preventDefault(); switchView(b.dataset.back); }));
+  // Explanatory text: one "?" in the header shows or hides it.
+  document.querySelectorAll('.view > .banner:not([id])').forEach((banner) => {
+    const head = banner.parentElement.querySelector('.panel-head');
+    if (!head) return;
+    banner.hidden = true;
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'banner-toggle';
+    b.textContent = '?';
+    b.title = 'What is this?';
+    b.setAttribute('aria-label', 'What is this?');
+    b.setAttribute('aria-expanded', 'false');
+    b.addEventListener('click', () => { banner.hidden = !banner.hidden; b.setAttribute('aria-expanded', String(!banner.hidden)); });
+    head.appendChild(b);
+  });
   paintDeclaredIcons();
   // The conversation list and the Open list live in the sidebar from the start.
   ensureConvoDrop();
@@ -338,8 +353,7 @@ function wireChrome() {
     if (state.view === 'connectors') refreshMcpList();
   });
   if (window.__CCE_SMOKE || window.__CCE_DEBUG) setTimeout(() => console.log('[monaco]', !!(window.monaco && window.monaco.editor)), 3000);
-  renderConnectors();
-  renderSettings();
+  // Connectors and Settings draw themselves the first time their view opens (switchView).
   switchView('terminal');
 
   // A blank home page with a folder picker, the way the desktop app opens. A

@@ -12,6 +12,15 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.16.0
+- Added: click the context ring in the chat footbar for a small popover (usage, a bar per category, Compact now, Toggle Overview). Shift+click still compacts at once.
+- Added: a new chat shows four quick pills (Review changes, Run tests, Explain repo, Workflows) instead of a paragraph.
+- Added: Edit/Write tool cards get a "diff" button that opens that file in Review; a failed Bash card gets "fix in chat", which puts the command in the message box.
+- Added: Skills, MCP, Memory, Rewind and History panels share a tab bar, so one click switches between them.
+- Changed: the sidebar navigation is a compact icon dock (hover for the name); explanatory banners on Usage, Board and Connectors hide behind a `?` button.
+- Changed: Connectors and Settings draw themselves the first time you open them; collapsed sidebar folders build no rows until opened.
+- Checked, no change needed: streaming text is already drawn once per animation frame, and the sidebar already has a filter toggle.
+
 ## 0.15.0
 - Added: `Ctrl+1`…`Ctrl+9` jump to a tab (9 is the last), `Alt+1`…`Alt+6` open Changes, Files, Terminal, Diff, Review or Preview in the side pane, and `Ctrl+Tab` now cycles in most-recently-used order.
 - Added: `Ctrl+K` opens the command palette from every view. Type `>` for commands, `@` to add a file to the message, `#` for conversations, `:` for models.
