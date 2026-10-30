@@ -68,7 +68,7 @@ describe('"/" in the composer', () => {
   it('still offers cce\'s own commands when the session lists none', async () => {
     const { h, chat } = await open({ commands: [] });
     await type(h, chat, '/co');
-    expect(items(chat).sort()).toEqual(['/compact', '/context', '/cost']);
+    expect(items(chat).sort()).toEqual(['/compact', '/compare', '/context', '/cost']);
   });
 });
 

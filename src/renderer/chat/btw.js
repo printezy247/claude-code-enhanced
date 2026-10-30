@@ -48,6 +48,35 @@ export function runSide({ cwd, providerUid, model, question }) {
   });
 }
 
+/** /compare: the same question to several models at once, answers in columns. */
+export async function askCompare(chat, models, question) {
+  const card = el('div', 'compare-card');
+  card.appendChild(el('div', 'btw-q', 'compare: ' + question));
+  const grid = el('div', 'compare-grid');
+  card.appendChild(grid);
+  card.appendChild(el('div', 'hint', 'Each model answers in its own read-only session. This costs one reply per model.'));
+  chat.msgs.appendChild(card);
+  scrollDownSoft(chat);
+  await Promise.all(models.map(async (model) => {
+    const col = el('div', 'compare-col');
+    col.appendChild(el('div', 'compare-model', model));
+    const ans = el('div', 'compare-ans hint', 'thinking…');
+    col.appendChild(ans);
+    grid.appendChild(col);
+    const r = await runSide({ cwd: chat.cwd, providerUid: chat.provider ? chat.provider.uid : null, model, question });
+    ans.textContent = r.text;
+    ans.classList.toggle('hint', !r.ok);
+    ans.classList.toggle('btw-err', !r.ok);
+    if (r.ok) {
+      const use = el('button', 'btn tiny compare-use', 'Use in message');
+      use.type = 'button';
+      use.addEventListener('click', () => { chat.composer.value = (chat.composer.value ? chat.composer.value + '\n\n' : '') + r.text; chat.composer.focus(); });
+      col.appendChild(use);
+    }
+    scrollDownSoft(chat);
+  }));
+}
+
 export async function askBtw(chat, question) {
   const card = el('div', 'btw-card');
   card.appendChild(el('div', 'btw-q', 'btw: ' + question));

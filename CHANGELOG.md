@@ -12,6 +12,15 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.24.0
+
+Phase 2 of the roadmap: compare and reuse.
+
+- `/compare opus,sonnet <prompt>`: ask the same question to two to four models at once. Each answers in its own read-only session and the answers appear side by side, with a "Use in message" button on each. It costs one reply per model.
+- `/recipe`: save a chain of prompts (for example build, then review, then fix) with `/recipe save <name>`, steps separated by `---` lines, and run it with `/recipe <name>`. After each step it pauses with a Continue / Stop card so you can read the result; start the recipe text with `auto` to skip the pauses. `/recipe` lists them and `/recipe delete <name>` removes one. Recipes are included in Export settings.
+- Artifacts: saves with the same title are now versions. Pick an earlier version to see a line-by-line diff of what changed, and "Export file" saves the shown version as a .md or .txt file.
+- Fix: `/loop` and `/review` did nothing. The built-in cleared the message box right after starting, so the delayed send found it empty (and one call used a name that did not exist). They now send.
+
 ## 0.23.0
 
 Phase 1 of the roadmap: everyday use.
