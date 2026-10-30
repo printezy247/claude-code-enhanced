@@ -208,6 +208,10 @@ export async function createSession(opts) {
   chat.drainQueue = () => drainQueue(chat);
   restoreQueue(chat);
   { const g = loadGoal(chat.cwd); if (g) setGoal(chat, g); }
+  try {
+    const st = JSON.parse(localStorage.getItem('style:' + chat.cwd) || '""');
+    if (st) { chat.outputStyle = st; ccx.invoke('chat:flags', { id: chat.id, patch: { outputStyle: st } }).catch(() => {}); }
+  } catch { /* no saved style */ }
   restoreDraftImages(chat);
   // The nav badge counts every open tab, chat tabs included.
   if (typeof window.updateTabCount === 'function') window.updateTabCount();

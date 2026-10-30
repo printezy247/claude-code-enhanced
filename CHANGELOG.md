@@ -12,6 +12,14 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.17.0
+- Added: per-chat output style (Default, Explanatory, Learning) in the chat's `⋯` menu, sent to the engine and remembered per folder.
+- Added: per-chat environment variables (`⋯` menu > Environment variables). They go to the engine for that chat only; only the names are remembered, values stay in memory and are never shown back or logged. Variables that would change how the engine itself starts (PATH, LD_*, NODE_OPTIONS and similar) are refused.
+- Changed: `panels.js` and `events.js` are split into smaller modules (memory, palette, skills, MCP, history, plan and find, options; background tasks and hooks). Same behaviour.
+- Fixed: Settings no longer throws when its SSH or agent lists answer after the view is gone.
+- Tested: a 2400-tool-card transcript keeps the page small, and the renderer's three timers are pinned so a new poll has to be added on purpose.
+- Checked, no change needed: per-channel IPC size limits (1 MB default, images allowed more), pasted images kept out of localStorage, and the worktree chip already remembers its target per chat.
+
 ## 0.16.0
 - Added: click the context ring in the chat footbar for a small popover (usage, a bar per category, Compact now, Toggle Overview). Shift+click still compacts at once.
 - Added: a new chat shows four quick pills (Review changes, Run tests, Explain repo, Workflows) instead of a paragraph.

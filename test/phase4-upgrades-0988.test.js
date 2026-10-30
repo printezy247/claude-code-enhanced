@@ -217,7 +217,7 @@ describe('auto-learn skills (item 19)', () => {
     for (const ch of ['skills:autolearn-prompt', 'skills:autolearn-propose', 'skills:autolearn-pending', 'skills:autolearn-resolve']) {
       expect(preload).toContain("'" + ch + "'");
     }
-    const panels = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'chat', 'panels.js'), 'utf8');
+    const panels = fs.readFileSync(path.join(__dirname, '..', 'src', 'renderer', 'chat', 'panel-memory.js'), 'utf8');
     expect(panels).toMatch(/skills:autolearn-pending/);
     expect(panels).toMatch(/skills:autolearn-resolve/);
   });
