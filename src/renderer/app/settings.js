@@ -361,6 +361,11 @@ export function renderSettings() {
   trayLabel.appendChild(trayCheck);
   trayLabel.appendChild(el('span', '', 'Close to tray — keep chats running when the window is closed'));
   c9.appendChild(trayLabel);
+  const routeCheck = el('input'); routeCheck.type = 'checkbox'; routeCheck.checked = !!s.modelRouting;
+  const routeLabel = el('label', 'check');
+  routeLabel.appendChild(routeCheck);
+  routeLabel.appendChild(el('span', '', 'Pick the model by task size (small tasks go to Haiku, big ones to Opus) in chats with no model chosen'));
+  c9.appendChild(routeLabel);
   const notifyCheck = el('input'); notifyCheck.type = 'checkbox'; notifyCheck.checked = s.notifyOnDone !== false;
   const notifyLabel = el('label', 'check');
   notifyLabel.appendChild(notifyCheck);
@@ -453,6 +458,7 @@ export function renderSettings() {
       theme: themeSel.value,
       closeToTray: trayCheck.checked,
       notifyOnDone: notifyCheck.checked,
+      modelRouting: routeCheck.checked,
       // Store the preset id, resolved to a tool list in main so the renderer
       // never has to send a tool array it could get wrong.
       leanToolsPreset: leanSel.value,

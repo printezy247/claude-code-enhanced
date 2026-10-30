@@ -7,6 +7,22 @@ import { el, fmtTok } from './util.js';
 import { applySlashToken, highlightParts, loadRecent, pushRecent, rankCommands, slashTokenAt, windowRange, SECTION_ORDER } from './cmdmatch.js';
 import { ensurePanes, LIST_H, ROW_H, setPreview } from './preview.js';
 
+import { parseLoop, parseGoal, saveGoal } from './loopgoal.js';
+
+/** Show (or clear, with '') the goal banner above the transcript and remember it for the folder. */
+export function setGoal(chat, goal) {
+  chat.goal = goal || '';
+  saveGoal(chat.cwd, chat.goal);
+  if (!chat.goalEl && chat.msgs && chat.msgs.parentNode) {
+    chat.goalEl = el('div', 'goal-banner');
+    chat.msgs.parentNode.insertBefore(chat.goalEl, chat.msgs);
+  }
+  if (chat.goalEl) {
+    chat.goalEl.textContent = chat.goal ? 'Goal: ' + chat.goal : '';
+    chat.goalEl.hidden = !chat.goal;
+  }
+}
+
 /* ---------------- built-in slash commands ---------------- */
 
 const COMPACT_PROMPT = 'Summarize this conversation so far as a handoff brief for a fresh session: project state, key decisions, files changed, open tasks, and next steps. Be dense and concrete. Reply with ONLY the brief.';
@@ -55,6 +71,22 @@ export function handleBuiltin(chat, text) {
   const cmd = text.split(/\s/)[0];
   if (cmd === '/compact') { doCompact(chat, text.slice(cmd.length).trim()); return true; }
   if (cmd === '/handoff') { doHandoff(chat); return true; }
+  if (cmd === '/loop') {
+    const r = parseLoop(text);
+    if (r.error) { toast(r.error, 'err'); return true; }
+    chat.loop = { left: r.n - 1, prompt: r.prompt };
+    chat.composer.value = r.prompt;
+    setTimeout(() => send(), 0);
+    toast('Looping ' + r.n + ' times. Stop ends it.', 'ok');
+    return true;
+  }
+  if (cmd === '/goal') {
+    const r = parseGoal(text);
+    if (r.goal) setGoal(chat, r.goal);
+    else if (r.clear) setGoal(chat, '');
+    else toast(chat.goal ? 'Goal: ' + chat.goal : 'No goal set. Use /goal <what you want done>', 'ok');
+    return true;
+  }
   if (cmd === '/clear') {
     createSession({ cwd: chat.cwd, providerUid: chat.provider ? chat.provider.uid : null, model: chat.model || '', permissionMode: chat.mode });
     toast('Fresh session opened (old one stays in History)');
@@ -101,6 +133,8 @@ export function handleBuiltin(chat, text) {
 // Handled by cce itself, so they work before the engine has said anything.
 const OWN_SLASH = [
   { name: 'compact', description: 'Summarise the conversation and carry on in a fresh session' },
+  { name: 'loop', description: 'Run a prompt n times: /loop 3 run the tests' },
+  { name: 'goal', description: 'Keep a goal in view: /goal <text>, /goal clear' },
   { name: 'clear', description: 'Start a fresh session in this folder' },
   { name: 'cost', description: 'Tokens and cost so far' },
   { name: 'model', description: 'Switch model' },

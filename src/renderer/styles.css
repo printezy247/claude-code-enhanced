@@ -1552,6 +1552,8 @@ h4 > svg, .sys-note > svg { vertical-align: -2px; }
 .ctx-used.warn { color: var(--warn); }
 .ctx-advice { font-size: 11px; margin-top: 6px; padding: 4px 8px; border-radius: 6px; border: 1px solid var(--border); color: var(--warn); }
 .ctx-advice[data-level="now"] { border-color: var(--warn); }
+.goal-banner { font-size: 12px; padding: 4px 10px; border-bottom: 1px solid var(--border); color: var(--text); background: var(--bg3); }
+.goal-banner[hidden] { display: none; }
 .ctx-cache { font-size: 11px; margin-top: 4px; }
 .ctx-total { font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .ctx-seg { display: flex; height: 4px; margin: 8px 0 10px; border-radius: 2px; background: var(--bg4); overflow: hidden; gap: 1px; }
