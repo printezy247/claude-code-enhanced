@@ -392,16 +392,8 @@ export async function createSession(opts) {
     const s = window.state && window.state.settings;
     const routed = routeFor({ enabled: !!(s && s.modelRouting), tiers: s && s.modelRouteTiers }, chat, text, { images: blocks.filter((b) => b && b.type === 'image').length });
     (routed ? applyOverrides(chat, { model: routed }) : Promise.resolve()).then(() => ccx.invoke('chat:send', { id: chat.id, text: sendText, blocks: blocks.length ? blocks : null })).then((r) => {
-      if (!r || !r.ok) {
-        appendError(chat, 'Not sent — ' + ((r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)') + ' (your message is back in the box)');
-        restoreUnsent(chat, text, blocks);
-        setBusy(chat, false);
-      }
-    }).catch((e) => {
-      appendError(chat, 'Not sent — ' + ((e && e.message) || e) + ' (your message is back in the box)');
-      restoreUnsent(chat, text, blocks);
-      setBusy(chat, false);
-    });
+      if (!r || !r.ok) failSend(chat, (r && r.error) || 'the session is no longer running; open a new chat (Ctrl+Shift+T)', text, sendText, blocks);
+    }).catch((e) => failSend(chat, (e && e.message) || e, text, sendText, blocks));
   };
   chat.send = send;
 
@@ -788,6 +780,30 @@ export function stopContextPolling(chat) {
 }
 
 /* ---------------- composer helpers (titles, images, @files, copy, run) ---------------- */
+
+/**
+ * A send that did not go through: say why (the engine's own words), keep the
+ * text and images, and offer one click to send the same thing again. The same
+ * path serves every engine.
+ */
+function failSend(chat, why, text, sendText, blocks) {
+  const node = appendError(chat, 'Not sent — ' + why + ' (your message is back in the box)');
+  restoreUnsent(chat, text, blocks);
+  setBusy(chat, false);
+  if (!node) return;
+  const again = el('button', 'btn small primary', 'Send again');
+  again.addEventListener('click', () => {
+    again.disabled = true;
+    node.remove();
+    if (chat.composer.value === text) { chat.composer.value = ''; autosize(chat.composer); }
+    if (blocks && blocks.some((b) => b && b.type === 'image')) { chat.pendingImages.length = 0; renderImageChips(chat); }
+    setBusy(chat, true);
+    ccx.invoke('chat:send', { id: chat.id, text: sendText, blocks: blocks && blocks.length ? blocks : null }).then((r) => {
+      if (!r || !r.ok) failSend(chat, (r && r.error) || 'the session is no longer running', text, sendText, blocks);
+    }).catch((e) => failSend(chat, (e && e.message) || e, text, sendText, blocks));
+  });
+  node.appendChild(again);
+}
 
 function autoTitle(chat, text) {
   if (chat.titled || !text) return;

@@ -81,3 +81,14 @@ export function renderMentions(host, text, onOpen, doc = globalThis.document) {
     host.appendChild(a);
   }
 }
+
+/** The address in an @-mention when it is a plain http(s) URL, else null. No credentials, no spaces. */
+export function urlMention(q) {
+  const s = String(q || '');
+  if (!/^https?:\/\/[^\s]+$/i.test(s)) return null;
+  try {
+    const u = new URL(s);
+    if (!/^https?:$/.test(u.protocol) || !u.hostname || u.username || u.password) return null;
+    return s;
+  } catch { return null; }
+}

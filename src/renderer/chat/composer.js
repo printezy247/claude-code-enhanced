@@ -1,5 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
-import { chatToken, conversationContext } from './mentions.js';
+import { chatToken, conversationContext, urlMention } from './mentions.js';
 import { chatTurns, openChats } from './mentions-live.js';
 import { elIcon, toast } from '../app/core.js';
 import { handleEvent } from './events.js';
@@ -186,7 +186,8 @@ export async function maybeAt(chat) {
   // Other open conversations: @ one to bring its latest exchange into this message.
   const convs = openChats(chat.id).filter((c) => (c.title + ' ' + c.folder).toLowerCase().includes(q)).slice(0, 4)
     .map((c) => ({ kind: 'chat', label: c.title, hint: c.folder, chatId: c.id }));
-  const items = git.concat(convs, dirs, files);
+  const url = urlMention(m[2]);   // the query keeps its case for an address
+  const items = (url ? [{ kind: 'url', label: url }] : []).concat(git, convs, dirs, files);
   if (!items.length) { hideSlash(chat); return true; }
   chat.atItems = items;
   chat.slashIdx = 0;
@@ -196,7 +197,7 @@ export async function maybeAt(chat) {
   chat.slashSpacer.style.height = '0px';
   for (const n of [...chat.slashList.querySelectorAll('.slash-item, .slash-section')]) n.remove();
   items.forEach((it, i) => {
-    const icon = it.kind === 'git' ? 'branch' : it.kind === 'chat' ? 'layers' : 'file';
+    const icon = it.kind === 'git' ? 'branch' : it.kind === 'chat' ? 'layers' : it.kind === 'url' ? 'globe' : 'file';
     const item = elIcon('div', 'slash-item at-item' + (i === chat.slashIdx ? ' sel' : ''), CCEIcons.svg(icon, 14) + ' ' + esc(it.kind === 'git' ? '@' + it.label : it.kind === 'chat' ? it.label + (it.hint ? '  ·  ' + it.hint : '') : it.label));
     item.dataset.idx = String(i);
     item.style.position = 'static';
@@ -219,6 +220,7 @@ function markAt(chat) {
 async function loadAtPreview(chat, it) {
   if (!it) return setPreview(chat, null);
   if (it.kind === 'git') return setPreview(chat, { title: '@' + it.label, badge: 'git', meta: it.hint });
+  if (it.kind === 'url') return setPreview(chat, { title: it.label, badge: 'link', meta: 'Sent as text; the engine fetches it if it needs to' });
   if (it.kind === 'chat') {
     const other = openChats(chat.id).find((c) => c.id === it.chatId);
     const ctx = other ? conversationContext(it.label, chatTurns(other.chat), 900) : '';

@@ -12,6 +12,11 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.18.0
+- Added: `@https://…` in the message box offers the web address as a mention. It is sent as plain text and the engine fetches it if it needs to. Addresses with a password, other schemes (`javascript:`, `data:`) and spaces are not offered.
+- Added: when a message is refused (quota, auth, session gone), the error shows the engine's own reason, keeps your text and images, and has a **Send again** button. Works the same for Claude, Codex and OpenCode chats.
+- Checked, no change needed: the provider-switch notice appears once per switch.
+
 ## 0.17.0
 - Added: per-chat output style (Default, Explanatory, Learning) in the chat's `⋯` menu, sent to the engine and remembered per folder.
 - Added: per-chat environment variables (`⋯` menu > Environment variables). They go to the engine for that chat only; only the names are remembered, values stay in memory and are never shown back or logged. Variables that would change how the engine itself starts (PATH, LD_*, NODE_OPTIONS and similar) are refused.
