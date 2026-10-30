@@ -1,4 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
+import { variantsFor, addVariant } from './variants.js';
 import { renderMentions } from './mentions.js';
 import { jumpToChat } from './mentions-live.js';
 import { toast } from '../app/core.js';
@@ -186,15 +187,40 @@ export function appendUser(chat, text, uuid) {
   if (uuid) acts.appendChild(back);
   wrap.appendChild(bubble);
   wrap.appendChild(acts);
+  const vs = variantsFor(chat.sessionId, uuid);
+  if (vs.length) wrap.appendChild(variantChip(chat, uuid, vs));
   chat.msgs.appendChild(wrap);
   scrollDownSoft(chat);
   return wrap;
 }
 
-/** Branch the conversation from a message with an edited prompt. #30 */
-async function resendFrom(chat, uuid, originalText) {
-  const edited = await window.askText('Re-ask from this message (the conversation branches)', originalText, { multiline: true, okLabel: 'Re-ask' });
-  if (edited === null || !edited.trim() || edited === originalText) return;
+/** "↳ N variants": the other prompts tried from this message; Reopen branches from it again. */
+function variantChip(chat, uuid, vs) {
+  const box = el('div', 'variants');
+  const chip = el('button', 'variant-chip btn tiny', '↳ ' + vs.length + ' variant' + (vs.length === 1 ? '' : 's'));
+  chip.type = 'button';
+  chip.setAttribute('aria-expanded', 'false');
+  let list = null;
+  chip.addEventListener('click', () => {
+    if (list) { list.remove(); list = null; chip.setAttribute('aria-expanded', 'false'); return; }
+    list = el('div', 'variant-list');
+    for (const v of variantsFor(chat.sessionId, uuid)) {
+      const row = el('div', 'variant-row');
+      row.appendChild(el('span', 'variant-text', v.text));
+      const re = el('button', 'btn tiny', 'Reopen');
+      re.type = 'button';
+      re.addEventListener('click', () => branchFrom(chat, uuid, v.text));
+      row.appendChild(re);
+      list.appendChild(row);
+    }
+    box.appendChild(list);
+    chip.setAttribute('aria-expanded', 'true');
+  });
+  box.appendChild(chip);
+  return box;
+}
+
+function branchFrom(chat, uuid, text) {
   Chat.createSession({
     cwd: chat.cwd,
     providerUid: chat.provider ? chat.provider.uid : null,
@@ -203,8 +229,16 @@ async function resendFrom(chat, uuid, originalText) {
     resume: chat.sessionId,
     fork: true,
     resumeAt: uuid,
-    initText: edited,
+    initText: text,
   });
+}
+
+/** Branch the conversation from a message with an edited prompt. #30 */
+async function resendFrom(chat, uuid, originalText) {
+  const edited = await window.askText('Re-ask from this message (the conversation branches)', originalText, { multiline: true, okLabel: 'Re-ask' });
+  if (edited === null || !edited.trim() || edited === originalText) return;
+  addVariant(chat.sessionId, uuid, edited);   // remembered, so the branch can be found again
+  branchFrom(chat, uuid, edited);
 }
 
 /* ---------------- transcript virtualization (#C1) ---------------- */

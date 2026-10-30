@@ -15,6 +15,7 @@ import { chats, el, esc } from './util.js';
 import { formatRequestMetrics } from './metrics.js';
 import { pullCliTitle } from './titles.js';
 import { loopAfterTurn } from './loopgoal.js';
+import { btwChildren } from './btw.js';
 import { enqueue } from './qpanel.js';
 import { onHookEvent, onTaskEvent, renderHooks } from './events-tasks.js';
 export { renderHooks };
@@ -33,6 +34,7 @@ function onAuth(chat, evt) {
 export function handleEvent(evt) {
   if (window.__CCE_SMOKE) console.log('[chat-event]', evt && evt.id, evt && evt.kind, evt && evt.msg && evt.msg.type);
   const { id, kind } = evt;
+  if (btwChildren.has(id)) { btwChildren.get(id)(evt); return; }   // a /btw side session
   const chat = chats.get(id);
   if (!chat) { if (window.__CCE_SMOKE) console.log('[chat-event] DROPPED — have ids:', [...chats.keys()].join(',')); return; }
   if (kind === 'message') handleMessage(chat, evt.msg);

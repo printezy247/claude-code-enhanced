@@ -7,7 +7,8 @@ import { el, fmtTok } from './util.js';
 import { applySlashToken, highlightParts, loadRecent, pushRecent, rankCommands, slashTokenAt, windowRange, SECTION_ORDER } from './cmdmatch.js';
 import { ensurePanes, LIST_H, ROW_H, setPreview } from './preview.js';
 
-import { parseLoop, parseGoal, saveGoal } from './loopgoal.js';
+import { parseLoop, parseGoal, parseBtw, saveGoal } from './loopgoal.js';
+import { askBtw } from './btw.js';
 
 /** Show (or clear, with '') the goal banner above the transcript and remember it for the folder. */
 export function setGoal(chat, goal) {
@@ -71,6 +72,12 @@ export function handleBuiltin(chat, text) {
   const cmd = text.split(/\s/)[0];
   if (cmd === '/compact') { doCompact(chat, text.slice(cmd.length).trim()); return true; }
   if (cmd === '/handoff') { doHandoff(chat); return true; }
+  if (cmd === '/btw') {
+    const r = parseBtw(text);
+    if (r.error) toast(r.error, 'err'); else askBtw(chat, r.question);
+    chat.composer.value = '';
+    return true;
+  }
   if (cmd === '/loop') {
     const r = parseLoop(text);
     if (r.error) { toast(r.error, 'err'); return true; }
@@ -133,6 +140,7 @@ export function handleBuiltin(chat, text) {
 // Handled by cce itself, so they work before the engine has said anything.
 const OWN_SLASH = [
   { name: 'compact', description: 'Summarise the conversation and carry on in a fresh session' },
+  { name: 'btw', description: 'Ask a side question while a turn runs: /btw <question>' },
   { name: 'loop', description: 'Run a prompt n times: /loop 3 run the tests' },
   { name: 'goal', description: 'Keep a goal in view: /goal <text>, /goal clear' },
   { name: 'clear', description: 'Start a fresh session in this folder' },

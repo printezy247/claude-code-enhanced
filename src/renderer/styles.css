@@ -1988,3 +1988,11 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .panel-tab:hover, .panel-tab:focus-visible { color: var(--text); outline: none; }
 /* Long sidebar lists: the browser skips rows that are off screen. */
 .convo-row, .convo-group { content-visibility: auto; contain-intrinsic-size: auto 42px; }
+.btw-card { margin: 8px 0; padding: 8px 12px; border: 1px dashed var(--border); border-radius: 10px; background: var(--bg2); font-size: 13px; }
+.btw-q { color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.btw-a { white-space: pre-wrap; }
+.btw-err { color: var(--warn); }
+.variants { margin-top: 4px; font-size: 12px; }
+.variant-list { margin-top: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg2); }
+.variant-row { display: flex; gap: 8px; align-items: center; justify-content: space-between; padding: 2px 0; }
+.variant-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); }
