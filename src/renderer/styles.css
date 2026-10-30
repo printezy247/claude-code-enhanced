@@ -2037,3 +2037,9 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .skip-link { position: absolute; left: 8px; top: -48px; z-index: 3000; padding: 6px 12px; border-radius: 6px; background: var(--accent); color: var(--on-accent); text-decoration: none; font-size: 13px; }
 .skip-link:focus { top: 8px; }
 #main:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Monthly folder budget row in the Environment card */
+.budget-row { align-items: center; gap: 6px; }
+.budget-row .bud-set { padding: 1px 8px; flex: none; }
+.budget-row .bud-warn { color: var(--warn); }
+.budget-row .bud-over { color: var(--danger); }

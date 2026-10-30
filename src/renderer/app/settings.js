@@ -1,4 +1,5 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
+import { applyLocal, buildProfile, parseProfile } from './profile.js';
 import { WORKFLOW_MENU } from '../chat/wfdata.js';
 import { loadStore, saveStore, storeKey } from '../chat/wfoptions.js';
 import { queueRules, saveQueueRules } from '../chat/qpanel.js';
@@ -289,6 +290,30 @@ export function renderSettings() {
   upRow.appendChild(upBtn);
   upRow.appendChild(upState);
   c7.appendChild(upRow);
+  const profRow = el('div', 'row');
+  const expBtn = el('button', 'btn small ghost', 'Export settings…');
+  expBtn.title = 'Save your settings, workflows, shortcuts and budget limits to one file. Keys and connector logins are not included.';
+  expBtn.addEventListener('click', async () => {
+    const info = await ccx.invoke('settings:get');
+    const text = buildProfile({ settings: info.settings, store: localStorage, version: (state.info || {}).appVersion, now: Date.now() });
+    const r = await ccx.invoke('profile:export', { text });
+    if (r && r.path) toast('Saved to ' + r.path);
+  });
+  const impBtn = el('button', 'btn small ghost', 'Import settings…');
+  impBtn.title = 'Load a profile file made by Export settings. It replaces the matching settings in this app.';
+  impBtn.addEventListener('click', async () => {
+    const r = await ccx.invoke('profile:import');
+    if (!r || r.canceled) return;
+    const parsed = parseProfile(r.text);
+    if (!parsed.ok) { toast(parsed.error, 'err'); return; }
+    await ccx.invoke('settings:set', { settings: parsed.settings });
+    applyLocal(localStorage, parsed.local);
+    toast('Profile imported. Reloading…');
+    setTimeout(() => location.reload(), 600);
+  });
+  profRow.appendChild(expBtn);
+  profRow.appendChild(impBtn);
+  c7.appendChild(profRow);
   const diagRow = el('div', 'row');
   const diagBtn = el('button', 'btn small ghost', 'Copy diagnostics');
   diagBtn.title = 'Copy a redacted diagnostics report to the clipboard (for bug reports)';

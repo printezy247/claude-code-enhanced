@@ -18,6 +18,7 @@ const CHANNEL_CAPS = new Map([
   ['dictation:transcribe', LARGE_CAP],
   ['image:copy', LARGE_CAP],
   ['image:save', LARGE_CAP],
+  ['profile:export', LARGE_CAP],
 ]);
 
 /** The largest JSON payload, in bytes, a channel accepts. */

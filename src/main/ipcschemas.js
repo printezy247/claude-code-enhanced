@@ -55,6 +55,7 @@ const SCHEMAS = {
   'chat:browser': { id: 'nonempty', enabled: { type: 'boolean' } },
   'image:copy': { media_type: 'nonempty', data: 'nonempty' },
   'image:save': { media_type: 'nonempty', data: 'nonempty' },
+  'profile:export': { text: 'nonempty' },
   'dictation:transcribe': { audio: 'nonempty' },
   'artifact:save': { title: { type: 'text', optional: true }, kind: 'nonempty', content: 'nonempty' },
   'artifact:get': { id: 'nonempty' },

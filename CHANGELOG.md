@@ -12,6 +12,14 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.23.0
+
+Phase 1 of the roadmap: everyday use.
+
+- Search across conversations: the sidebar search now also looks inside the stored conversation text (not only titles) and lists matches under "Mentioned inside", with a short snippet and hit count. A new date filter (24 hours, 7 days, 30 days) sits next to the folder filter. Typing is debounced so a large history is not rescanned on every key.
+- Monthly budget per project folder: the Overview's Environment card shows what the folder has cost this month and has a Set / Change button for a limit. You get a warning at 80% and another when it is passed, once each per month. Totals and limits stay on this computer; only metered (non-custom-provider) spend counts.
+- Settings: "Export settings…" and "Import settings…" save and load one file with your settings, workflows, shortcuts, pins and budget limits. Provider keys, connector logins, the Claude path, usage logs and spend totals are not included.
+
 ## 0.22.3
 
 - Chat: a reply that streamed while you were scrolled up is no longer shown twice. The unfinished live copy (with the orange caret, and any "Thinking…" pill) stayed in the scrolled-away part of the transcript and came back above the final reply when you scrolled down.

@@ -1,6 +1,7 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { finishWorkflowRun } from './workflows.js';
 import { elIcon, toast } from '../app/core.js';
+import { recordTurn } from '../app/budgets.js';
 import { uiMode } from '../app/modes.js';
 import { autosize } from './composer.js';
 import { Chat } from './index.js';
@@ -256,6 +257,12 @@ function handleMessage(chat, msg) {
       } catch { /* ignore */ }
       const metered = !chat.provider || !chat.provider.baseUrl;
       if (metered && typeof msg.total_cost_usd === 'number') chat.spent = (chat.spent || 0) + msg.total_cost_usd;
+      // Monthly per-folder budget: add this turn and warn at 80% and 100%.
+      if (metered && typeof msg.total_cost_usd === 'number' && chat.cwd) {
+        const alert = recordTurn(localStorage, chat.cwd, msg.total_cost_usd);
+        if (alert) toast(alert, 'err');
+        if (window.refreshOverview) window.refreshOverview(chat.id);
+      }
       setStatusLine(chat);
       const queued = Number(msg.queued_turn_count) || 0;
       setBusy(chat, queued > 0);   // more turns waiting: still working

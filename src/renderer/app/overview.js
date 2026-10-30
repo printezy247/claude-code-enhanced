@@ -1,5 +1,6 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
 import { envStrip } from './envstrip.js';
+import { load as loadBudgets, saveLimits, standing } from './budgets.js';
 import { convoSessions, renderConversationList } from './conversations.js';
 import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, state, toast } from './core.js';
 import { t } from '../i18n.js';
@@ -730,6 +731,31 @@ function renderTasks(target, cwd, only) {
   const envRow = el('div', 'task-row hint', '⌂ ' + cwd);
   envRow.title = cwd;
   env.inner.appendChild(envRow);
+  if (chat && cwd) {
+    // Monthly budget for this folder: what it has cost this month, and a way to set a limit.
+    const { ledger, limits } = loadBudgets(localStorage);
+    const st = standing(ledger, limits, cwd, Date.now());
+    const brow = el('div', 'kv-row budget-row');
+    const label = st.limit
+      ? 'month $' + st.spent.toFixed(2) + ' of $' + st.limit.toFixed(2)
+      : 'month $' + st.spent.toFixed(2) + ' · no budget';
+    brow.appendChild(el('span', 'kv-k', 'budget'));
+    brow.appendChild(el('span', 'kv-v' + (st.level === 'over' ? ' bud-over' : st.level === 'warn' ? ' bud-warn' : ''), label));
+    const set = el('button', 'btn small bud-set', st.limit ? 'Change' : 'Set');
+    set.type = 'button';
+    set.title = 'Monthly spend limit for this folder, in USD (blank removes it)';
+    set.addEventListener('click', async () => {
+      const v = await window.askText('Monthly budget for this folder (USD)', st.limit ? String(st.limit) : '');
+      if (v === null) return;
+      const next = { ...loadBudgets(localStorage).limits };
+      const n = parseFloat(v);
+      if (n > 0) next[cwd] = n; else delete next[cwd];
+      saveLimits(localStorage, next);
+      if (window.refreshOverview) window.refreshOverview(chat.id);
+    });
+    brow.appendChild(set);
+    env.inner.appendChild(brow);
+  }
   let ch, chList;   // created after Connectors so the cards read in the desktop order
   pending.push(ccx.invoke('git:info', { cwd }).then((r) => {
     if (!r || !r.ok) return;

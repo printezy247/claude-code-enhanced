@@ -2851,6 +2851,21 @@ function registerIpc() {
     return { ok: true, path: res.filePath };
   });
 
+  // Profile backup: the renderer builds the text; the main process only owns the file dialogs.
+  handle('profile:export', async ({ text }, e) => {
+    const res = await dialog.showSaveDialog(senderWin(e), { defaultPath: path.join(app.getPath('documents'), 'cce-profile.json'), filters: [{ name: 'CCE profile', extensions: ['json'] }] });
+    if (res.canceled || !res.filePath) return { ok: true, canceled: true };
+    fs.writeFileSync(res.filePath, String(text), { mode: 0o600 });
+    return { ok: true, path: res.filePath };
+  });
+  handle('profile:import', async (_p, e) => {
+    const res = await dialog.showOpenDialog(senderWin(e), { properties: ['openFile'], filters: [{ name: 'CCE profile', extensions: ['json'] }] });
+    if (res.canceled || !res.filePaths[0]) return { ok: true, canceled: true };
+    const st = fs.statSync(res.filePaths[0]);
+    if (st.size > 2 * 1024 * 1024) throw new Error('That file is too large to be a CCE profile.');
+    return { ok: true, text: fs.readFileSync(res.filePaths[0], 'utf8') };
+  });
+
   // Lightpanda browser: the user installs it; each chat switches it on for itself.
   const lightpanda = require('./lightpanda').createLightpanda();
   handle('lightpanda:status', async () => lightpanda.status());
