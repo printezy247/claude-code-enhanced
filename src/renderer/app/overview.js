@@ -4,7 +4,8 @@ import { convoSessions, renderConversationList } from './conversations.js';
 import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, state, toast } from './core.js';
 import { t } from '../i18n.js';
 import { md as mdHtml } from '../chat/util.js';
-import { tabRegistry, updateStatusbar } from './tabs.js';
+import { activateSession, tabRegistry, updateStatusbar, usedAt } from './tabs.js';
+import { sessionRows } from './sessionscard.js';
 import { Chat } from '../chat/index.js';
 import { openMdEditor } from './mdedit.js';
 import { contextAdvice, cacheLine } from '../chat/ctxadvice.js';
@@ -486,6 +487,9 @@ window.renderSplit = renderSplit;
 // of TaskUpdate calls is one redraw), but only for the tab that is on screen.
 const railTimers = {};
 
+// Another chat started working, finished, or needs you: redraw only that card.
+window.refreshSessionsCard = () => window.refreshTasksRail(null, 'sessions');
+
 window.refreshTasksRail = (chatId, only = 'tasks') => {
   if (chatId && chatId !== state.activeId) return;
   clearTimeout(railTimers[only]);
@@ -517,7 +521,7 @@ export function setAllOverviewCards(closed) {
     if (h) h.setAttribute('aria-expanded', closed ? 'false' : 'true');
     m[c.dataset.card] = closed;
   });
-  for (const k of ['environment', 'context', 'connectors', 'changes', 'tasks', 'background']) m[k] = closed;
+  for (const k of ['environment', 'context', 'connectors', 'changes', 'tasks', 'background', 'sessions']) m[k] = closed;
   lsSet('cce.ovClosed', m);
   const body = document.querySelector('#overview-body');
   if (body) body.__taskHtml = null;
@@ -640,6 +644,41 @@ function renderTasks(target, cwd, only) {
     return;
   }
 
+  // Other open chats, one row each. Shown only when there is more than one chat.
+  const buildSessions = () => {
+    const rows = sessionRows([...tabRegistry.entries()], state.activeId, usedAt);
+    if (rows.length < 2) return;
+    const sc = card('sessions', 'Sessions', 'layers');
+    const waiting = rows.filter((r) => r.status === 'needs you').length;
+    sc.badge.textContent = String(rows.length + (rows.more || 0));
+    sc.badge.classList.toggle('warn', waiting > 0);
+    for (const r of rows) {
+      const b = el('button', 'sess-row' + (r.active ? ' active' : ''));
+      b.type = 'button';
+      b.dataset.id = r.id;
+      b.title = 'Switch to this chat';
+      b.appendChild(el('span', 'sess-title', r.title));
+      b.appendChild(el('span', 'sess-st st-' + r.status.replace(' ', '-'), r.status));
+      b.addEventListener('click', () => activateSession(r.id));
+      sc.inner.appendChild(b);
+    }
+    if (rows.more) sc.inner.appendChild(el('div', 'task-row hint', '+' + rows.more + ' more'));
+  };
+  if (only === 'sessions') {
+    buildSessions();
+    const cur = target.querySelector('[data-card="sessions"]');
+    const next = body.firstElementChild;
+    if (target.isConnected) {
+      if (cur && !next) cur.remove();
+      else if (!cur && next) {
+        const env = target.querySelector('[data-card="environment"]');
+        if (env) env.before(next); else target.prepend(next);
+      } else if (cur && cur.outerHTML !== next.outerHTML) cur.replaceWith(next);
+      target.__taskHtml = null;
+    }
+    return;
+  }
+
   // A task-list change redraws only that card: no git spawn, no engine calls.
   if (only === 'tasks') {
     buildTasks();
@@ -655,6 +694,7 @@ function renderTasks(target, cwd, only) {
   }
 
   buildTasks();   // first, when there is a list (the desktop app's progress block)
+  buildSessions();
 
   // Environment: where the chat runs and on what, plus the git state.
   const env = card('environment', 'Environment', 'folder');
