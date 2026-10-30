@@ -16,7 +16,7 @@ describe('renderer timers', () => {
     .map((l, i) => ({ f: path.relative(root, f), l, i })).filter((x) => /\bsetInterval\(/.test(x.l)));
 
   it('are exactly the known ones', () => {
-    expect(found.map((x) => x.f).sort()).toEqual(['app/overview.js', 'chat/permissions.js', 'chat/session.js']);
+    expect(found.map((x) => x.f).sort()).toEqual(['app/overview.js', 'app/scheduler.js', 'chat/permissions.js', 'chat/session.js']);
   });
   it('the Overview timer is the 60 s safety net and skips a hidden window', () => {
     const src = fs.readFileSync(path.join(root, 'app', 'overview.js'), 'utf8');

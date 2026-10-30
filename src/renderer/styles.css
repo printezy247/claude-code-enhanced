@@ -2001,3 +2001,7 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .artifact-row.sel { background: var(--accent-soft); }
 .artifact-view { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
 .artifact-doc { overflow-wrap: anywhere; }
+.sched-form { display: flex; gap: 6px; flex-wrap: wrap; margin: 6px 0 10px; }
+.sched-form input { flex: 1 1 140px; min-width: 0; height: 28px; padding: 0 8px; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+.sched-last { font-size: 12px; color: var(--muted); margin: 4px 0; white-space: pre-wrap; }
+.sched-row .btn { margin-right: 6px; }

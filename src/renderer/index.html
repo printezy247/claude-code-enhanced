@@ -102,6 +102,14 @@
         <div class="banner">
           Every live chat with what it is doing, the background jobs, and any run that was cut short when CCE last stopped.
         </div>
+        <h3>Scheduled prompts</h3>
+        <div class="sched-form">
+          <input id="sched-name" type="text" placeholder="Name" aria-label="Task name">
+          <input id="sched-prompt" type="text" placeholder="Prompt, read-only" aria-label="Prompt">
+          <input id="sched-when" type="text" placeholder="every 30m · hourly · daily 09:00" aria-label="When">
+          <button id="sched-add" class="btn small">Add</button>
+        </div>
+        <div id="sched-list"></div>
         <h3>Live chats</h3>
         <div id="board-chats"></div>
         <div id="board-queues-wrap" class="hidden">

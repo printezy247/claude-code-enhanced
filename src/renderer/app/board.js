@@ -9,6 +9,7 @@ import { setQueuePaused } from '../chat/qpanel.js';
 import { chatTitle } from '../chat/mentions-live.js';
 import { t, tf } from '../i18n.js';
 import { boardActions } from './boardactions.js';
+import { renderSchedule } from './scheduler.js';
 import { doCompact } from '../chat/slash.js';
 
 function rowCard(r) {
@@ -188,6 +189,7 @@ function setAllQueues(paused) {
 }
 
 export async function renderBoard() {
+  renderSchedule();
   const [board, jobs, runs, engineList] = await Promise.all([
     ccx.invoke('chats:board'),
     ccx.invoke('jobs:list'),
