@@ -17,6 +17,15 @@ const TOOL_NAMES = {
   grep: 'Grep', glob: 'Glob', list: 'LS', webfetch: 'WebFetch', websearch: 'WebSearch', todowrite: 'TodoWrite', task: 'Task',
 };
 const toolName = (t) => TOOL_NAMES[t] || t;
+
+// What the footbar offers for OpenCode: its primary agents, plus YOLO. The keys
+// are CCE's permission modes so the mode picker reads them as it does Codex's.
+const MODES = [
+  ['default', 'build', 'The build agent: asks before running commands and editing files.'],
+  ['plan', 'plan', 'The plan agent: explores and proposes, and changes nothing.'],
+  ['bypassPermissions', 'yolo', 'The build agent, and nothing is asked. Only for throwaway folders or containers.'],
+];
+const AGENT = { default: 'build', plan: 'plan', bypassPermissions: 'build' };
 // Input keys the chat view's cards read (Edit/Read take file_path).
 function toolInput(tool, input) {
   const i = input && typeof input === 'object' ? { ...input } : {};
@@ -75,6 +84,11 @@ class OpenCodeChat {
     Object.assign(this, { command, cwd, env: env || process.env, yolo: !!yolo, model: model || '', emit: emit || (() => {}), ask: ask || (async () => 'deny'), onThread: onThread || (() => {}) });
     this.engine = 'opencode';
     this.label = 'OpenCode';
+    this.mode = this.yolo ? 'bypassPermissions' : 'default';
+    this.effort = '';
+    this.modelList = null;     // /api/model rows, for the picker, variants and context window
+    this.defaultModel = null;  // /api/model/default, when no model is chosen
+    this.contextTokens = 0;    // what the last step sent and got back
     this.sessionId = sessionId;
     this.busy = false;
     this.queue = [];
@@ -115,7 +129,8 @@ class OpenCodeChat {
       const password = crypto.randomBytes(18).toString('hex');
       this.auth = 'Basic ' + Buffer.from('opencode:' + password).toString('base64');
       this.base = 'http://127.0.0.1:' + port;
-      const env = { ...this.env, OPENCODE_SERVER_PASSWORD: password, OPENCODE_PASSWORD: password, OPENCODE_CONFIG_CONTENT: withPermissions(this.env.OPENCODE_CONFIG_CONTENT, this.yolo) };
+      // The server always asks; YOLO answers in _onPermission, so the mode can change mid-chat.
+      const env = { ...this.env, OPENCODE_SERVER_PASSWORD: password, OPENCODE_PASSWORD: password, OPENCODE_CONFIG_CONTENT: withPermissions(this.env.OPENCODE_CONFIG_CONTENT, false) };
       const child = spawn(this.command, ['serve', '--port', String(port), '--hostname', '127.0.0.1'], { cwd: this.cwd, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
       this.child = child;
       let stderr = '';
@@ -152,6 +167,9 @@ class OpenCodeChat {
       const resumed = !!this.sessionId;
       this.sessionId = (session && session.data && session.data.id) || (session && session.id) || this.sessionId;
       this.onThread(this.sessionId);
+      // What the footbar set before the session existed.
+      if (this.mode !== 'default') await this._applyAgent();
+      if (this.model || this.effort) await this._applyModel();
       if (!this.initSent) { this.initSent = true; this.emit({ kind: 'message', msg: frames.initMsg(this.sessionId, 'opencode', { model: this.model || 'OpenCode' }) }); }
       if (resumed) await this._replay().catch(() => {});
     })();
@@ -244,11 +262,11 @@ class OpenCodeChat {
       }
       case 'permission.asked': this._onPermission(p); break;
       case 'question.asked': this._rejectQuestion(p); break;
-      case 'session.step.ended': {
-        const t = p.tokens || {};
-        if (t.input || t.output) this.tokens.set(p.id || 'step', { input: Number(t.input) || 0, output: Number(t.output) || 0 });
+      case 'session.step.ended': this._onTokens(p.id || 'step', p.tokens); break;
+      case 'session.compaction.ended':
+        this._frame({ type: 'system', subtype: 'compact_boundary', session_id: this.sessionId, compact_metadata: { trigger: p.reason === 'manual' ? 'manual' : 'auto' } });
         break;
-      }
+      case 'session.compaction.failed':
       case 'session.step.failed':
       case 'session.execution.failed':
       case 'session.error':
@@ -284,9 +302,18 @@ class OpenCodeChat {
         this._frame(frames.toolResult(sid, part.callID, denied ? 'Denied: the tool was not run.' : String(st.error || 'failed'), true));
       }
     } else if (part.type === 'step-finish' && live) {
-      const t = part.tokens || {};
-      this.tokens.set(part.id, { input: Number(t.input) || 0, output: Number(t.output) || 0 });
+      this._onTokens(part.id, part.tokens);
     }
+  }
+
+  /** One step's tokens: summed per turn for the result, and the last one is the context in use. */
+  _onTokens(stepId, t) {
+    t = t || {};
+    const input = Number(t.input) || 0; const output = Number(t.output) || 0;
+    if (!input && !output) return;
+    this.tokens.set(stepId, { input, output });
+    const cache = t.cache || {};
+    this.contextTokens = input + output + (Number(cache.read) || 0) + (Number(cache.write) || 0);
   }
 
   async _onPermission(p) {
@@ -297,7 +324,8 @@ class OpenCodeChat {
     const isWeb = action === 'webfetch';
     const subject = isBash ? (meta.command || patterns.join(' && ')) : (meta.filepath || meta.filePath || patterns.join(', '));
     let decision = 'deny';
-    try {
+    if (this.yolo) decision = 'allow';
+    else try {
       decision = await this.ask({
         toolName: isBash ? 'Bash' : (isWeb ? 'WebFetch' : 'Edit'),
         input: isBash ? { command: subject } : isWeb ? { url: meta.url || subject } : { file_path: subject },
@@ -373,6 +401,7 @@ class OpenCodeChat {
   /* ---- lifecycle --------------------------------------------------------- */
 
   send(text, blocks) {
+    if (/^\/compact\b/.test(String(text || '').trim())) return this.compact();
     const parts = toParts(text, blocks);
     if (!parts.length) return { ok: false };
     if (this.busy) { this.queue.push(parts); return { ok: true, queued: true }; }
@@ -388,16 +417,15 @@ class OpenCodeChat {
     this.emit({ kind: 'status', busy: true });
     this._start()
       .then(async () => {
-        const model = splitModel(this.model);
         const text = parts.filter((p) => p.type === 'text').map((p) => p.text).join('\n');
         const files = parts.filter((p) => p.type === 'file').map((p) => ({ uri: p.url, name: p.filename || 'file' }));
+        // v2 takes the model and agent on the session (_applyModel/_applyAgent), not the prompt.
         try {
-          return await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/prompt', {
-            text, files, ...(model ? { model } : {}),
-          }, 60_000);
+          return await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/prompt', { text, files }, 60_000);
         } catch {
+          const model = splitModel(this.model);
           return await this._api('POST', '/session/' + encodeURIComponent(this.sessionId) + '/prompt_async', {
-            ...(model ? { model } : {}), parts,
+            ...(model ? { model } : {}), agent: AGENT[this.mode], parts,
           }, 60_000);
         }
       })
@@ -440,42 +468,118 @@ class OpenCodeChat {
     terminate(child);
   }
 
-  /** OpenCode: the model can be typed in (provider/model); its mode and effort are fixed when the server starts. */
-  get controls() { return { model: true, modes: null, effort: false, compact: false, context: false }; }
+  /* ---- footbar controls ---------------------------------------------------- */
+
+  /** Model (provider/model), agent modes, effort (the model's variants), compact and context. */
+  get controls() { return { model: true, modes: MODES, effort: true, compact: true, context: true }; }
+
+  /** /api/model rows (enabled only) and the default model, read once per chat. */
+  async _loadModels() {
+    if (this.modelList) return this.modelList;
+    await this._start();
+    const r = await this._api('GET', '/api/model', undefined, 10_000);
+    this.modelList = ((r && Array.isArray(r.data)) ? r.data : []).filter((m) => m && m.id && m.enabled !== false);
+    try { this.defaultModel = (await this._api('GET', '/api/model/default', undefined, 5000)).data || null; } catch { /* none */ }
+    return this.modelList;
+  }
+
+  /** The model this chat runs on: the chosen one, else OpenCode's default. */
+  _current() {
+    const want = splitModel(this.model);
+    const list = this.modelList || [];
+    return (want && list.find((m) => m.providerID === want.providerID && m.id === want.modelID)) || (!want && this.defaultModel) || null;
+  }
 
   async models() {
     try {
-      if (!this.child) await this._start();
-      const r = await this._api('GET', '/api/model', undefined, 5000);
-      const list = (r && r.data && Array.isArray(r.data)) ? r.data : (Array.isArray(r) ? r : []);
-      return list.map((m) => (typeof m === 'string' ? m : (m.id || m.name))).filter(Boolean);
+      return (await this._loadModels()).map((m) => ({ value: m.providerID + '/' + m.id, displayName: m.name || m.id }));
     } catch {
       return [];
     }
   }
 
+  /** The current model's variants (OpenCode's reasoning levels). */
+  async effortLevels() {
+    try { await this._loadModels(); } catch { return []; }
+    const m = this._current();
+    return ((m && m.variants) || []).map((v) => v.id).filter(Boolean);
+  }
+
+  /** Model and variant go on the session; with no model chosen, a variant rides on the default. */
+  async _applyModel() {
+    if (!this.sessionId) return;
+    const split = splitModel(this.model);
+    let d = null;
+    if (!split && this.effort) { await this._loadModels().catch(() => {}); d = this.defaultModel; }
+    const ref = split ? { id: split.modelID, providerID: split.providerID } : d ? { id: d.id, providerID: d.providerID } : null;
+    if (!ref) return;
+    try {
+      await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/model', { model: { ...ref, ...(this.effort ? { variant: this.effort } : {}) } }, 5000);
+    } catch { /* an older server: the v1 prompt carries the model */ }
+  }
+
+  async _applyAgent() {
+    if (!this.sessionId) return;
+    try { await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/agent', { agent: AGENT[this.mode] }, 5000); } catch { /* an older server: the v1 prompt carries the agent */ }
+  }
+
   async setModel(model) {
     this.model = String(model || '');
-    if (this.sessionId) {
-      const split = splitModel(this.model);
-      try {
-        await this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/model', {
-          model: split ? { id: split.modelID, providerID: split.providerID } : { id: this.model, providerID: '' },
-        }, 5000);
-      } catch { /* ok */ }
-    }
+    // A variant the new model lacks would make the server refuse the switch.
+    if (this.effort && !(await this.effortLevels()).includes(this.effort)) this.effort = '';
+    await this._applyModel();
     return { model: this.model };
   }
 
-  effortLevels() { return []; }
+  async setMode(mode) {
+    if (!AGENT[mode]) throw new Error('OpenCode has no ' + mode + ' mode');
+    this.mode = mode;
+    this.yolo = mode === 'bypassPermissions';
+    await this._applyAgent();
+    return { permissionMode: mode };
+  }
+
+  async setEffort(effort) { this.effort = String(effort || ''); await this._applyModel(); return true; }
+
+  /** Summarize the session in place. The server runs it as a turn of its own. */
+  compact() {
+    if (this.busy) return { ok: false, error: 'wait for the current turn to finish, then compact' };
+    this.busy = true;
+    this.interrupted = false;
+    this.lastText = ''; this.lastError = '';
+    this.started = Date.now();
+    this.emit({ kind: 'status', busy: true });
+    this._start()
+      .then(() => this._api('POST', '/api/session/' + encodeURIComponent(this.sessionId) + '/compact', {}, 30_000))
+      .catch((err) => {
+        if (!this.busy) return;
+        this._frame(frames.resultMsg(this.sessionId, { ok: false, text: String((err && err.message) || err), usage: this.usage, started: this.started }));
+        this._turnEnded();
+      });
+    return { ok: true };
+  }
+
+  /** Context in use (the last step) against the current model's window. */
+  _contextUsage() {
+    const m = this._current();
+    const maxTokens = (m && m.limit && Number(m.limit.context)) || 0;
+    const totalTokens = this.contextTokens;
+    return { totalTokens, maxTokens, percentage: maxTokens ? Math.min(100, (totalTokens / maxTokens) * 100) : 0, categories: [] };
+  }
 
   _stub() {
     return stubQuery('OpenCode', {
       interrupt: () => this.interrupt(),
-      usage: () => ({ totalTokens: this.usage.input_tokens, maxTokens: 0, percentage: 0, categories: [] }),
-      extra: { supportedModels: () => this.models(), setModel: (m) => this.setModel(m) },
+      // Only reads the model list when the server is already up: a context poll must not start one.
+      usage: async () => { if (this.child && !this.modelList) await this._loadModels().catch(() => {}); return this._contextUsage(); },
+      extra: {
+        supportedModels: () => this.models(),
+        setModel: (m) => this.setModel(m),
+        setPermissionMode: (m) => this.setMode(m),
+        applyFlagSettings: (patch) => this.setEffort(patch && patch.effort),
+      },
     });
   }
 }
 
-module.exports = { OpenCodeChat, toParts, splitModel, withPermissions, toolName };
+module.exports = { OpenCodeChat, toParts, splitModel, withPermissions, toolName, MODES };

@@ -44,13 +44,16 @@ describe('Antigravity chat controls', () => {
 });
 
 describe('OpenCode chat controls', () => {
-  it('takes a typed-in model; mode, effort and compact are not offered', async () => {
+  it('offers model, agent modes, effort, compact and context; keeps what the footbar sets', async () => {
     const oc = new OpenCodeChat({ command: '/bin/true', cwd: '/tmp', env: {} });
-    expect(oc.controls).toEqual({ model: true, modes: null, effort: false, compact: false, context: false });
+    expect(oc.controls).toMatchObject({ model: true, effort: true, compact: true, context: true });
+    expect(oc.controls.modes.map((m) => m[0])).toEqual(['default', 'plan', 'bypassPermissions']);
     await oc.q.setModel('cce/qwen');
     expect(oc.model).toBe('cce/qwen');
-    expect(oc.effortLevels()).toEqual([]);
-    await expect(oc.q.setPermissionMode('plan')).rejects.toThrow(/do not support setPermissionMode/);
+    expect(await oc.q.setPermissionMode('plan')).toEqual({ permissionMode: 'plan' });
+    expect(oc.mode).toBe('plan');
+    await oc.q.applyFlagSettings({ effort: 'high' });
+    expect(oc.effort).toBe('high');
   });
 });
 
@@ -68,13 +71,14 @@ describe('the chat manager routes the footbar to the engine', () => {
     expect(chat.runner.mode).toBe('bypassPermissions');
     cm.close(made.id);
   });
-  it('Codex reports every control; OpenCode only the model', () => {
+  it('Codex and OpenCode report every control', () => {
     const cm = new ChatManager({});
     const cx = cm.createEngine({ engine: 'codex', command: '/bin/true', cwd: '/tmp', env: {} });
     expect(cx.capabilities).toMatchObject({ model: true, effort: true, compact: true, context: true, images: true, approvals: true });
     expect(cx.capabilities.modes.map((m) => m[0])).toEqual(['default', 'plan', 'bypassPermissions']);
     const oc = cm.createEngine({ engine: 'opencode', command: '/bin/true', cwd: '/tmp', env: {} });
-    expect(oc.capabilities).toMatchObject({ model: true, modes: null, effort: false, compact: false, context: false });
+    expect(oc.capabilities).toMatchObject({ model: true, effort: true, compact: true, context: true, images: true, approvals: true });
+    expect(oc.capabilities.modes.map((m) => m[0])).toEqual(['default', 'plan', 'bypassPermissions']);
     cm.close(cx.id); cm.close(oc.id);
   });
 });

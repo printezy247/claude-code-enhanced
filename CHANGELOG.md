@@ -12,6 +12,10 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.13.3
+- New: **OpenCode chats get the full footbar.** Mode picks OpenCode's agent (build, plan, or build with YOLO) and can change mid-chat. Effort lists the current model's variants and sets one on the session. The context ring shows the last step's tokens against the model's window, and Compact (or `/compact`) summarizes the session in place. The model picker lists every enabled model as `provider/model` with its name.
+- Fixed: an OpenCode chat on a chosen model failed every message, because the model was sent in the v2 prompt body, which the server refuses. The model (and variant) now goes on the session.
+- Changed: YOLO in OpenCode answers approvals in CCE instead of in the server config, so switching to or from YOLO takes effect on the next request.
 ## 0.13.2
 - New: **OpenCode v2 CLI Chat integration.** Full compatibility with `opencode serve` v2.0+ and SDK contract (`/api/session`, `/api/event`, `/api/session/:id/prompt`, `/api/session/:id/interrupt`, `/api/session/:id/permission/:id/reply`, `/api/model`, `/api/session/:id/model`), streaming event normalization (`session.text.*`, `session.reasoning.*`, `session.tool.*`, `permission.asked`), permission rules (`permissions` v2 and `permission` v1), and seamless fallback to v1 serve routes.
 - New: **Engine footbar controls** for OpenCode, Codex, and Antigravity. Model selection and switching via runner APIs, capabilities-driven footbar visibility, and effort/mode controls.
