@@ -2014,3 +2014,4 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .side-err { color: var(--warn); }
 .side-row { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); }
 .side-input { flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 8px; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
+.task-card-head .tc-badge { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

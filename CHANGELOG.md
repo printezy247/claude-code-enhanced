@@ -12,6 +12,12 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.19.1
+
+- Environment card shows one compact line (status, model, branch, changes), also when the card is folded.
+- Workflow menu speed limits are now tested with 100 custom workflows (filter, build, export, import).
+- Left as is on purpose: Overview cards still compare rendered HTML, which already leaves the page untouched when nothing changed.
+
 ## 0.19.0
 - Added: **Artifacts**. A Keep button on every reply and code block saves it (the same text is stored once). The new Artifacts tab in the side pane (Alt+7) lists them, shows markdown as sanitized text and code as plain text, deletes them, and exports a PDF through a window that can run no script and make no network request.
 - Added: **Side chat**. A "side chat" button on any of your messages opens a small card, branched from that turn in its own read-only session. Ask several follow-ups; nothing from it reaches the main thread. Closing the card or the chat ends the session.

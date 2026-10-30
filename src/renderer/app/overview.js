@@ -1,4 +1,5 @@
 // Split from the former app.js (roadmap 4.1). Behaviour is unchanged.
+import { envStrip } from './envstrip.js';
 import { convoSessions, renderConversationList } from './conversations.js';
 import { FitCtor, TERM_THEME, TermCtor, el, elIcon, fmtTokShort, lsGet, lsSet, state, toast } from './core.js';
 import { t } from '../i18n.js';
@@ -696,7 +697,7 @@ function renderTasks(target, cwd, only) {
     // here was simply untrue (and contradicted the tool panel next to it).
     if (r.isRepo === false) {
       env.inner.appendChild(el('div', 'task-row hint', 'not a git repository'));
-      env.badge.textContent = '';
+      env.badge.textContent = envStrip(chat, null);
       ch.badge.textContent = '—';
       ch.badge.classList.remove('warn');
       chList.appendChild(el('div', 'task-row hint', 'not a git repository'));
@@ -705,7 +706,8 @@ function renderTasks(target, cwd, only) {
     env.inner.appendChild(el('div', 'task-row hint',
       (r.branch ? '⎇ ' + r.branch : 'no branch') + (r.repo ? ' · ' + r.repo : '')
       + (r.dirty ? ' · ' + r.dirty + ' changed' : ' · clean')));
-    env.badge.textContent = r.branch || '';
+    env.badge.textContent = envStrip(chat, r);
+    env.badge.title = env.badge.textContent;
     ch.badge.textContent = r.dirty ? String(r.dirty) : 'clean';
     ch.badge.classList.toggle('warn', !!r.dirty);
     if (!(r.files || []).length) { chList.appendChild(el('div', 'task-row hint', 'working tree clean')); return; }
