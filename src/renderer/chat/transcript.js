@@ -448,4 +448,5 @@ export function appendError(chat, text) {
   }
   chat.msgs.appendChild(e);
   scrollDownSoft(chat);
+  return e;
 }
