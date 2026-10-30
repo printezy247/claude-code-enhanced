@@ -239,6 +239,19 @@ export function makeToolCard(chat, toolUseId, name, input, parentId) {
     d.title = 'Nested ' + depth + ' subagent layer' + (depth === 1 ? '' : 's') + ' deep';
     head.appendChild(d);
   }
+  // Shortcuts into the side pane: an edited file opens in Review.
+  const tip = (b, text) => { b.title = text; b.setAttribute('aria-label', text); b.type = 'button'; return b; };
+  const filePath = input && (input.file_path || input.notebook_path);
+  if (toolKind(name) === 'edit' && filePath) {
+    const b = tip(el('button', 'tool-act tool-open-diff', 'diff'), 'Open this file in the diff pane');
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const cwd = String(chat.cwd || '').replace(/\/+$/, '');
+      window.__reviewPick = cwd && String(filePath).startsWith(cwd + '/') ? String(filePath).slice(cwd.length + 1) : String(filePath);
+      if (window.openSplitTab) window.openSplitTab('review');
+    });
+    head.appendChild(b);
+  }
   const body = el('div', 'tool-body hidden');
   card.appendChild(head); card.appendChild(body);
 
@@ -255,6 +268,15 @@ export function makeToolCard(chat, toolUseId, name, input, parentId) {
     setStatus(status, note) {
       ctx.status = status;
       dot.className = 'tool-dot ' + status;
+      if (status === 'err' && name === 'Bash' && !head.querySelector('.tool-fix')) {
+        const f = tip(el('button', 'tool-act tool-fix', 'fix in chat'), 'Put this failed command in the message box');
+        f.addEventListener('click', (e) => {
+          e.stopPropagation();
+          chat.composer.value = 'This command failed, please fix it:\n$ ' + String((ctx.input && ctx.input.command) || '') + '\n';
+          chat.composer.focus();
+        });
+        head.appendChild(f);
+      }
       if (note) title.textContent = note + ' — ' + toolTitle(name, ctx.input);
       else title.textContent = toolTitle(name, ctx.input);
       if (status === 'done' || status === 'err') renderOutput(chat, toolUseId);

@@ -1962,5 +1962,17 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .md-prev .md-callout-caution { border-left-color: #f85149; }
 .md-prev .md-mermaid-note { font-size: 12px; opacity: .75; margin: 8px 0 2px; }
 
+.tool-act { margin-left: auto; font-size: 11px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg2); color: var(--muted); cursor: pointer; }
+.tool-act:hover, .tool-act:focus-visible { color: var(--text); border-color: var(--accent); }
+.tool-act + .tool-act { margin-left: 6px; }
+.chat-pills { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; margin-top: 12px; }
+.chat-pill { font-size: 12px; padding: 5px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); cursor: pointer; }
+.chat-pill:hover, .chat-pill:focus-visible { border-color: var(--accent); outline: none; }
+.ctx-pop { position: absolute; right: 8px; bottom: 44px; z-index: 20; width: 260px; padding: 10px 12px; border-radius: 10px; background: var(--bg2); border: 1px solid var(--border); font-size: 12px; }
+.ctx-pop-head { display: flex; justify-content: space-between; font-weight: 600; margin-bottom: 8px; }
+.ctx-pop-row { display: grid; grid-template-columns: 1fr 60px; gap: 8px; align-items: center; margin: 3px 0; color: var(--muted); }
+.ctx-pop-bar { height: 4px; border-radius: 2px; background: var(--bg4); overflow: hidden; }
+.ctx-pop-bar i { display: block; height: 100%; background: var(--accent); }
+.ctx-pop-acts { display: flex; gap: 6px; margin-top: 10px; }
 /* Long sidebar lists: the browser skips rows that are off screen. */
 .convo-row, .convo-group { content-visibility: auto; contain-intrinsic-size: auto 42px; }
