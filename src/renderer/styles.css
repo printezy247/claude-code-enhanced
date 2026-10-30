@@ -993,12 +993,12 @@ body.split-open #splitpane { display: flex; }
   border-radius: 7px; padding: 4px 9px; font-size: 12px; cursor: pointer;
 }
 .chat-footbar .chat-effort:hover { color: var(--text); border-color: var(--accent); }
-.chat-attach {
+.chat-attach, .chat-mic {
   background: transparent; border: 1px solid var(--border); color: var(--muted);
   border-radius: 7px; width: 28px; height: 28px; cursor: pointer; font-size: 14px;
   align-self: flex-end; flex: none;
 }
-.chat-attach:hover { color: var(--text); border-color: var(--accent); }
+.chat-attach:hover, .chat-mic:hover { color: var(--text); border-color: var(--accent); }
 .chat-queued { display: flex; flex-direction: column; gap: 4px; padding: 4px 12px 0; width: 100%; max-width: 830px; box-sizing: border-box; position: relative; }
 .chat-queued.hidden { display: none; }
 .q-head { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); }
@@ -2015,3 +2015,5 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .side-row { display: flex; gap: 6px; padding: 6px 8px; border-top: 1px solid var(--border); }
 .side-input { flex: 1 1 auto; min-width: 0; height: 28px; padding: 0 8px; background: var(--bg3); color: var(--text); border: 1px solid var(--border); border-radius: 6px; }
 .task-card-head .tc-badge { max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-mic.rec { color: var(--err, #e5484d); border-color: var(--err, #e5484d); }
+.chat-mic:disabled { opacity: .5; cursor: progress; }
