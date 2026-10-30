@@ -17,6 +17,14 @@ const streams = new Set();
 const emit = (type, properties) => { for (const r of streams) r.write('data: ' + JSON.stringify({ type, properties, data: properties }) + '\n\n'); };
 const waits = new Map();   // permission id -> resolve(reply)
 let active = null;         // { sessionID, aborted }
+const calls = [];          // every POST under /api, for the tests to read back
+// /api/model rows in the real v2 shape (Model.Info), trimmed.
+const MODELS = [
+  { id: 'fake-coder', modelID: 'fake-coder', providerID: 'fake', name: 'Fake Coder', enabled: true, variants: [{ id: 'low' }, { id: 'high' }], limit: { context: 128000, output: 8192 } },
+  { id: 'plain', modelID: 'plain', providerID: 'fake', name: 'Plain', enabled: true, variants: [], limit: { context: 32000, output: 4096 } },
+  { id: 'old', modelID: 'old', providerID: 'fake', name: 'Old', enabled: false, variants: [], limit: { context: 8000, output: 1000 } },
+];
+const PROMPT_KEYS = ['id', 'text', 'files', 'agents', 'skills', 'metadata', 'delivery', 'resume'];
 
 async function run(sess, parts) {
   active = { sessionID: sess.id, aborted: false };
@@ -76,8 +84,23 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET' && (p === '/info' || p === '/api/info')) {
       return json({ version: '2.0.21', data: { version: '2.0.21' } });
     }
+    if (req.method === 'GET' && p === '/_calls') return json(calls);
+    if (req.method === 'POST' && p.startsWith('/api/')) calls.push({ path: p, body: j });
     if (req.method === 'GET' && (p === '/api/model' || p === '/model')) {
-      return json({ data: [{ id: 'fake-coder', name: 'Fake Coder' }] });
+      return json({ location: { directory: '/x' }, data: MODELS });
+    }
+    if (req.method === 'GET' && p === '/api/model/default') return json({ location: { directory: '/x' }, data: MODELS[0] });
+    let m = p.match(/^\/api\/session\/([^/]+)\/agent$/);
+    if (m && req.method === 'POST') return json(true);
+    m = p.match(/^\/api\/session\/([^/]+)\/compact$/);
+    if (m && req.method === 'POST') {
+      json({ data: { id: id('msg'), sessionID: m[1], type: 'compaction' } });
+      setTimeout(() => {
+        emit('session.compaction.started', { sessionID: m[1], reason: 'manual' });
+        emit('session.compaction.ended', { sessionID: m[1], reason: 'manual', text: 'summary' });
+        emit('session.execution.succeeded', { sessionID: m[1] });
+      }, 20);
+      return;
     }
     if (req.method === 'POST' && (p === '/session' || p === '/api/session')) {
       const s = { id: id('ses'), title: j.title || '', messages: [] };
@@ -85,7 +108,7 @@ const server = http.createServer((req, res) => {
       save();
       return json(p.startsWith('/api') ? { data: { id: s.id, title: s.title }, id: s.id, title: s.title } : { id: s.id, title: s.title });
     }
-    let m = p.match(/^\/(?:api\/)?session\/([^/]+)$/);
+    m = p.match(/^\/(?:api\/)?session\/([^/]+)$/);
     if (m && req.method === 'GET') {
       const s = sessions.get(m[1]);
       return s ? json(p.startsWith('/api') ? { data: { id: s.id, title: s.title }, id: s.id, title: s.title } : { id: s.id, title: s.title }) : json({ error: 'not found' }, 404);
@@ -99,6 +122,9 @@ const server = http.createServer((req, res) => {
     if (m && req.method === 'POST') {
       const s = sessions.get(m[1]);
       if (!s) return json({ error: 'not found' }, 404);
+      // Like the real v2 server: the prompt body takes no model or agent.
+      const extra = p.startsWith('/api') && Object.keys(j).find((k) => !PROMPT_KEYS.includes(k));
+      if (extra) return json({ error: 'unexpected key ' + extra }, 400);
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ data: { id: id('msg'), sessionID: s.id } }));
       const parts = j.parts || (j.text ? [{ type: 'text', text: j.text }, ...(j.files || []).map((f) => ({ type: 'file', url: f.uri, filename: f.name }))] : []);

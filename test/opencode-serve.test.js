@@ -24,10 +24,10 @@ beforeEach(() => { STATE = newState(); });
 const live = [];
 afterEach(() => { while (live.length) live.pop().close(); });
 
-function chat({ answer = 'allow', sessionId = null, yolo = false } = {}) {
+function chat({ answer = 'allow', sessionId = null, yolo = false, model = '' } = {}) {
   const events = []; const asks = []; let thread = null;
   const c = new OpenCodeChat({
-    command: FAKE, cwd: tmp, env: { ...process.env, FAKE_OC_STATE: STATE }, sessionId, yolo,
+    command: FAKE, cwd: tmp, env: { ...process.env, FAKE_OC_STATE: STATE }, sessionId, yolo, model,
     emit: (e) => events.push(e), ask: async (req) => { asks.push(req); return typeof answer === 'function' ? answer(req) : answer; },
     onThread: (id) => { thread = id; },
   });
@@ -126,15 +126,74 @@ describe('OpenCode over serve', () => {
     expect(result(h.events).result).toBe('Interrupted');
   });
 
-  it('queries models from /api/model and sets the session model', async () => {
+  const calls = async (c, suffix) => (await (await fetch(c.base + '/_calls', { headers: { authorization: c.auth } })).json())
+    .filter((x) => x.path.endsWith(suffix));
+
+  it('lists enabled models as provider/model for the picker and sets the session model', async () => {
     const h = chat();
     h.c.send('hello');
     await until(() => result(h.events));
-    const models = await h.c.models();
-    expect(models).toEqual(['fake-coder']);
-    const res = await h.c.setModel('fake-coder');
-    expect(res).toEqual({ model: 'fake-coder' });
-    expect(h.c.model).toBe('fake-coder');
+    expect(await h.c.models()).toEqual([
+      { value: 'fake/fake-coder', displayName: 'Fake Coder' },
+      { value: 'fake/plain', displayName: 'Plain' },
+    ]);
+    expect(await h.c.setModel('fake/plain')).toEqual({ model: 'fake/plain' });
+    expect((await calls(h.c, '/model')).pop().body).toEqual({ model: { id: 'plain', providerID: 'fake' } });
+  });
+
+  it('a chat started on a model sets it on the session; the prompt still goes through', async () => {
+    const h = chat({ model: 'fake/plain' });
+    h.c.send('hello');
+    await until(() => result(h.events));
+    expect(result(h.events).is_error).toBe(false);
+    expect((await calls(h.c, '/model'))[0].body).toEqual({ model: { id: 'plain', providerID: 'fake' } });
+  });
+
+  it('effort lists the model variants and sets one on the session model', async () => {
+    const h = chat();
+    h.c.send('hello');
+    await until(() => result(h.events));
+    expect(await h.c.effortLevels()).toEqual(['low', 'high']);   // the default model
+    await h.c.q.applyFlagSettings({ effort: 'high' });
+    expect((await calls(h.c, '/model')).pop().body).toEqual({ model: { id: 'fake-coder', providerID: 'fake', variant: 'high' } });
+    await h.c.setModel('fake/plain');
+    expect(await h.c.effortLevels()).toEqual([]);
+  });
+
+  it('plan mode switches the session agent; yolo answers approvals without a card', async () => {
+    const h = chat({ answer: 'deny' });
+    h.c.send('hello');
+    await until(() => result(h.events));
+    expect(await h.c.q.setPermissionMode('plan')).toEqual({ permissionMode: 'plan' });
+    expect((await calls(h.c, '/agent')).pop().body).toEqual({ agent: 'plan' });
+    await h.c.q.setPermissionMode('bypassPermissions');
+    expect((await calls(h.c, '/agent')).pop().body).toEqual({ agent: 'build' });
+    h.events.length = 0;
+    h.c.send('run something');
+    await until(() => result(h.events));
+    expect(h.asks).toHaveLength(0);
+    expect(msgs(h.events).some((m) => m.type === 'user' && JSON.stringify(m).includes('hi\\n'))).toBe(true);
+    await expect(h.c.q.setPermissionMode('acceptEdits')).rejects.toThrow(/no acceptEdits mode/);
+  });
+
+  it('/compact summarizes the session in place', async () => {
+    const h = chat();
+    h.c.send('hello');
+    await until(() => result(h.events));
+    h.events.length = 0;
+    expect(h.c.send('/compact')).toEqual({ ok: true });
+    await until(() => result(h.events));
+    expect(msgs(h.events).some((m) => m.type === 'system' && m.subtype === 'compact_boundary')).toBe(true);
+    expect(await calls(h.c, '/compact')).toHaveLength(1);
+  });
+
+  it('reports context use against the model window', async () => {
+    const h = chat();
+    h.c.send('hello');
+    await until(() => result(h.events));
+    const u = await h.c.q.getContextUsage();
+    expect(u).toMatchObject({ totalTokens: 15, maxTokens: 128000 });
+    expect(u.percentage).toBeCloseTo(15 / 1280, 5);
   });
 
   it('the server rejects a request without the password', async () => {
