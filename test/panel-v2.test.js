@@ -123,10 +123,11 @@ describe('side panel', () => {
     click(btn);
     expect(doc().body.classList.contains('ov-hidden')).toBe(false);
   });
-  it('is floating black cards with an orange outline, not a grey surface', () => {
+  it('is flat cards with an orange outline, no heavy shadow', () => {
     const css = fs.readFileSync(path.join(__dirname, '..', 'src/renderer/styles.css'), 'utf8');
     expect(css).toMatch(/#overviewpane \{ background: transparent; border-left: 0;/);
-    expect(css).toMatch(/#overview-body \.task-card \{[^}]*background: var\(--bg\);[^}]*border: 1px solid var\(--accent-line\)[^}]*box-shadow/);
+    expect(css).toMatch(/#overview-body \.task-card \{[^}]*background: var\(--bg\);[^}]*border: 1px solid var\(--accent-line\)/);
+    expect(css).not.toMatch(/#overview-body \.task-card \{[^}]*box-shadow/);
   });
 });
 

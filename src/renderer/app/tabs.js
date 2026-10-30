@@ -25,6 +25,7 @@ export function switchView(view) {
     const s = state.sessions.get(state.activeId);
     if (s) { s.fit && s.fit.fit(); s.term && s.term.focus(); }
   }
+  if (view === 'conversations' && window.flushOverviewIfDirty) window.flushOverviewIfDirty();
   if (view === 'board') renderBoard();
   if (view === 'usage') renderUsage();
   if (view === 'providers') renderProviders();
@@ -50,6 +51,8 @@ export function toggleSidebar(force) {
 
 // Unified tab registry so chat tabs (Agent SDK) and terminal tabs (PTY) coexist.
 export const tabRegistry = new Map();
+/** When each tab was last activated, for Ctrl+Tab in most-recently-used order. */
+export const usedAt = {};
 
  // id -> { kind: 'pty'|'chat', pane, tabEl, focus }
 window.__tabs = tabRegistry;
@@ -100,6 +103,7 @@ function fitSize(s) {
 
 export function activateSession(id) {
   state.activeId = id;
+  usedAt[id] = Date.now();
   window.__activate(id);
   const meta = tabRegistry.get(id);
   if (meta && meta.kind === 'pty') {

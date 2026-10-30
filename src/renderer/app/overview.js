@@ -17,6 +17,9 @@ let splitSession = null;
 
   // { id } — the PTY behind the right-rail terminal
 let tasksTimer = null;
+let ovTimer = null, ovDirty = false;
+/** Redraw now if something changed while the Overview was out of sight. */
+export function flushOverviewIfDirty() { if (ovDirty) { ovDirty = false; renderOverview(); } }
 
    // auto-refresh while the tasks panel is visible
 
@@ -50,6 +53,14 @@ function activeCwd() {
   return (s && s.cwd) || (state.settings && state.settings.defaultCwd) || '';
 }
 
+/** Open the split pane on one of its tabs (changes, files, terminal, diff, review, preview). */
+export function openSplitTab(kind) {
+  toggleSplit(true);
+  const k = document.querySelector('#split-kind');
+  if (k && k.value !== kind) { k.value = kind; k.dispatchEvent(new Event('change')); }
+}
+window.openSplitTab = openSplitTab;
+
 export function toggleSplit(force) {
   const main = document.querySelector('#main');
   const pane = document.querySelector('#splitpane');
@@ -72,6 +83,8 @@ export function toggleSplit(force) {
 export function renderOverview() {
   const body = document.querySelector('#overview-body');
   if (!body) return;
+  // Nobody sees it: no git, context or connector calls. It catches up when shown again.
+  if (state.view !== 'conversations' || document.body.classList.contains('ov-hidden') || document.hidden) { ovDirty = true; return; }
   renderTasks(body, activeCwd());
   if (!tasksTimer) {
     tasksTimer = setInterval(() => {
@@ -88,7 +101,6 @@ window.renderOverview = renderOverview;
 
 // Event-driven refresh: the chat calls this when a turn ends, a session starts, the
 // model changes or a file-changing tool finishes. Coalesced, and deferred while hidden.
-let ovTimer = null, ovDirty = false;
 
 window.refreshOverview = (chatId, delay = 500) => {
   if (chatId && chatId !== state.activeId) return;
@@ -468,9 +480,11 @@ export function toggleOverview(force) {
   document.body.classList.toggle('ov-hidden', hide);
   document.querySelector('#btn-overview')?.setAttribute('aria-pressed', hide ? 'false' : 'true');
   lsSet('cce.ovHidden', hide);
+  if (!hide) flushOverviewIfDirty();
 }
 
 window.toggleOverview = toggleOverview;
+window.flushOverviewIfDirty = flushOverviewIfDirty;
 
 function renderTasks(target, cwd, only) {
   const chat = Chat.chats.get(state.activeId);

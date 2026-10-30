@@ -11,10 +11,11 @@ import { ProvidersUI } from './providers/ui.js';
 import { invalidateConnectorStatus, refreshMcpList, renderConnectors } from './app/connectors.js';
 import { ensureConvoDrop, loadConversationList, renderConversationList, renderOpenTabs, toggleConversations } from './app/conversations.js';
 import { $, applyTheme, applyThinkingDisplay, elIcon, loadMonaco, lsGet, paintDeclaredIcons, state, toast } from './app/core.js';
-import { initSplitTabMenu, renderOverview, renderSplit, setAllOverviewCards, splitTerm, toggleOverview, toggleSplit } from './app/overview.js';
+import { initSplitTabMenu, renderOverview, renderSplit, setAllOverviewCards, openSplitTab, splitTerm, toggleOverview, toggleSplit } from './app/overview.js';
 import { openNewSessionModal, openProviderEditor } from './app/provider-forms.js';
 import { parseForceCtx, renderClaudeBanner, renderSettings } from './app/settings.js';
-import { activateSession, createSession, killSession, paintReopenButton, recentlyClosedCount, reopenLastClosed, resumeLatest, switchView, tabRegistry, toggleSidebar } from './app/tabs.js';
+import { activateSession, createSession, killSession, paintReopenButton, recentlyClosedCount, reopenLastClosed, resumeLatest, switchView, tabRegistry, toggleSidebar, usedAt } from './app/tabs.js';
+import { chordAction, mruCycle } from './app/nav.js';
 import { initHome } from './app/home.js';
 import { renderBoard } from './app/board.js';
 import { renderUsage } from './app/usage.js';
@@ -220,8 +221,21 @@ function wireChrome() {
       e.preventDefault();
       const ids = [...tabRegistry.keys()];
       if (ids.length > 1) {
-        const i = ids.indexOf(state.activeId);
-        activateSession(ids[(i + (e.shiftKey ? ids.length - 1 : 1) + ids.length) % ids.length]);
+        const next = mruCycle(ids, usedAt, state.activeId, e.shiftKey);
+        if (next && next !== state.activeId) activateSession(next);
+      }
+      return;
+    }
+    // Ctrl+1..9 jump to a tab; Alt+1..6 open a tool tab in the split pane.
+    const chord = chordAction(e, tabRegistry.size);
+    if (chord) {
+      if (chord.tab !== undefined) {
+        e.preventDefault();
+        const id = [...tabRegistry.keys()][chord.tab];
+        if (id) { switchView('conversations'); activateSession(id); }
+      } else {
+        e.preventDefault();
+        openSplitTab(chord.split);
       }
       return;
     }
