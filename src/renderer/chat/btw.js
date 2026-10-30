@@ -61,3 +61,11 @@ export async function askBtw(chat, question) {
   ans.classList.toggle('btw-err', !r.ok);
   scrollDownSoft(chat);
 }
+
+// A side session left open when the window goes away would run on with nobody to read it.
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    for (const id of btwChildren.keys()) { try { ccx.invoke('chat:close', { id }); } catch { /* going away anyway */ } }
+    btwChildren.clear();
+  });
+}

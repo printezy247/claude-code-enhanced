@@ -12,6 +12,16 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.19.0
+- Added: **Artifacts**. A Keep button on every reply and code block saves it (the same text is stored once). The new Artifacts tab in the side pane (Alt+7) lists them, shows markdown as sanitized text and code as plain text, deletes them, and exports a PDF through a window that can run no script and make no network request.
+- Added: **Side chat**. A "side chat" button on any of your messages opens a small card, branched from that turn in its own read-only session. Ask several follow-ups; nothing from it reaches the main thread. Closing the card or the chat ends the session.
+- Added: `/btw <question>` asks one side question while a turn is running; the answer arrives as its own card.
+- Added: **Scheduled prompts** on the Board: `every 30m` (5 minutes or more), `hourly` or `daily 09:00`, with Run now, on/off, delete and the last five results. They run while CCE is open, in a read-only side session, so no step can wait for an approval nobody is there to give.
+- Added: variants. When you edit and re-ask a message, the new prompt is remembered under the old one (`↳ N variants`) and can be reopened after a restart.
+- Changed: side sessions deny any permission or connector question automatically, and any left open when the window closes are closed.
+- Checked, no change needed: the host-owned connector broker (with the per-tool permission policy), interrupted-run recovery on the Board, and pasted images kept out of localStorage (now pinned by a test).
+- Not built, on purpose: dictation. The browser speech feature sends audio to an outside service, which breaks the rule that audio stays local, so it needs a local speech engine first.
+
 ## 0.18.0
 - Added: `@https://…` in the message box offers the web address as a mention. It is sent as plain text and the engine fetches it if it needs to. Addresses with a password, other schemes (`javascript:`, `data:`) and spaces are not offered.
 - Added: when a message is refused (quota, auth, session gone), the error shows the engine's own reason, keeps your text and images, and has a **Send again** button. Works the same for Claude, Codex and OpenCode chats.

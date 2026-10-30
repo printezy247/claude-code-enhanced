@@ -1,5 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { variantsFor, addVariant } from './variants.js';
+import { openSideChat } from './sidechat.js';
 import { renderMentions } from './mentions.js';
 import { jumpToChat } from './mentions-live.js';
 import { toast } from '../app/core.js';
@@ -185,6 +186,12 @@ export function appendUser(chat, text, uuid) {
     toast(rw.ok ? 'files rewound' : rw.error, rw.ok ? 'ok' : 'err');
   });
   if (uuid) acts.appendChild(back);
+  if (uuid) {
+    const side = el('button', 'btn tiny side-open', 'side chat');
+    side.title = 'Ask about this turn in a separate read-only chat';
+    side.addEventListener('click', () => openSideChat(chat, uuid));
+    acts.appendChild(side);
+  }
   wrap.appendChild(bubble);
   wrap.appendChild(acts);
   const vs = variantsFor(chat.sessionId, uuid);
