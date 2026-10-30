@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <div id="app">
     <aside id="sidebar">
       <div class="logo">
@@ -67,7 +68,8 @@
       <div id="tabs" hidden></div>
     </div>
     <div id="cols">
-    <main id="main">
+    <main id="main" tabindex="-1">
+      <h1 class="sr-only">Claude Code Enhanced</h1>
       <section id="view-conversations" class="view active">
         <div id="terminals"></div>
         <div id="statusbar">
@@ -147,7 +149,7 @@
             <h2>Connectors</h2>
           </div>
           <span id="connector-scope-wrap" class="scope-wrap">scope
-            <select id="connector-scope">
+            <select id="connector-scope" aria-label="Connector scope">
               <option value="user" selected>user (all projects)</option>
               <option value="project">project (.mcp.json)</option>
               <option value="local">local (this project, private)</option>
