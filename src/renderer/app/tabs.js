@@ -326,7 +326,7 @@ function updateSessionCount() {
     nav.classList.toggle('busy-dot', needsYou === 0 && busy > 0);
     nav.title = needsYou > 0
       ? needsYou + ' tab' + (needsYou === 1 ? '' : 's') + ' waiting on you'
-      : busy > 0 ? busy + ' tab' + (busy === 1 ? '' : 's') + ' working' : '';
+      : busy > 0 ? busy + ' tab' + (busy === 1 ? '' : 's') + ' working' : 'Conversations';
   }
 }
 

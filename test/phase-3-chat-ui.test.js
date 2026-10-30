@@ -97,3 +97,77 @@ describe('tool card shortcuts', () => {
     expect(chat.composer.value).toContain('npm test');
   });
 });
+
+describe('panel tab bar', () => {
+  it('switches between the five panels in one click', async () => {
+    const { w, chat } = await open({
+      'chat:skills': { ok: true, skills: [], commands: [], agents: [], hooks: [], tools: [] },
+      'chat:mcp-status': { ok: true, servers: [] },
+      'chats:index': { ok: true, sessions: [] },
+    });
+    click(w, w.document.querySelector('.hdr-more'));
+    const items = [...w.document.querySelectorAll('.chat-menu-item')];
+    items.find((b) => /Memory/.test(b.textContent)).click();
+    await flush(6);
+    const bar = () => chat.pane.querySelector('.chat-skills-panel .panel-tabs');
+    expect([...bar().querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Skills', 'MCP', 'Memory', 'Rewind', 'History']);
+    expect(bar().querySelector('[aria-selected="true"]').textContent).toBe('Memory');
+    [...bar().querySelectorAll('button')].find((b) => b.textContent === 'Rewind').click();
+    await flush(6);
+    expect(chat.pane.querySelectorAll('.chat-skills-panel').length).toBe(1);
+    expect(chat.pane.querySelector('.chat-rewind-panel')).toBeTruthy();
+    expect(bar().querySelector('[aria-selected="true"]').textContent).toBe('Rewind');
+  });
+});
+
+import fs from 'node:fs';
+describe('less text', () => {
+  it('static banners hide behind a ? button in the panel head', async () => {
+    const { w } = await open();
+    const doc = w.document;
+    for (const v of ['usage', 'board', 'connectors']) {
+      const head = doc.querySelector('#view-' + v + ' .panel-head');
+      const btn = head.querySelector('.banner-toggle');
+      expect(btn, v).toBeTruthy();
+      const banner = doc.querySelector('#view-' + v + ' .banner:not([id])');
+      expect(banner.hidden, v).toBe(true);
+      click(w, btn);
+      expect(banner.hidden, v).toBe(false);
+      expect(btn.getAttribute('aria-expanded')).toBe('true');
+      click(w, btn);
+      expect(banner.hidden, v).toBe(true);
+    }
+  });
+  it('the dynamic summary banners stay visible', async () => {
+    const { w } = await open();
+    expect(w.document.querySelector('#usage-summary').hidden).toBe(false);
+  });
+  it('the nav is an icon dock with a tooltip on each button', async () => {
+    const { w } = await open();
+    const btns = [...w.document.querySelectorAll('.nav-btn')];
+    expect(btns.length).toBe(6);
+    for (const b of btns) expect(b.title.length, b.dataset.view).toBeGreaterThan(2);
+    const css = fs.readFileSync(new URL('../src/renderer/styles.css', import.meta.url), 'utf8');
+    expect(css).toMatch(/#nav \{[^}]*flex-direction: row/);
+  });
+});
+
+describe('sidebar list', () => {
+  it('does not build rows for a collapsed folder until it is opened', async () => {
+    const now = Date.now();
+    const { w } = await open({ 'chats:index': { ok: true, sessions: [
+      { sessionId: '11111111-1111-1111-1111-111111111111', cwd: '/w/a', preview: 'one', mtime: now },
+      { sessionId: '22222222-2222-2222-2222-222222222222', cwd: '/w/a', preview: 'two', mtime: now - 1000 },
+    ] } });
+    await flush(6);
+    const doc = w.document;
+    const rows = () => doc.querySelectorAll('#convo-drop .convo-group .convo-row').length;
+    expect(rows()).toBe(2);
+    click(w, doc.querySelector('#convo-drop .convo-sec'));                 // collapse
+    doc.querySelector('#convo-drop .convo-sort').dispatchEvent(new w.Event('change'));   // redraw
+    expect(doc.querySelector('#convo-drop .convo-group').classList.contains('collapsed')).toBe(true);
+    expect(rows()).toBe(0);
+    click(w, doc.querySelector('#convo-drop .convo-sec'));                 // open
+    expect(rows()).toBe(2);
+  });
+});
