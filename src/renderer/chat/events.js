@@ -274,7 +274,11 @@ function handleMessage(chat, msg) {
       // Monthly per-folder budget: add this turn and warn at 80% and 100%.
       if (metered && typeof msg.total_cost_usd === 'number' && chat.cwd) {
         const alert = recordTurn(localStorage, chat.cwd, msg.total_cost_usd);
-        if (alert) toast(alert, 'err');
+        if (alert) {
+          toast(alert, 'err');
+          // Also a desktop notification, so the warning is seen with the window in the background.
+          try { if (window.Notification && state.settings && state.settings.notifyOnDone !== false) new Notification('Budget alert', { body: alert }); } catch { /* notifications blocked */ }
+        }
         if (window.refreshOverview) window.refreshOverview(chat.id);
       }
       setStatusLine(chat);

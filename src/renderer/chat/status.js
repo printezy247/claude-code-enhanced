@@ -49,6 +49,7 @@ export function setBusy(chat, busy) {
   publishTabState(chat);
   chat.dot.classList.toggle('busy', busy);
   chat.stopBtn.classList.toggle('hidden', !busy);
+  if (chat.takeBtn) chat.takeBtn.classList.toggle('hidden', !busy);
   chat.contBtn.classList.toggle('hidden', busy || !chat.lastResult || !chat.alive);
   updateBusyUi(chat);
   if (busy) { chat.statusLine.textContent = 'working…'; startContextPolling(chat); }

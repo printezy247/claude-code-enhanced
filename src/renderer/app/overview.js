@@ -13,6 +13,7 @@ import { Chat } from '../chat/index.js';
 import { openMdEditor } from './mdedit.js';
 import { contextAdvice, cacheLine } from '../chat/ctxadvice.js';
 import CCEMcpGroup from '../../shared/mcpgroup.js';
+import CCEAgentBoard from '../../shared/agentboard.js';
 
 /* ================= split view (#44) ================= */
 
@@ -745,6 +746,8 @@ function renderTasks(target, cwd, only) {
       ['status', chat.busy ? 'working…' : (chat.alive ? 'idle' : 'ended')],
       ['provider', chat.provider ? chat.provider.name : 'default (Claude account)'],
       ['model', chat.model || (chat.init && chat.init.model) || (chat.provider ? 'provider default' : 'CLI default')],
+      // Set by /doctor: a 0-100 score for how well this chat is set up.
+      ['health', chat.healthScore != null ? chat.healthScore + '/100 · /doctor to refresh' : 'run /doctor'],
     ];
     for (const [k, v] of rows) {
       const row = el('div', 'kv-row');
@@ -1023,6 +1026,33 @@ function renderTasks(target, cwd, only) {
     }));
   } else {
     connRows.appendChild(el('div', 'task-row hint', 'start a chat to see connectors'));
+  }
+
+  // Agents: one row per subagent of this chat, shown only once there has been one.
+  const boardData = CCEAgentBoard.boardRows(chat && chat.tools ? [...chat.tools.entries()] : [], Date.now());
+  if (boardData.total) {
+    const ag = card('agents', 'Agents', 'bot');
+    ag.badge.textContent = boardData.running ? boardData.running + ' running' : String(boardData.total);
+    const agRows = el('div', 'task-rows');
+    for (const r of boardData.rows) {
+      const row = el('button', 'task-row conn-row agent-row');
+      row.type = 'button';
+      row.style.paddingLeft = (r.depth * 12) + 'px';
+      row.appendChild(el('span', 'st-dot st-' + (r.state === 'running' ? 'pending' : r.state === 'failed' ? 'failed' : 'connected')));
+      const nm = el('span', 'conn-name', r.title);
+      nm.title = r.type + (r.model ? ' · ' + r.model : '');
+      row.appendChild(nm);
+      row.appendChild(el('span', 'ctx-tokens', r.type + (r.model ? ' · ' + r.model : '')));
+      row.appendChild(el('span', 'ctx-tokens', CCEAgentBoard.fmtMs(r.ms) + (r.tokens ? ' · ~' + (r.tokens >= 1000 ? (r.tokens / 1000).toFixed(1) + 'k' : r.tokens) + ' tok' : '')));
+      // Jump to the card in the transcript.
+      row.addEventListener('click', () => {
+        const c = chat.tools.get(r.id);
+        if (c && c.card && c.card.scrollIntoView) { c.card.scrollIntoView({ block: 'center' }); c.card.classList.add('req-flash'); setTimeout(() => c.card.classList.remove('req-flash'), 1200); }
+      });
+      agRows.appendChild(row);
+    }
+    agRows.appendChild(el('div', 'task-row hint', 'The engine reports no cost per subagent; tokens are a rough size of each answer.'));
+    ag.inner.appendChild(agRows);
   }
 
   ch = card('changes', 'Changes', 'branch');

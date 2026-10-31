@@ -12,7 +12,7 @@ import { askBtw, askCompare } from './btw.js';
 import { parseCompare } from './comparecmd.js';
 import { runDoctor } from './doctorcmd.js';
 import CCEMemTimeline from '../../shared/memtimeline.js';
-import { deleteRecipe, loadRecipes, parseRecipeCmd, saveRecipe } from './recipes.js';
+import { allRecipes, deleteRecipe, fillSteps, parseRecipeCmd, saveRecipe } from './recipes.js';
 
 /** Show (or clear, with '') the goal banner above the transcript and remember it for the folder. */
 export function setGoal(chat, goal) {
@@ -91,7 +91,7 @@ async function detachChat(chat) {
 async function runRecipeCommand(chat, text) {
   const r = parseRecipeCmd(text);
   if (r.error) { toast(r.error, 'err'); return; }
-  const all = loadRecipes(localStorage);
+  const all = allRecipes(localStorage);
   if (r.action === 'list') {
     const names = Object.keys(all);
     toast(names.length ? 'Recipes: ' + names.join(', ') + ' (run with /recipe <name>)' : 'No recipes yet. Save one with /recipe save <name>.', 'ok');
@@ -103,11 +103,16 @@ async function runRecipeCommand(chat, text) {
     const s = saveRecipe(localStorage, r.name, v);
     toast(s.ok ? 'Saved recipe ' + s.name + ' (' + s.steps + ' steps)' : s.error, s.ok ? 'ok' : 'err');
   } else {
-    const rec = all[r.name];
+    let name = r.name;
+    let arg = '';
+    if (!all[name] && r.head && all[r.head]) { name = r.head; arg = r.args || ''; }
+    const rec = all[name];
     if (!rec) { toast('No recipe named ' + r.name + '. /recipe lists them.', 'err'); return; }
-    chat.recipe = { name: r.name, steps: rec.steps, i: 0, auto: !!rec.auto };
-    sendSoon(chat, rec.steps[0]);
-    toast('Recipe ' + r.name + ': step 1 of ' + rec.steps.length, 'ok');
+    if (rec.needsArg && !arg.trim()) { toast('/recipe ' + name + ' needs ' + rec.needsArg + ': /recipe ' + name + ' <value>', 'err'); return; }
+    const steps = fillSteps(rec.steps, arg);
+    chat.recipe = { name, steps, i: 0, auto: !!rec.auto };
+    sendSoon(chat, steps[0]);
+    toast('Recipe ' + name + ': step 1 of ' + steps.length, 'ok');
   }
 }
 
