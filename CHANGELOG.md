@@ -12,6 +12,16 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.26.0
+
+Keeping the context window in view.
+
+- Big tool results: a result over 8,000 characters shows its size ("56 KB · 1,240 lines") with a search box that lists the matching lines, and "Copy all". The card still shows only the start, so the chat stays short.
+- The context ring's popover lists the five biggest tool results of the session, with a rough token count, so you can see what to compact away.
+- When the engine compacts, the note says how big the context was, and the summary lists the sections and files it names, so you can check what was kept.
+- A warning appears when Claude runs the same failing call three times in a row, with a button that puts "change approach" in the message box.
+- `/doctor`: a checklist of this chat's setup (CLI, sign-in, connectors, helper tools, sandbox, web browser, context) with a health score and "Copy bug report" (secrets are masked).
+
 ## 0.25.1
 
 Fixes from a long session's screenshots.

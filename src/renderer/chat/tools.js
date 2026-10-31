@@ -7,6 +7,7 @@ import { hiddenThoughtNode, thoughtNode } from './stream.js';
 import { scrollDownSoft } from './transcript.js';
 import { el, md, splitThink, stripAnsi, thinkingText } from './util.js';
 import { isTestCommand } from './queue.js';
+import CCECtxTools from '../../shared/ctxtools.js';
 
 /* ---------------- tool metadata ---------------- */
 
@@ -709,6 +710,27 @@ function resultText(content) {
   return '';
 }
 
+/**
+ * What each tool result cost the context (for the Context popover), and a warning when
+ * Claude retries the same failing call over and over.
+ */
+function trackContextCost(chat, ctx, text, failed) {
+  (chat.toolSizes = chat.toolSizes || []).push({ label: toolTitle(ctx.name, ctx.input || {}), chars: String(text || '').length });
+  if (chat.toolSizes.length > 300) chat.toolSizes.shift();
+  chat.retryTracker = chat.retryTracker || CCECtxTools.createRetryTracker(3);
+  if (chat.retryTracker.note(CCECtxTools.retryKey(ctx.name, ctx.input), failed)) {
+    const n = el('div', 'sys-note warn retry-warn', '⚠ Claude has run the same failing ' + (ctx.name || 'tool') + ' call 3 times in a row. ');
+    const b = el('button', 'btn tiny', 'Tell it to change approach');
+    b.addEventListener('click', () => {
+      chat.composer.value = 'Stop retrying that call. Explain why it fails and try a different approach.';
+      chat.composer.focus();
+    });
+    n.appendChild(b);
+    chat.msgs.appendChild(n);
+    scrollDownSoft(chat);
+  }
+}
+
 export function resolveToolResult(chat, block) {
   const ctx = chat.tools.get(block.tool_use_id);
   // A tool that may have touched the working tree: refresh the Changes card (coalesced).
@@ -735,6 +757,7 @@ export function resolveToolResult(chat, block) {
     return;
   }
   noteToolOutcome(chat.model, !block.is_error);
+  trackContextCost(chat, ctx, text, !!block.is_error);
   if (block.is_error && ctx.name === 'Bash' && isTestCommand(ctx.input && ctx.input.command)) chat.turnTestFail = true;
   // A streaming card is tracked per thread, not in chat.tools, so look there
   // too or the live card would never resolve.
@@ -743,6 +766,40 @@ export function resolveToolResult(chat, block) {
   ctx.output = text;
   ctx.isError = !!block.is_error;
   ctx.setStatus(block.is_error ? 'err' : 'done');
+}
+
+// A result this long is skimmed, not read: say how big it is and let the user search it
+// (the card itself shows only the start).
+const BIG_OUTPUT_CHARS = 8000;
+
+function attachBigOutput(ctx, out, full) {
+  let bar = ctx.body.querySelector('.tool-big');
+  if (!bar) {
+    bar = el('div', 'tool-big');
+    bar.appendChild(el('span', 'tool-big-size', ''));
+    const q = el('input', 'tool-big-q');
+    q.type = 'search';
+    q.placeholder = 'Search this output';
+    q.setAttribute('aria-label', 'Search this output');
+    bar.appendChild(q);
+    const copy = el('button', 'btn tiny', 'Copy all');
+    copy.addEventListener('click', () => {
+      navigator.clipboard.writeText(bar._full || '').then(() => toast('Copied', 'ok')).catch(() => toast('Could not copy', 'err'));
+    });
+    bar.appendChild(copy);
+    const hits = el('pre', 'tool-big-hits mono hidden');
+    q.addEventListener('input', () => {
+      const r = CCECtxTools.filterLines(bar._full, q.value);
+      hits.classList.toggle('hidden', !q.value.trim());
+      hits.textContent = r.matches
+        ? r.shown.map((x) => x.n + ': ' + x.text).join('\n') + (r.matches > r.shown.length ? '\n… ' + (r.matches - r.shown.length) + ' more matching lines' : '')
+        : 'no line matches';
+    });
+    out.before(bar);
+    bar.after(hits);
+  }
+  bar._full = full;
+  bar.querySelector('.tool-big-size').textContent = CCECtxTools.describeOutput(full).label;
 }
 
 function renderOutput(chat, toolUseId, knownCtx) {
@@ -763,6 +820,7 @@ function renderOutput(chat, toolUseId, knownCtx) {
   const spill = /Full output saved to:\s*(\S+)/.exec(String(text));
   const full = stripAnsi(text);
   out.textContent = full.slice(0, 8000) + (full.length > 8000 ? '\n… (' + (full.length - 8000) + ' more characters not shown)' : '');
+  if (full.length > BIG_OUTPUT_CHARS) attachBigOutput(ctx, out, full);
   if (spill) {
     const note = el('div', 'tool-spill');
     note.appendChild(el('span', 'hint', 'output spilled to file — '));

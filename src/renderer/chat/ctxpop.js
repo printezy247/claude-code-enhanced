@@ -2,6 +2,7 @@
 // Compact now and Toggle Overview. Click the ring again or press Escape to close.
 import { el, fmtTok } from './util.js';
 import { doCompact } from './slash.js';
+import CCECtxTools from '../../shared/ctxtools.js';
 
 export function closeCtxPop(chat) {
   if (chat.ctxPop) { chat.ctxPop.remove(); chat.ctxPop = null; }
@@ -44,6 +45,18 @@ function fill(chat, pop) {
     bar.appendChild(fill);
     row.appendChild(bar);
     pop.appendChild(row);
+  }
+  // The tool results that filled the most of the window this session: the ones worth
+  // compacting away, or not asking for again.
+  const top = CCECtxTools.topConsumers(chat.toolSizes, 5);
+  if (top.length) {
+    pop.appendChild(el('div', 'ctx-pop-sub', 'Biggest tool results'));
+    for (const x of top) {
+      const row = el('div', 'ctx-pop-row ctx-pop-big');
+      row.appendChild(el('span', 'ctx-pop-big-name', x.label));
+      row.appendChild(el('span', 'ctx-pop-big-tok', '~' + fmtTok(x.tokens)));
+      pop.appendChild(row);
+    }
   }
   const acts = el('div', 'ctx-pop-acts');
   const compact = el('button', 'btn small ctx-pop-compact', 'Compact now');

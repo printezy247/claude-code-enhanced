@@ -10,6 +10,7 @@ import { ensurePanes, LIST_H, ROW_H, setPreview } from './preview.js';
 import { parseLoop, parseGoal, parseBtw, saveGoal } from './loopgoal.js';
 import { askBtw, askCompare } from './btw.js';
 import { parseCompare } from './comparecmd.js';
+import { runDoctor } from './doctorcmd.js';
 import { deleteRecipe, loadRecipes, parseRecipeCmd, saveRecipe } from './recipes.js';
 
 /** Show (or clear, with '') the goal banner above the transcript and remember it for the folder. */
@@ -124,6 +125,11 @@ export function handleBuiltin(chat, text) {
     if (r.error) toast(r.error, 'err'); else { askCompare(chat, r.models, r.question); chat.composer.value = ''; }
     return true;
   }
+  if (cmd === '/doctor') {
+    runDoctor(chat);
+    chat.composer.value = '';
+    return true;
+  }
   if (cmd === '/detach') {
     detachChat(chat);
     chat.composer.value = '';
@@ -196,6 +202,7 @@ const OWN_SLASH = [
   { name: 'compact', description: 'Summarise the conversation and carry on in a fresh session' },
   { name: 'compare', description: 'Ask several models the same thing: /compare opus,sonnet <prompt>' },
   { name: 'recipe', description: 'Run a saved chain of prompts: /recipe <name>, /recipe save <name>' },
+  { name: 'doctor', description: 'Check this chat\'s setup and copy a masked bug report' },
   { name: 'detach', description: 'Move this chat to its own window' },
   { name: 'btw', description: 'Ask a side question while a turn runs: /btw <question>' },
   { name: 'loop', description: 'Run a prompt n times: /loop 3 run the tests' },

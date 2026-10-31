@@ -131,9 +131,11 @@ function handleMessage(chat, msg) {
       else if (msg.subtype === 'compact_boundary') {
         chat.msgs.querySelector('.chat-empty')?.remove();
         const manual = msg.compact_metadata && msg.compact_metadata.trigger === 'manual';
-        const n = el('div', 'sys-note', manual
+        const was = msg.compact_metadata && Number(msg.compact_metadata.pre_tokens);
+        const n = el('div', 'sys-note', (manual
           ? '✂ conversation compacted — earlier turns summarized, same chat continues'
-          : '✂ context auto-compacted by the engine — earlier history summarized');
+          : '✂ context auto-compacted by the engine — earlier history summarized')
+          + (was > 0 ? ' (was ~' + Math.round(was / 1000) + 'k tokens; the summary below shows what it kept)' : ''));
         setTimeout(() => pollContext(chat), 300);
         chat.msgs.appendChild(n);
         scrollDownSoft(chat);
