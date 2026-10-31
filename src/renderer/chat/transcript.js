@@ -9,6 +9,7 @@ import { addCopyBtn } from './markdown.js';
 import { switchModel, switchProvider } from './picker.js';
 import { renderDiff } from './tools.js';
 import { el, md } from './util.js';
+import CCECtxTools from '../../shared/ctxtools.js';
 
 /* ---------------- message rendering ---------------- */
 
@@ -40,6 +41,14 @@ export function appendSummary(chat, text, uuid) {
   const d = el('details', 'compact-summary');
   if (uuid) d.dataset.uuid = uuid;
   d.appendChild(el('summary', '', 'Summary of the earlier conversation — what the model now remembers. Click to read.'));
+  // What the summary says it kept, at a glance: its sections and the files it names.
+  const facts = CCECtxTools.summaryFacts(text);
+  if (facts.sections.length || facts.files.length) {
+    const f = el('div', 'compact-facts hint');
+    if (facts.sections.length) f.appendChild(el('div', '', 'Sections: ' + facts.sections.join(' · ')));
+    if (facts.files.length) f.appendChild(el('div', '', 'Files it mentions: ' + facts.files.join(', ')));
+    d.appendChild(f);
+  }
   const body = el('div', 'md');
   body.innerHTML = md(String(text || '').replace(/^This session is being continued[^\n]*\n+/, ''));
   d.appendChild(body);

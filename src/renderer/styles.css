@@ -446,6 +446,9 @@ html[data-scrollbar="hidden"] .chat-msgs::-webkit-scrollbar { display: none; }
   white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; user-select: text;
 }
 .tool-json summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+.tool-big { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; font-size: 11.5px; color: var(--muted); }
+.tool-big-q { flex: 1; min-width: 0; max-width: 260px; padding: 3px 8px; font-size: 11.5px; }
+.tool-big-hits { margin: 0 0 8px; max-height: 200px; overflow: auto; font-size: 11.5px; white-space: pre-wrap; color: var(--text); }
 .tool-output { margin: 0 0 8px; font-size: 11.5px; line-height: 1.5; white-space: pre-wrap; color: var(--muted); max-height: 220px; overflow: auto; }
 .tool-err { color: var(--danger); }
 
@@ -2075,3 +2078,17 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .remote-view { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; max-height: 50vh; overflow: auto; margin: 6px 0; }
 .remote-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .remote-row.dir { font-weight: 600; }
+
+/* ---- context savings (0.26) ---- */
+.ctx-pop-sub { margin: 8px 0 2px; font-size: 11px; color: var(--muted); }
+.ctx-pop-big { display: flex; justify-content: space-between; gap: 8px; font-size: 11.5px; }
+.ctx-pop-big-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctx-pop-big-tok { color: var(--accent); white-space: nowrap; }
+.compact-facts { padding: 4px 0 8px; line-height: 1.5; overflow-wrap: anywhere; }
+.doctor-card { margin: 10px 0; max-width: 860px; }
+.doctor-card .doctor-row { display: flex; gap: 8px; padding: 2px 0; font-size: 12px; }
+.doctor-card .doctor-name { min-width: 170px; }
+.doctor-card .lvl-ok { color: var(--ok); }
+.doctor-card .lvl-warn { color: var(--warn); }
+.doctor-card .lvl-bad { color: var(--danger); }
+.doctor-card .doctor-score { font-weight: 600; margin-bottom: 4px; }
