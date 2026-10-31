@@ -2315,6 +2315,7 @@ function registerIpc() {
   handle('memory:probe-prompt', async () => ({ prompt: automemory.PROBE_PROMPT }));
   handle('memory:propose', async ({ cwd, text }) => ({ queued: automemory.addPending(cwd, automemory.parseProposals(text)) }));
   handle('memory:pending', async ({ cwd }) => ({ pending: automemory.listPending(cwd) }));
+  handle('memory:timeline', async ({ cwd }) => ({ entries: automemory.timeline(String(cwd || '')) }));
   handle('memory:resolve', async ({ cwd, slug, accept }) => automemory.resolve(cwd, String(slug || ''), !!accept));
   handle('memory:save', async ({ path: p, content }) => {
     const home = process.env.HOME || os.homedir();

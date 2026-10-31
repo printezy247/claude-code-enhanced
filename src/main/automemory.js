@@ -12,6 +12,7 @@ const MAX_PROPOSALS = 3;
 const PROBE_PROMPT = 'Reply with ONLY a JSON array, no prose and no code fence, of up to 3 facts worth remembering '
   + 'in FUTURE chats on this project: Jack\'s preferences, corrections he gave you, non-obvious constraints, '
   + 'decisions. Skip anything the code or git history already shows and anything that only matters to this chat. '
+  + 'Never include anything the user wrapped in <private>…</private>: it is not to be remembered. '
   + 'Each item: {"name":"short-kebab-slug","type":"user|feedback|project|reference","description":"one line",'
   + '"body":"the fact; for feedback and project add **Why:** and **How to apply:** lines"}. Reply [] if nothing qualifies.';
 
@@ -47,6 +48,8 @@ function parseProposals(text) {
     const slug = slugOf(it.name);
     const body = sanitizeBody(it.body);
     if (!slug || !body) continue;
+    // Text the user marked private must not become a memory, even if the model repeats it.
+    if (/<private>/i.test(it.body) || /<private>/i.test(it.description)) continue;
     out.push({
       slug,
       type: TYPES.includes(it.type) ? it.type : 'project',
@@ -99,4 +102,20 @@ function resolve(cwd, slug, accept) {
   return { saved: true };
 }
 
-module.exports = { PROBE_PROMPT, memDir, parseProposals, listPending, addPending, resolve };
+/** The notes of a project's memory folder as a timeline (see src/shared/memtimeline.js). */
+function timeline(cwd) {
+  const mt = require('../shared/memtimeline');
+  const dir = memDir(cwd);
+  const read = (f) => { try { return fs.readFileSync(path.join(dir, f), 'utf8'); } catch { return null; } };
+  const index = read('MEMORY.md') || '';
+  const notes = {};
+  for (const e of mt.parseIndex(index)) {
+    // The index names files; keep them inside the memory folder.
+    if (/[\\/]/.test(e.file) || e.file.startsWith('.')) continue;
+    const t = read(e.file);
+    if (t != null) notes[e.file] = t;
+  }
+  return mt.buildTimeline(index, notes);
+}
+
+module.exports = { timeline, PROBE_PROMPT, memDir, parseProposals, listPending, addPending, resolve };

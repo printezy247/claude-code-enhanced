@@ -3,6 +3,8 @@ import { elIcon, toast } from '../app/core.js';
 import { scrollDownSoft } from './transcript.js';
 import { basename, el, md } from './util.js';
 import { makePanel, panelOpen } from './panels.js';
+import { chats } from './util.js';
+import CCEMemTimeline from '../../shared/memtimeline.js';
 
 /* ---------------- memory & rules editor ---------------- */
 
@@ -180,6 +182,77 @@ export async function toggleMemoryPanel(chat) {
     }
   };
   loadSkills();
+  // What the engine reads at session start, and what each part costs in tokens.
+  const fmtTok = (n) => (n >= 1000 ? (n / 1000).toFixed(1).replace(/\.0$/, '') + 'k' : String(n));
+  const loads = el('div', 'mem-loads');
+  const fileTok = (f) => CCEMemTimeline.estTokens((f.content || '').length);
+  loads.appendChild(el('div', 'mem-sub', 'Loaded at session start · about ' + fmtTok(files.reduce((n, f) => n + fileTok(f), 0)) + ' tokens'));
+  for (const f of files) {
+    const row = el('div', 'mem-load-row');
+    row.appendChild(el('span', '', f.label));
+    row.appendChild(el('span', 'mem-tok', '~' + fmtTok(fileTok(f))));
+    loads.appendChild(row);
+  }
+  const seeAll = el('button', 'btn tiny', 'Preview what Claude sees');
+  const seen = el('pre', 'mem-proposal-body hidden');
+  seeAll.addEventListener('click', () => {
+    seen.textContent = files.map((f) => '=== ' + f.label + ' (' + f.path + ') ===\n' + (f.content || '')).join('\n\n') || '(nothing is loaded)';
+    seen.classList.toggle('hidden');
+  });
+  loads.appendChild(seeAll);
+  loads.appendChild(seen);
+  panel.appendChild(loads);
+
+  // The notes, newest last, as a filterable list. "#mem-N" in a reply opens note N.
+  const tl = el('div', 'mem-timeline');
+  const tlHead = el('div', 'mem-sub', 'Memory notes');
+  const chipRow = el('div', 'mem-chips');
+  const search = el('input', 'skills-search');
+  search.type = 'search';
+  search.placeholder = 'Search notes';
+  search.setAttribute('aria-label', 'Search memory notes');
+  const list = el('div', 'mem-list');
+  tl.appendChild(tlHead);
+  tl.appendChild(chipRow);
+  tl.appendChild(search);
+  tl.appendChild(list);
+  panel.appendChild(tl);
+  let entries = [];
+  let typeSel = 'all';
+  const drawList = () => {
+    const counts = CCEMemTimeline.typeCounts(entries);
+    chipRow.innerHTML = '';
+    for (const t of ['all', ...CCEMemTimeline.TYPES]) {
+      if (t !== 'all' && !counts[t]) continue;
+      const b = el('button', 'mem-chip' + (typeSel === t ? ' on' : ''), t + ' ' + counts[t]);
+      b.addEventListener('click', () => { typeSel = t; drawList(); });
+      chipRow.appendChild(b);
+    }
+    list.innerHTML = '';
+    const shown = CCEMemTimeline.filterEntries(entries, { type: typeSel, q: search.value });
+    if (!shown.length) list.appendChild(el('div', 'hint', entries.length ? 'No note matches.' : 'No notes saved yet for this project.'));
+    for (const e of shown) {
+      const d = el('details', 'mem-note');
+      d.dataset.n = String(e.n);
+      const sm = el('summary', '', '');
+      sm.appendChild(el('span', 'mem-n', '#mem-' + e.n));
+      sm.appendChild(el('span', 'mem-title', e.title));
+      sm.appendChild(el('span', 'mem-type', e.type));
+      sm.appendChild(el('span', 'mem-tok', '~' + fmtTok(e.tokens)));
+      d.appendChild(sm);
+      d.appendChild(el('div', 'hint', e.hook));
+      d.appendChild(el('pre', 'mem-proposal-body', e.missing ? '(the note file is missing)' : e.body));
+      list.appendChild(d);
+    }
+  };
+  search.addEventListener('input', drawList);
+  panel._focusNote = (n) => {
+    typeSel = 'all'; search.value = ''; drawList();
+    const d = list.querySelector('details[data-n="' + n + '"]');
+    if (d) { d.open = true; d.scrollIntoView({ block: 'center' }); }
+    else toast('No memory note #mem-' + n, 'err');
+  };
+  ccx.invoke('memory:timeline', { cwd: chat.cwd }).then((tr) => { entries = (tr && tr.entries) || []; drawList(); }).catch(() => drawList());
   panel.appendChild(pick);
   panel.appendChild(editor);
   panel.appendChild(row);
@@ -190,3 +263,44 @@ export async function toggleMemoryPanel(chat) {
 }
 
 const pathDirname = (p) => String(p).replace(/\/[^/]+$/, '');
+
+/** Open the memory panel on note n (a "#mem-n" citation was clicked). */
+export async function openMemoryCitation(chat, n) {
+  if (!panelOpen(chat, 'chat-memory-panel')) await toggleMemoryPanel(chat);
+  const panel = chat.pane.querySelector('.chat-memory-panel');
+  if (panel && panel._focusNote) panel._focusNote(n);
+}
+
+/**
+ * Turn "#mem-12" in a rendered reply into a button that opens that note. Code and
+ * links are left alone.
+ */
+export function linkMemoryCitations(container) {
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => (n.parentElement && n.parentElement.closest('pre, code, a, button') ? NodeFilter.FILTER_REJECT
+      : (/#mem-\d/.test(n.nodeValue) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP)),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  for (const node of nodes) {
+    const hits = CCEMemTimeline.findCitations(node.nodeValue);
+    if (!hits.length) continue;
+    const frag = document.createDocumentFragment();
+    let at = 0;
+    for (const h of hits) {
+      frag.appendChild(document.createTextNode(node.nodeValue.slice(at, h.index)));
+      const b = el('button', 'mem-cite', '#mem-' + h.n);
+      b.type = 'button';
+      b.title = 'Open memory note ' + h.n;
+      b.addEventListener('click', () => {
+        const pane = b.closest('.chat-pane');
+        const chat = [...chats.values()].find((c) => c.pane === pane);
+        if (chat) openMemoryCitation(chat, h.n);
+      });
+      frag.appendChild(b);
+      at = h.index + h.length;
+    }
+    frag.appendChild(document.createTextNode(node.nodeValue.slice(at)));
+    node.replaceWith(frag);
+  }
+}
