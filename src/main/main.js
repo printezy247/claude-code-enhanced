@@ -8,7 +8,7 @@ const { fileURLToPath } = require('url');
 const { execFile } = require('child_process');
 const { probeLoginEnv } = require('./loginenv');
 const { debugLog } = require('./debug');
-const { normalizeScrollbar, normalizeNoticeScope } = require('../shared/uiprefs');
+const { normalizeScrollbar, normalizeNoticeScope, normalizeReadOrder } = require('../shared/uiprefs');
 const { swapChat } = require('./failover');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
@@ -3074,6 +3074,7 @@ function registerIpc() {
     if ('connectorPick' in incoming && !['auto', 'off', 'always'].includes(incoming.connectorPick)) incoming.connectorPick = 'auto';
     if ('scrollbar' in incoming) incoming.scrollbar = normalizeScrollbar(incoming.scrollbar);
     if ('mcpNoticeScope' in incoming) incoming.mcpNoticeScope = normalizeNoticeScope(incoming.mcpNoticeScope);
+    if ('readOrder' in incoming) incoming.readOrder = normalizeReadOrder(incoming.readOrder);
     delete incoming.connectorUsage;   // written by the app as connectors are used, never by the renderer
     if ('streamIdleSeconds' in incoming) {
       incoming.streamIdleSeconds = clampIdleSeconds(incoming.streamIdleSeconds);

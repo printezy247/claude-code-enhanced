@@ -12,6 +12,7 @@ import { Chat } from './index.js';
 import { enhanceMarkdown, wireRunMenu } from './markdown.js';
 import { renderProjectInfo, wireHeaderMenu } from './panels.js';
 import { answerPlanWithText, endPermCountdown } from './permissions.js';
+import { guardSecrets } from './keyguard.js';
 import { discoverModels, fillModelSelector, guardSwitch, openCustomModel, refreshEffort, setEffort, switchModel, switchProvider, wireModelPicker } from './picker.js';
 import { loadGoal } from './loopgoal.js';
 import { applySlash, doCompact, setGoal, handleBuiltin, hideSlash, jumpSlash, maybeSlash, moveSlash, noteSlashUsed } from './slash.js';
@@ -323,6 +324,7 @@ export async function createSession(opts) {
     const sendText = expandMentions(text, (t) => turnsForTitle(t, chat.id));
     const blocks = chat.pendingImages.map(i => ({ type: 'image', source: { type: 'base64', media_type: i.media_type, data: i.data } }));
     if ((!text && !blocks.length) || !chat.alive) return;
+    if (!text.startsWith('/') && guardSecrets(chat, text, () => send(action))) return;   // a pasted key: ask first
     if (text.startsWith('/')) noteSlashUsed(chat, text);
     if (text.startsWith('/') && !blocks.length && handleBuiltin(chat, text)) {
       chat.composer.value = '';

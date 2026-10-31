@@ -12,6 +12,15 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.29.0
+
+Connector health and safer links.
+
+- The Connectors card remembers which connectors have worked. One that worked before and is failing or signed out now is marked "worked before" and counted in the summary line, so a real fault stands out from a connector that was never signed in.
+- "Tidy up": when plugin connectors are failing, a preview lists them (grouped, with their plugins) and one button switches them all off for every project. Switch any back on under Connectors (Auto / Always on / Off). The settings keep up to 120 per list; if more fail, it says how many did not fit.
+- Pasted keys: a message that contains a well-known key shape (Anthropic, GitHub, AWS, Slack, Google, a private key block) is held with three choices: hide the key and send, send anyway, or don't send. Ordinary text is not touched. Keys belong in Providers or Connectors settings, which store them out of the chat.
+- `/read <link> [what you want]`: reads a link the best way for what it is (YouTube, GitHub, Reddit, any page) and the order you set in Settings ("/read tools, in order": lightpanda, webfetch, ytdlp, gh). The default is the web browser, then WebFetch. yt-dlp and gh are used only if you add them, and the prompt tells Claude never to install anything: it names the install command instead.
+
 ## 0.28.0
 
 Agents, control and audits.

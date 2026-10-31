@@ -1,5 +1,5 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
-import { toast } from '../app/core.js';
+import { state, toast } from '../app/core.js';
 import { openCustomModel } from './picker.js';
 import { closeChat, createSession } from './session.js';
 import { appendError, scrollDownSoft } from './transcript.js';
@@ -12,6 +12,7 @@ import { askBtw, askCompare } from './btw.js';
 import { parseCompare } from './comparecmd.js';
 import { runDoctor } from './doctorcmd.js';
 import CCEMemTimeline from '../../shared/memtimeline.js';
+import CCEUrlRoute from '../../shared/urlroute.js';
 import { allRecipes, deleteRecipe, fillSteps, parseRecipeCmd, saveRecipe } from './recipes.js';
 
 /** Show (or clear, with '') the goal banner above the transcript and remember it for the folder. */
@@ -131,6 +132,14 @@ export function handleBuiltin(chat, text) {
     if (r.error) toast(r.error, 'err'); else { askCompare(chat, r.models, r.question); chat.composer.value = ''; }
     return true;
   }
+  if (cmd === '/read') {
+    const rest = text.slice(cmd.length).trim();
+    const url = CCEUrlRoute.firstUrl(rest);
+    if (!url) { toast('Use /read <link> [what you want from it]', 'err'); return true; }
+    chat.composer.value = '';
+    sendSoon(chat, CCEUrlRoute.buildReadPrompt(url, state.settings && state.settings.readOrder, rest.replace(url, '').trim()));
+    return true;
+  }
   if (cmd === '/private') {
     const msg = text.slice(cmd.length).trim();
     if (!msg) { toast('Use /private <message>: Claude reads it now but is told never to save it to memory', 'err'); return true; }
@@ -215,6 +224,7 @@ const OWN_SLASH = [
   { name: 'compact', description: 'Summarise the conversation and carry on in a fresh session' },
   { name: 'compare', description: 'Ask several models the same thing: /compare opus,sonnet <prompt>' },
   { name: 'recipe', description: 'Run a saved chain of prompts: /recipe <name>, /recipe save <name>' },
+  { name: 'read', description: 'Read a link the best way for what it is: /read <link> [what you want]' },
   { name: 'private', description: 'Send a message that must not be remembered: /private <message>' },
   { name: 'doctor', description: 'Check this chat\'s setup and copy a masked bug report' },
   { name: 'detach', description: 'Move this chat to its own window' },

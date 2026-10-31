@@ -14,6 +14,7 @@ import { openMdEditor } from './mdedit.js';
 import { contextAdvice, cacheLine } from '../chat/ctxadvice.js';
 import CCEMcpGroup from '../../shared/mcpgroup.js';
 import CCEAgentBoard from '../../shared/agentboard.js';
+import CCEConnHealth from '../../shared/connhealth.js';
 
 /* ================= split view (#44) ================= */
 
@@ -982,8 +983,39 @@ function renderTasks(target, cwd, only) {
         window.__connCache = {};
         renderOverview();
       };
-      const sum = CCEMcpGroup.summaryText(grouped.counts);
+      // Which connectors worked before: one that worked last time and is broken now is
+      // a real fault; one that never worked is usually just not signed in.
+      const prevHealth = lsGet('cce.connHealth', {});
+      const regress = CCEConnHealth.regressed(prevHealth, servers);
+      lsSet('cce.connHealth', CCEConnHealth.updateHistory(prevHealth, servers, Date.now()));
+      const sum = CCEMcpGroup.summaryText(grouped.counts) + (regress.size ? ' · ' + regress.size + ' worked before' : '');
       if (sum) connRows.appendChild(el('div', 'task-row hint conn-sum', sum));
+      // Plugins bring many copies of a connector that fail the same way: switch them off together, after a preview.
+      const failedPlugins = CCEConnHealth.failedPluginNames(servers);
+      if (failedPlugins.length) {
+        const tidy = document.createElement('details');
+        tidy.className = 'conn-note conn-tidy';
+        const tsm = document.createElement('summary');
+        tsm.textContent = 'Tidy up: ' + failedPlugins.length + ' failed plugin connector' + (failedPlugins.length === 1 ? '' : 's');
+        tidy.appendChild(tsm);
+        tidy.appendChild(el('div', 'hint', 'These would be switched off for all projects. You can switch any back on in Connectors (Auto / Always on / Off).'));
+        const gl = grouped.groups.filter((g) => g.bucket === 'failed' && g.servers.some((x) => failedPlugins.includes(x.name)));
+        tidy.appendChild(el('pre', 'cmd-note-full', gl.map((g) => g.label + (g.count > 1 ? ' ×' + g.count : '') + '  (' + g.plugins.join(', ') + ')').join('\n')));
+        const go = el('button', 'btn tiny', 'Switch off ' + failedPlugins.length);
+        go.addEventListener('click', async () => {
+          go.disabled = true;
+          const { next, added, skipped } = CCEConnHealth.withOff(state.settings && state.settings.connectorModes, failedPlugins);
+          const res = await ccx.invoke('settings:set', { settings: { connectorModes: next } });
+          if (res && res.ok) {
+            state.settings = res.settings;
+            toast('Switched off ' + added + ' connector' + (added === 1 ? '' : 's') + (skipped ? ' (' + skipped + ' more did not fit the list; use Connectors)' : ''), 'ok');
+            window.__connCache = {};
+            renderOverview();
+          } else { go.disabled = false; toast((res && res.error) || 'Could not save', 'err'); }
+        });
+        tidy.appendChild(go);
+        connRows.appendChild(tidy);
+      }
       const rowFor = (g) => {
         const sv = g.servers[0];
         const row = el('div', 'task-row hint conn-row');
@@ -993,6 +1025,7 @@ function renderTasks(target, cwd, only) {
         name.title = sv.status + (g.plugins.length ? '\nplugins: ' + g.plugins.join(', ') : '')
           + (g.count === 1 && (sv.tools || []).length ? '\n' + sv.tools.map((t) => t.name).join(', ') : '');
         row.appendChild(name);
+        if (g.servers.some((x) => regress.has(x.name))) row.appendChild(el('span', 'conn-how conn-regress', 'worked before'));
         row.appendChild(el('span', 'ctx-tokens', tools ? tools + ' tools' : sv.status || ''));
         if (g.count === 1 && sv.how) row.appendChild(el('span', 'conn-how', sv.how));
         // A button appears only when the connector needs the user; on a folded row it acts on every copy.

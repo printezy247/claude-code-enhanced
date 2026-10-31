@@ -2106,3 +2106,8 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .mem-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mem-type { color: var(--muted); font-size: 11px; }
 .mem-cite { padding: 0 6px; border-radius: 6px; border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent); font: inherit; font-size: .9em; cursor: pointer; }
+
+/* ---- connector health, key guard (0.29) ---- */
+.conn-regress { color: var(--danger); }
+.conn-tidy .cmd-note-full { max-height: 140px; overflow: auto; }
+.key-guard .perm-actions { margin-top: 6px; }
