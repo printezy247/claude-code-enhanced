@@ -11,7 +11,7 @@ import { addFileRef, applyAt, applyAttachedFiles, attachFiles, autosize, clearIm
 import { Chat } from './index.js';
 import { enhanceMarkdown, wireRunMenu } from './markdown.js';
 import { renderProjectInfo, wireHeaderMenu } from './panels.js';
-import { endPermCountdown } from './permissions.js';
+import { answerPlanWithText, endPermCountdown } from './permissions.js';
 import { discoverModels, fillModelSelector, guardSwitch, openCustomModel, refreshEffort, setEffort, switchModel, switchProvider, wireModelPicker } from './picker.js';
 import { loadGoal } from './loopgoal.js';
 import { applySlash, doCompact, setGoal, handleBuiltin, hideSlash, jumpSlash, maybeSlash, moveSlash, noteSlashUsed } from './slash.js';
@@ -322,6 +322,16 @@ export async function createSession(opts) {
     if (text !== NUDGE_TEXT) chat.nudges = 0;   // a real prompt re-arms the one automatic nudge
     try { localStorage.removeItem('cce:draft:' + (chat.cwd || '')); } catch { /* ignore */ }
 
+    // A plan card is waiting: what the user types is their feedback on the plan.
+    if (chat.busy && !blocks.length && !text.startsWith('/') && answerPlanWithText(chat, text)) {
+      appendUser(chat, text);
+      chat.msgs.appendChild(el('div', 'sys-note', '↯ sent to Claude as feedback on the plan — it keeps planning'));
+      scrollDownSoft(chat);
+      chat.composer.value = '';
+      autosize(chat.composer);
+      hideSlash(chat);
+      return;
+    }
     if (chat.busy) {
       const mode = action || chat.busyMode || 'queue';
       if (mode === 'queue') {
@@ -608,7 +618,7 @@ async function loadTranscript(chat, sessionId) {
   const items = r.items.slice(-150);
   for (const it of items) {
     if (it.t === 'user') appendUser(chat, it.text);
-    else if (it.t === 'note') appendCommandNote(chat, it.text);
+    else if (it.t === 'note') appendCommandNote(chat, it.text, null, it.label);
     else if (it.t === 'summary') appendSummary(chat, it.text);
     else if (it.t === 'assistant') {
       const cut = splitThink(it.text);

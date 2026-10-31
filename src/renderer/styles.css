@@ -324,6 +324,11 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 
 .chat-body { flex: 1; min-height: 0; display: flex; position: relative; }
 .chat-msgs { flex: 1; overflow-y: auto; padding: 18px 22px 12px; user-select: text; }
+/* Chat scrollbar (Settings > Appearance): orange and see-through by default, or hidden.
+   Wheel, keys and touch still scroll when it is hidden. */
+html[data-scrollbar="accent"] .chat-msgs { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--accent) 38%, transparent) transparent; }
+html[data-scrollbar="hidden"] .chat-msgs { scrollbar-width: none; }
+html[data-scrollbar="hidden"] .chat-msgs::-webkit-scrollbar { display: none; }
 
 /* "Jump to the latest response": floats over the transcript and appears only
    when the view has scrolled away from the live end. */
@@ -578,6 +583,7 @@ label.check { display: flex; gap: 8px; align-items: center; font-size: 13px; col
 .mcp-chip.mcp-ok { border-color: var(--ok); }
 
 .sys-note { color: var(--muted); font-size: 11.5px; text-align: center; margin: 8px auto; width: fit-content; max-width: 92%; padding: 3px 10px; border-radius: 999px; background: var(--bg2); border: 1px solid var(--border); }
+.sys-note.multi { text-align: left; border-radius: 10px; }
 .sys-note.mono { font-family: var(--mono); text-align: left; white-space: pre-wrap; border-radius: 10px; }
 .error-msg {
   color: var(--danger); border: 1px solid rgba(210, 98, 106, .4); background: rgba(210, 98, 106, .07);
@@ -1783,6 +1789,9 @@ body[data-view]:not([data-view="conversations"]) #tabbar { display: none; }
   white-space: pre-wrap; overflow-wrap: anywhere; color: var(--text);
 }
 .user-msg.req-flash .user-bubble { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* The rail sits clear of the scrollbar unless the scrollbar is hidden. */
+html:not([data-scrollbar="hidden"]) .req-rail:not(.empty) { right: 12px; }
 
 /* ===== Wide windows: the Overview floats over the right margin so the chat sits in the window's centre ===== */
 @media (min-width: 1500px) {

@@ -1,6 +1,6 @@
 // Split from the former chat.js (roadmap 4.1). Behaviour is unchanged.
 import { finishWorkflowRun } from './workflows.js';
-import { elIcon, toast } from '../app/core.js';
+import { elIcon, state, toast } from '../app/core.js';
 import { recordTurn } from '../app/budgets.js';
 import { uiMode } from '../app/modes.js';
 import { autosize } from './composer.js';
@@ -20,6 +20,7 @@ import { recipeAfterTurn } from './recipes.js';
 import { showRecipePause } from './recipecard.js';
 import { btwChildren } from './btw.js';
 import { enqueue } from './qpanel.js';
+import CCEMcpGroup from '../../shared/mcpgroup.js';
 import { onHookEvent, onTaskEvent, renderHooks } from './events-tasks.js';
 export { renderHooks };
 
@@ -147,6 +148,8 @@ function handleMessage(chat, msg) {
         // words ("model not found", "context too long"); show both.
         const detail = (msg.message?.content || []).filter(b => b.type === 'text').map(b => b.text).join(' ').trim();
         const why = sendFailureCause(msg.error, detail);
+        // A real sign-in failure is what the status bar's "no auth" should report.
+        if (/^(authentication_failed|oauth_org_not_allowed|cloud_credential_error)$/.test(msg.error)) { chat.authFailed = true; setStatusLine(chat); }
         appendError(chat, (why ? why + ' (' + msg.error + ')' : msg.error) + (detail ? ': ' + detail.slice(0, 600) : ''));
         break;
       }
@@ -192,7 +195,7 @@ function handleMessage(chat, msg) {
           // recorded as user messages too; they are not prompts.
           const kind = window.CCEUserText ? CCEUserText.classifyUserText(t, msg) : { kind: 'prompt', text: t };
           if (kind.kind === 'skip') { /* nothing to show */ }
-          else if (kind.kind === 'note') { if (!drawn) appendCommandNote(chat, kind.text, msg.uuid); }
+          else if (kind.kind === 'note') { if (!drawn) appendCommandNote(chat, kind.text, msg.uuid, kind.label); }
           else if (kind.kind === 'summary') { if (!drawn) appendSummary(chat, kind.text, msg.uuid); }
           else if (!drawn && String(kind.text || '').trim()) {
             // The composer already showed this message when it was sent; the
@@ -634,11 +637,20 @@ function healthCheck(chat) {
   if (chat.healthDone) return;
   chat.healthDone = true;
   const servers = (chat.init && chat.init.mcp_servers) || [];
-  // Connectors the user switched off are not failures.
-  const bad = servers.filter(s => s.status !== 'connected' && s.status !== 'disabled');
-  if (bad.length) {
-    chat.msgs.appendChild(el('div', 'sys-note',
-      '⚠ MCP not ready: ' + bad.map(s => s.name + ' (' + s.status + ')').join(', ') + ' — run /mcp to reconnect'));
+  // Connectors the user switched off are not failures. One short line with the
+  // names folded under it: plugins bring dozens of connectors that wait for a
+  // sign-in, and listing them all drew a page-long oval. Plugin copies stay out
+  // unless Settings asks for every connector.
+  const scope = (state.settings && state.settings.mcpNoticeScope) === 'all' ? 'all' : 'mine';
+  const notice = CCEMcpGroup.notReadyNotice(servers, scope);
+  if (notice) {
+    const d = el('details', 'sys-note multi mcp-notice');
+    d.appendChild(el('summary', '', notice.summary));
+    d.appendChild(el('pre', 'cmd-note-full', notice.lines.join('\n')));
+    const manage = el('button', 'btn tiny', 'Manage connectors →');
+    manage.addEventListener('click', () => window.switchView && window.switchView('connectors'));
+    d.appendChild(manage);
+    chat.msgs.appendChild(d);
     scrollDownSoft(chat);
   }
   ccx.invoke('tools:check').then((r) => {

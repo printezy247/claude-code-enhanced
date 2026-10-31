@@ -49,14 +49,20 @@ function loadSdk() {
 }
 
 const PERM_TIMEOUT_MS = 6 * 60_000;
+// A plan or a question needs reading time: it is a person's decision, not a
+// routine tool call, so those cards wait five times longer before auto-denying.
+const PERM_LONG_TIMEOUT_MS = 30 * 60_000;
+const permTimeoutMs = (toolName) => (toolName === 'ExitPlanMode' || toolName === 'AskUserQuestion'
+  ? PERM_LONG_TIMEOUT_MS : PERM_TIMEOUT_MS);
 // How often a running shell task is polled for its output tail, and how long
 // the first poll waits. The first one is quick so the card starts filling
 // almost at once; the rest are steady. #feat-live-output
 const TASK_POLL_FIRST_MS = 250;
 const TASK_POLL_MS = 700;
-const PERM_TIMEOUT_MESSAGE = 'The user did not answer this permission request within 6 minutes (they may be away). '
+const permTimeoutMessage = (ms) => 'The user did not answer this permission request within ' + Math.round(ms / 60_000) + ' minutes (they may be away). '
   + 'Do not retry this call or a variant of it. Finish anything that needs no permission, then stop and tell '
   + 'the user exactly which action is waiting for their approval.';
+const PERM_TIMEOUT_MESSAGE = permTimeoutMessage(PERM_TIMEOUT_MS);
 
 // Policy helpers live in tools.js (single source of truth); alias locally so
 // the rest of this module keeps reading the same names. #B1
@@ -204,7 +210,7 @@ function transcriptItems(records) {
         const k = classifyUserText(raw, j);
         if (k.kind === 'skip' || !k.text) return;
         if (k.kind === 'prompt') items.push({ t: 'user', text: k.text.replace(/<[^>]+>/g, '').trim(), uuid: j.uuid || null });
-        else items.push({ t: k.kind, text: k.text });
+        else items.push({ t: k.kind, text: k.text, label: k.label });
       };
       if (typeof c === 'string') {
         pushText(c);
@@ -870,8 +876,8 @@ class ChatManager extends EventEmitter {
             this.emit('event', id, { kind: 'permission-timeout', requestId });
             // Worded for the model: "timed out" alone read as a glitch to retry,
             // and one chat asked for the same write six times.
-            resolve({ behavior: 'deny', message: PERM_TIMEOUT_MESSAGE });
-          }, PERM_TIMEOUT_MS),
+            resolve({ behavior: 'deny', message: permTimeoutMessage(permTimeoutMs(toolName)) });
+          }, permTimeoutMs(toolName)),
         };
         this.pendingPerms.set(requestId, entry);
         ctx.signal && ctx.signal.addEventListener && ctx.signal.addEventListener('abort', () => {
@@ -887,7 +893,7 @@ class ChatManager extends EventEmitter {
           title: entry.title, description: entry.description,
           decisionReason: entry.decisionReason, blockedPath: entry.blockedPath,
           displayName: entry.displayName, toolUseID: entry.toolUseID,
-          expiresAt: Date.now() + PERM_TIMEOUT_MS,
+          expiresAt: Date.now() + permTimeoutMs(toolName),
         });
       });
     };
@@ -2271,6 +2277,7 @@ module.exports.toolSearchApplies = toolSearchApplies;
 module.exports.pluginOverrides = pluginOverrides;
 module.exports.sandboxNpmCache = sandboxNpmCache;
 module.exports.PERM_TIMEOUT_MESSAGE = PERM_TIMEOUT_MESSAGE;
+module.exports.permTimeoutMs = permTimeoutMs;
 // B1 policy helpers re-exported for tests/consumers that import from chats.js.
 module.exports.WRITE_TOOLS = WRITE_TOOLS;
 module.exports.isVmPath = isVmPath;

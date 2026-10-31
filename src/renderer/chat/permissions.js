@@ -40,6 +40,18 @@ export function endPermCountdown(card) {
   }
 }
 
+/**
+ * A message typed in the composer while a plan card waits is the user's answer to
+ * it: "keep planning", with their words as the feedback. Without this the text sat in
+ * the queue behind the card and the model never saw it. True when a card took it.
+ */
+export function answerPlanWithText(chat, text) {
+  const card = chat.permSlot && chat.permSlot.querySelector('.perm-card.plan');
+  if (!card || typeof card._keepPlanning !== 'function' || !String(text || '').trim()) return false;
+  card._keepPlanning(text);
+  return true;
+}
+
 export function clearPermission(chat, requestId, note) {
   // Remove every card whose id matches (or all, when no id is given).
   const cards = [...chat.permSlot.querySelectorAll('.perm-card')];
@@ -130,8 +142,8 @@ export function showPermission(chat, evt) {
     feedback.placeholder = 'Keep planning — what should change? (optional)';
     actions.appendChild(feedback);
     const keep = el('button', 'btn', '✗ keep planning');
-    keep.addEventListener('click', async () => {
-      const why = feedback.value.trim();
+    const keepPlanning = async (text) => {
+      const why = String(text || '').trim();
       finish();
       const r = await ccx.invoke('chat:permission-answer', {
         id: chat.id, requestId, decision: 'deny',
@@ -139,7 +151,10 @@ export function showPermission(chat, evt) {
       });
       if (!r || !r.ok) { toast((r && r.error) || 'failed to send permission answer', 'err'); setBusy(chat, false); return; }
       setBusy(chat, true);
-    });
+    };
+    // The composer can answer this card too: see answerPlanWithText.
+    card._keepPlanning = keepPlanning;
+    keep.addEventListener('click', () => keepPlanning(feedback.value));
     actions.appendChild(keep);
   } else {
     actions.appendChild(mk('Allow once', 'primary', 'allow', null,

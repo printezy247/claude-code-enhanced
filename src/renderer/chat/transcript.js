@@ -13,18 +13,18 @@ import { el, md } from './util.js';
 /* ---------------- message rendering ---------------- */
 
 /** Output of a command the user ran (e.g. /model), shown as a quiet note. */
-export function appendCommandNote(chat, text, uuid) {
+export function appendCommandNote(chat, text, uuid, label) {
   chat.msgs.querySelector('.chat-empty')?.remove();
   const full = String(text || '');
   let n;
   if (full.length > 160 || full.includes('\n')) {
     // Long output (hook dumps after /compact, command logs): one line, full text on demand.
     const hooks = (full.match(/completed successfully/g) || []).length;
-    const label = /^Compacted\b/.test(full) && hooks
+    const sum = label || (/^Compacted\b/.test(full) && hooks
       ? 'Compacted · ' + hooks + ' hook' + (hooks === 1 ? '' : 's') + ' ran'
-      : full.replace(/\s+/g, ' ').slice(0, 90) + '…';
+      : full.replace(/\s+/g, ' ').slice(0, 90) + '…');
     n = el('details', 'sys-note cmd-note');
-    n.appendChild(el('summary', '', '↳ ' + label));
+    n.appendChild(el('summary', '', '↳ ' + sum));
     n.appendChild(el('pre', 'cmd-note-full', full));
   } else {
     n = el('div', 'sys-note cmd-note', '↳ ' + full);

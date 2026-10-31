@@ -12,6 +12,17 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.25.1
+
+Fixes from a long session's screenshots.
+
+- Chat scrollbar: Settings > Appearance has a new "Chat scrollbar" choice: orange and see-through (the new default), hidden, or the plain grey one. Hidden still scrolls with the wheel and keys. The jump rail now sits clear of a visible scrollbar.
+- Connectors card: the badge was "12/114" because it counted every connector, including ones that wait for a sign-in or were switched off. It now shows working over working-or-broken, with a line such as "12 live · 2 failed · 37 sign-in". Copies of one connector from many plugins fold into one row ("google-calendar ×15"), and sign-in and switched-off connectors sit in folded groups. "Sign in all" / "Reconnect all" act on every copy.
+- "MCP not ready" in the chat was a page-long list drawn as an oval. It is one line now ("⚠ Connectors not ready: 3 need sign-in, 1 failed") with the names folded under it and a "Manage connectors" button. By default it names only connectors you added; Settings > "Warn about connectors" can include plugin ones.
+- A skill's instructions appeared as a message from you. They are folded into a small "skill instructions" note now, in live chats as well as reopened ones.
+- A plan card (ExitPlanMode) swallowed what you typed in the message box: the text waited in the queue and Claude only got a bare "keep planning". Typing while a plan card waits now sends your words to Claude as the feedback and keeps planning. Plan and question cards also wait 30 minutes before auto-denying (other tools still 6).
+- The status bar said "no auth — /login" for a working account login. It now says "account login", and shows "no auth" only after a sign-in really failed.
+
 ## 0.25.0
 
 Phase 3 of the roadmap: workspace.

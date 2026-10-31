@@ -146,6 +146,17 @@ export async function drainQueue(chat) {
   }, 50);
 }
 
+/**
+ * What the status bar says about sign-in. The engine reports apiKeySource 'none'
+ * for an account (claude.ai) login too, since no API key is involved, so 'none'
+ * alone is not a problem: "no auth" is shown only after a sign-in actually failed.
+ */
+export function authLabel(apiKeySource, keyProvider, authFailed) {
+  if (apiKeySource !== 'none') return apiKeySource;
+  if (keyProvider) return 'provider key';
+  return authFailed ? 'no auth — /login in a terminal tab' : 'account login';
+}
+
 export function setStatusLine(chat) {
   // A local or relayed provider reports Anthropic-derived cost for work it
   // never billed, so "$0.0204" against Ollama was actively misleading. #15
@@ -167,9 +178,7 @@ export function setStatusLine(chat) {
     // flags were false and a working provider read "no auth — /login".
     const keyProvider = !!(chat.provider && (chat.provider.hasApiKey || chat.provider.hasAuthToken
       || chat.provider.authType || chat.provider.authHint || chat.provider.baseUrl));
-    const mAuth = auth === 'none'
-      ? (keyProvider ? 'provider key' : 'no auth — /login in a terminal tab')
-      : auth;
+    const mAuth = authLabel(auth, keyProvider, chat.authFailed);
     chat.statusRight.textContent = (chat.init.model || '') + ' · ' + mAuth;
     // The row is only for a problem: model, mode, cost and turns live in the footbar and Overview.
     const row = chat.statusLine.closest('.chat-statusline');

@@ -3,7 +3,7 @@ import { applyLocal, buildProfile, parseProfile } from './profile.js';
 import { WORKFLOW_MENU } from '../chat/wfdata.js';
 import { loadStore, saveStore, storeKey } from '../chat/wfoptions.js';
 import { queueRules, saveQueueRules } from '../chat/qpanel.js';
-import { $, applyTheme, applyThinkingDisplay, el, state, toast } from './core.js';
+import { $, applyScrollbar, applyTheme, applyThinkingDisplay, el, state, toast } from './core.js';
 import { updateStatusbar } from './tabs.js';
 import { LOCALES, applyLang, getLang, setLang, t } from '../i18n.js';
 
@@ -399,6 +399,27 @@ export function renderSettings() {
   applyTheme(themeSel.value);
   themeRow.appendChild(themeSel);
   c9.appendChild(themeRow);
+  // Chat scrollbar: applied live, saved with the rest of the settings.
+  const sbRow = el('div', 'inline');
+  sbRow.appendChild(el('span', 'hint', 'Chat scrollbar'));
+  const sbSel = el('select'); sbSel.style.width = '160px';
+  for (const [v, n] of [['accent', 'orange, see-through'], ['hidden', 'hidden'], ['default', 'default grey']]) {
+    const o = el('option', '', n); o.value = v; sbSel.appendChild(o);
+  }
+  sbSel.value = applyScrollbar(s.scrollbar);
+  sbSel.addEventListener('change', () => applyScrollbar(sbSel.value));
+  sbRow.appendChild(sbSel);
+  c9.appendChild(sbRow);
+  // Which connectors the chat's "not ready" note may name.
+  const noticeRow = el('div', 'inline');
+  noticeRow.appendChild(el('span', 'hint', 'Warn about connectors'));
+  const noticeSel = el('select'); noticeSel.style.width = '220px';
+  for (const [v, n] of [['mine', 'only ones I added'], ['all', 'every one, plugins too']]) {
+    const o = el('option', '', n); o.value = v; noticeSel.appendChild(o);
+  }
+  noticeSel.value = s.mcpNoticeScope === 'all' ? 'all' : 'mine';
+  noticeRow.appendChild(noticeSel);
+  c9.appendChild(noticeRow);
   const trayCheck = el('input'); trayCheck.type = 'checkbox'; trayCheck.checked = !!s.closeToTray;
   const trayLabel = el('label', 'check');
   trayLabel.appendChild(trayCheck);
@@ -502,6 +523,8 @@ export function renderSettings() {
       localNumCtx: Number(localCtxSel.value) || 73728,
       forceCtx: parseForceCtx(forceInput.value),
       theme: themeSel.value,
+      scrollbar: sbSel.value,
+      mcpNoticeScope: noticeSel.value,
       closeToTray: trayCheck.checked,
       notifyOnDone: notifyCheck.checked,
       modelRouting: routeCheck.checked,
