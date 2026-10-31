@@ -73,5 +73,43 @@
     return out;
   }
 
-  return { maskUrl, maskText, maskToolInput, isSecretName };
+  // Things that look like a key someone pasted into a message. Only well-known shapes:
+  // a false alarm on ordinary text is worse than a miss, since it interrupts sending.
+  const KEY_SHAPES = [
+    ['Anthropic key', /\bsk-ant-[A-Za-z0-9_-]{20,}/g],
+    ['API key', /\bsk-[A-Za-z0-9_-]{32,}/g],
+    ['GitHub token', /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{30,}\b|\bgithub_pat_[A-Za-z0-9_]{40,}/g],
+    ['AWS access key', /\bAKIA[0-9A-Z]{16}\b/g],
+    ['Slack token', /\bxox[abprs]-[A-Za-z0-9-]{20,}/g],
+    ['Google API key', /\bAIza[0-9A-Za-z_-]{35}\b/g],
+    ['Private key', /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g],
+  ];
+
+  /** [{kind, index, length}] for each key-shaped string in a text, in order. */
+  function findSecretLike(text) {
+    const s = String(text || '');
+    const out = [];
+    for (const [kind, re] of KEY_SHAPES) {
+      re.lastIndex = 0;
+      let m;
+      while ((m = re.exec(s))) {
+        out.push({ kind, index: m.index, length: m[0].length });
+        if (m[0].length === 0) re.lastIndex++;
+      }
+    }
+    return out.sort((a, b) => a.index - b.index)
+      // one hit per place: a sk-ant key also matches the general sk- shape
+      .filter((h, i, all) => !all.some((o, j) => j !== i && o.index <= h.index && o.index + o.length >= h.index + h.length && (o.length > h.length || (o.length === h.length && j < i))));
+  }
+
+  /** The text with every key-shaped string replaced by «key hidden». */
+  function redactSecretLike(text) {
+    const s = String(text || '');
+    let out = '';
+    let at = 0;
+    for (const h of findSecretLike(s)) { out += s.slice(at, h.index) + '«' + h.kind.toLowerCase() + ' hidden»'; at = h.index + h.length; }
+    return out + s.slice(at);
+  }
+
+  return { maskUrl, maskText, maskToolInput, isSecretName, findSecretLike, redactSecretLike };
 });

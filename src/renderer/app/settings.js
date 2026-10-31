@@ -410,6 +410,15 @@ export function renderSettings() {
   sbSel.addEventListener('change', () => applyScrollbar(sbSel.value));
   sbRow.appendChild(sbSel);
   c9.appendChild(sbRow);
+  // /read: which tools to try on a link, in order. Nothing is installed for it.
+  const readRow = el('div', 'inline');
+  readRow.appendChild(el('span', 'hint', '/read tools, in order'));
+  const readInp = el('input'); readInp.type = 'text'; readInp.style.width = '220px';
+  readInp.value = s.readOrder || 'lightpanda,webfetch';
+  readInp.placeholder = 'lightpanda,webfetch';
+  readInp.title = 'Choose from: lightpanda (web browser), webfetch, ytdlp (YouTube subtitles, needs yt-dlp), gh (GitHub CLI)';
+  readRow.appendChild(readInp);
+  c9.appendChild(readRow);
   // Which connectors the chat's "not ready" note may name.
   const noticeRow = el('div', 'inline');
   noticeRow.appendChild(el('span', 'hint', 'Warn about connectors'));
@@ -525,6 +534,7 @@ export function renderSettings() {
       theme: themeSel.value,
       scrollbar: sbSel.value,
       mcpNoticeScope: noticeSel.value,
+      readOrder: readInp.value,
       closeToTray: trayCheck.checked,
       notifyOnDone: notifyCheck.checked,
       modelRouting: routeCheck.checked,
