@@ -2092,3 +2092,17 @@ pre.code-wrap code { white-space: pre-wrap; overflow-wrap: anywhere; }
 .doctor-card .lvl-warn { color: var(--warn); }
 .doctor-card .lvl-bad { color: var(--danger); }
 .doctor-card .doctor-score { font-weight: 600; margin-bottom: 4px; }
+
+/* ---- memory timeline (0.27) ---- */
+.mem-sub { margin: 10px 0 4px; font-size: 11.5px; color: var(--muted); }
+.mem-load-row { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; padding: 1px 0; }
+.mem-tok { color: var(--accent); white-space: nowrap; }
+.mem-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.mem-chip { padding: 2px 9px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg2); color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.mem-chip.on { border-color: var(--accent-line); color: var(--accent); background: var(--accent-soft); }
+.mem-list { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow: auto; margin-top: 6px; }
+.mem-note > summary { display: flex; gap: 8px; align-items: baseline; cursor: pointer; font-size: 12px; }
+.mem-n { color: var(--accent); font-family: var(--mono); }
+.mem-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mem-type { color: var(--muted); font-size: 11px; }
+.mem-cite { padding: 0 6px; border-radius: 6px; border: 1px solid var(--accent-line); background: var(--accent-soft); color: var(--accent); font: inherit; font-size: .9em; cursor: pointer; }

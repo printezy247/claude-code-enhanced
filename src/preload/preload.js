@@ -41,7 +41,7 @@ const INVOKE_CHANNELS = new Set([
   'skills:autolearn-prompt', 'skills:autolearn-propose', 'skills:autolearn-pending', 'skills:autolearn-resolve',
   'marketplace:list', 'marketplace:install',
   'deeplink:pending', 'file:saveText',
-  'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:resolve',
+  'memory:read', 'memory:save', 'memory:files', 'memory:probe-prompt', 'memory:propose', 'memory:pending', 'memory:timeline', 'memory:resolve',
   'file:read', 'file:thumb', 'git:info', 'git:diff', 'git:diff-stats', 'git:commits', 'git:commit-diff',
   'git:status', 'git:cache-invalidate', 'project:files', 'project:scripts', 'skill:import',
   'skills:list', 'skills:read', 'cmd:detail', 'skills:set-enabled',

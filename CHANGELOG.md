@@ -12,6 +12,15 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.27.0
+
+Memory you can see.
+
+- The Memory panel shows what loads at session start with a rough token cost for each file and a total, and "Preview what Claude sees" prints the exact text.
+- A list of the project's memory notes, numbered `#mem-1`, `#mem-2`… in index order, with filter chips by type (user, feedback, project, reference), a search box and the token cost of each note. Click a note to read it.
+- A `#mem-N` in a reply becomes a button that opens that note.
+- `/private <message>`: Claude reads the message for this chat but is told never to save it. The note-proposal step is also told to skip anything in `<private>…</private>` and drops a proposal that repeats it. This relies on the model obeying; it does not hide the text from the engine.
+
 ## 0.26.0
 
 Keeping the context window in view.

@@ -3,6 +3,7 @@ import { t } from '../i18n.js';
 import { elIcon, loadMonaco, toast } from '../app/core.js';
 import { sendToTerminal, switchView } from '../app/tabs.js';
 import { makePanel } from './panels.js';
+import { linkMemoryCitations } from './panel-memory.js';
 import { codeFileName, isShellBlock, shellText } from './cmdmatch.js';
 import { el } from './util.js';
 
@@ -78,6 +79,7 @@ async function keepArtifact(kind, title, content) {
 }
 
 export function enhanceMarkdown(container, rawText) {
+  linkMemoryCitations(container);
   addCopyBtn(container, () => rawText, 'msg-copy');
   if (rawText && String(rawText).trim().length > 40) {
     const k = el('button', 'msg-keep', t('artifact.keep'));
