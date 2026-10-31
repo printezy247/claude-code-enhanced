@@ -9,10 +9,11 @@ import CCEMcpGroup from '../../shared/mcpgroup.js';
 import CCESecrets from '../../shared/secrets.js';
 
 export async function runDoctor(chat) {
-  const [info, tools, mcp] = await Promise.all([
+  const [info, tools, mcp, mem] = await Promise.all([
     ccx.invoke('app:info').catch(() => null),
     ccx.invoke('tools:check').catch(() => null),
     ccx.invoke('chat:mcp', { id: chat.id, op: 'status' }).catch(() => null),
+    ccx.invoke('memory:files', { cwd: chat.cwd }).catch(() => null),
   ]);
   const grouped = mcp && mcp.ok ? CCEMcpGroup.groupServers(mcp.servers || []) : null;
   const keyProvider = !!(chat.provider && (chat.provider.hasApiKey || chat.provider.hasAuthToken
@@ -21,7 +22,8 @@ export async function runDoctor(chat) {
     claude: info && info.claude,
     auth: chat.init ? authLabel(chat.init.apiKeySource, keyProvider, chat.authFailed) : 'not started yet',
     authFailed: !!chat.authFailed,
-    mcp: grouped && { live: grouped.counts.live, failed: grouped.counts.failed, auth: grouped.counts.auth },
+    mcp: grouped && { live: grouped.counts.live, failed: grouped.counts.failed, auth: grouped.counts.auth, off: grouped.counts.off },
+    memoryTokens: mem && mem.ok ? (mem.files || []).reduce((n, f) => n + Math.ceil(String(f.content || '').length / 4), 0) : 0,
     tools: tools && tools.ok ? tools.tools : null,
     sandbox: !!chat.sandbox,
     lightpanda: !!chat.browserOn,
@@ -31,6 +33,8 @@ export async function runDoctor(chat) {
     appVersion: info && info.appVersion, electron: info && info.electron,
     platform: (navigator.platform || '') + '', model: chat.model || (chat.init && chat.init.model), cwd: chat.cwd,
   };
+  chat.healthScore = CCEDoctor.score(checks);
+  if (window.refreshOverview) window.refreshOverview(chat.id);
   const report = CCEDoctor.reportText(checks, meta, CCESecrets.maskText);
 
   chat.msgs.querySelector('.chat-empty')?.remove();

@@ -43,6 +43,7 @@ export async function createSession(opts) {
         <span class="chat-header-sep"></span>
         <button class="chat-btn chat-mgr-btn hidden" title="Model manager: load / unload, context size, keep-alive"><span data-icon="gear"></span> models</button>
         <button class="chat-btn chat-stop hidden" title="Interrupt (Esc)"><span data-icon="square"></span> stop</button>
+        <button class="chat-btn chat-takeback hidden" title="Stop Claude now and make it read-only (plan mode) until you pick another mode"><span data-icon="close"></span> take back control</button>
         <button class="chat-btn chat-cont-btn hidden" title="Continue from where the model stopped — completes remaining work"><span data-icon="play"></span> continue</button>
         <button class="chat-btn hdr-more" title="Chat actions" aria-label="Chat actions"><span data-icon="dots"></span></button>
       </div>
@@ -282,6 +283,19 @@ export async function createSession(opts) {
   });
   chat.effortBtn.addEventListener('change', () => setEffort(chat, chat.effortBtn.value));
   chat.stopBtn.addEventListener('click', () => { cancelChain(chat); finishWorkflowRun(chat, 'stopped'); ccx.invoke('chat:interrupt', { id: chat.id }); });
+  // The kill switch: stop now AND make Claude read-only, so nothing it was about to do can still happen.
+  chat.takeBtn = pane.querySelector('.chat-takeback');
+  chat.takeBtn.addEventListener('click', async () => {
+    cancelChain(chat); finishWorkflowRun(chat, 'stopped');
+    await ccx.invoke('chat:interrupt', { id: chat.id });
+    const r = await ccx.invoke('chat:set-mode', { id: chat.id, mode: 'plan' });
+    if (r && r.ok) {
+      chat.autoPolicy = !!r.autoPolicy;
+      chat.mode = uiMode(r.permissionMode || 'plan', chat.provider, chat.autoPolicy, chat.caps && chat.caps.modes);
+      chat.modeSel.value = chat.mode;
+    }
+    toast('You have control: Claude is stopped and read-only (plan mode). Pick another mode to let it change things again.', 'ok');
+  });
   // Header overflow menu. 13 buttons wrapped onto three rows; everything that
   // is not model/mode/stop now lives behind one "⋯". #33
   const forkConversation = async () => {

@@ -17,6 +17,42 @@ export function parseSteps(text) {
 
 const slug = (name) => String(name || '').toLowerCase().trim().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30);
 
+// Ready-made audits. The last step asks for a graded Markdown report whose first line is a
+// fixed title, so keeping it as an artifact makes each later run a new version of the same
+// report (and the artifact diff shows what changed). {arg} is what follows the recipe name.
+const REPORT = 'Write the result as ONE Markdown report. First line: "# {title}". Then an overall score out of 100 and a letter grade, '
+  + 'then the sections Critical, Warnings and Passed. For each finding give what, where, why it matters, how to fix it and how to verify the fix. '
+  + 'End with a prioritised action plan of at most 10 items.';
+export const BUILTIN_RECIPES = {
+  'seo-audit': {
+    builtin: true, needsArg: 'a URL', auto: false,
+    steps: [
+      'Audit the SEO of {arg}. Open the page with the web browser tool if it is available, otherwise use WebFetch. Check the title, meta description, headings, canonical link, structured data, image alt text, internal links, mobile viewport and speed hints. List every finding with its evidence.',
+      REPORT.replace('{title}', 'SEO audit: {arg}'),
+    ],
+  },
+  'security-audit': {
+    builtin: true, needsArg: '', auto: false,
+    steps: [
+      'Review {arg} for security problems: injection, unsafe file or shell use, secrets in code, missing input checks, weak defaults and risky dependencies. Read the code; do not change anything. List every finding with file:line evidence.',
+      REPORT.replace('{title}', 'Security audit: {arg}'),
+    ],
+  },
+  'a11y-audit': {
+    builtin: true, needsArg: '', auto: false,
+    steps: [
+      'Check the accessibility of {arg} against WCAG 2.2 AA: labels, keyboard use, focus, contrast, headings, alt text and ARIA. Read the code or open the page; do not change anything. List every finding with evidence.',
+      REPORT.replace('{title}', 'Accessibility audit: {arg}'),
+    ],
+  },
+};
+
+/** Ready-made recipes plus the user's own (the user's win on a name clash). */
+export const allRecipes = (store) => ({ ...BUILTIN_RECIPES, ...loadRecipes(store) });
+
+/** The steps with {arg} filled in; with no argument it names "the current project". */
+export const fillSteps = (steps, arg) => steps.map((s) => s.replace(/\{arg\}/g, String(arg || '').trim() || 'the current project'));
+
 export function loadRecipes(store) {
   try { const v = JSON.parse(store.getItem(KEY) || '{}'); return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; } catch { return {}; }
 }
@@ -51,6 +87,8 @@ export function parseRecipeCmd(text) {
     return name ? { action: a, name } : { error: 'Use /recipe ' + a + ' <name>.' };
   }
   const name = slug(rest);
+  // "/recipe seo-audit https://x.com": the first word names the recipe, the rest is its argument.
+  if (name && more.length) return { action: 'run', name, head: slug(a), args: more.join(' ') };
   return name ? { action: 'run', name } : { error: 'Use /recipe, /recipe <name>, /recipe save <name> or /recipe delete <name>.' };
 }
 

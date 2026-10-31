@@ -14,8 +14,9 @@
    * @param {{found:boolean,version?:string}} [d.claude]
    * @param {string} [d.auth]            label shown in the status bar
    * @param {boolean} [d.authFailed]
-   * @param {{live:number,failed:number,auth:number}} [d.mcp]
+   * @param {{live:number,failed:number,auth:number,off?:number}} [d.mcp]
    * @param {Array<{name:string,found:boolean}>} [d.tools]
+   * @param {number} [d.memoryTokens]    rough size of the memory and rules files
    * @param {boolean} [d.sandbox]        the chat runs its commands in a sandbox
    * @param {boolean} [d.lightpanda]     the web browser is on for this chat
    * @param {{percentage:number}} [d.ctx]
@@ -34,6 +35,14 @@
       const { live = 0, failed = 0, auth = 0 } = d.mcp;
       if (failed) add('Connectors', 'warn', live + ' working, ' + failed + ' failed (' + auth + ' waiting for sign-in)');
       else add('Connectors', 'ok', live + ' working' + (auth ? ', ' + auth + ' waiting for sign-in' : ''));
+    }
+
+    // Suggestions: setups that cost context or attention every session.
+    if (d.mcp && (d.mcp.auth || 0) + (d.mcp.off || 0) > 20) {
+      add('Idle connectors', 'warn', ((d.mcp.auth || 0) + (d.mcp.off || 0)) + ' connectors wait for a sign-in or are off: disable the plugins you do not use');
+    }
+    if (Number(d.memoryTokens) > 6000) {
+      add('Memory size', 'warn', 'CLAUDE.md and rules add about ' + Math.round(d.memoryTokens / 1000) + 'k tokens to every session: trim what is stale');
     }
 
     const missing = (d.tools || []).filter((t) => !t.found).map((t) => t.name);

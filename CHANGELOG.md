@@ -12,6 +12,16 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.28.0
+
+Agents, control and audits.
+
+- Agents card in the Overview: one row per subagent, nested under the one that started it, with its type, model, state, how long it ran and a rough size of its answer. Click a row to jump to its card. The engine reports no cost per subagent, so none is shown.
+- "take back control" button next to stop (visible while Claude works): it interrupts and switches the chat to plan mode, so nothing Claude was about to do can still happen. Pick another mode to continue. The mode picker already offers the control levels (plan = read-only, default = ask, auto).
+- Ready-made audit recipes: `/recipe seo-audit <url>`, `/recipe security-audit [folder or topic]`, `/recipe a11y-audit [page or folder]`. Each ends in one Markdown report with a score out of 100, a letter grade, Critical / Warnings / Passed sections and an action plan. The report's first line is fixed, so keeping it as an artifact each time makes the next run a new version, and the artifact diff shows what changed. Your own recipes with the same name win.
+- `/doctor` gives a health score (also shown in the Environment card), and now warns about many idle connectors and about a large CLAUDE.md and rules.
+- Budget alerts (80% and 100% of a folder's monthly budget) also raise a desktop notification, unless notifications are switched off.
+
 ## 0.27.0
 
 Memory you can see.

@@ -262,12 +262,16 @@ export function makeToolCard(chat, toolUseId, name, input, parentId) {
     // never rendered (the throw was swallowed by the event handler's catch).
     card, body, name, input, dot, title, status: 'running', source: null,
     parentId: parentId || null,
+    startedAt: Date.now(), endedAt: 0,
     // A Task/Agent call is the subagent itself: remember which agent_id the
     // engine stamps on the frames it emits, so nested-of-nested frames can
     // find this card by agent id instead of falling back to top level. #49
     agentId: (name === 'Task' || name === 'Agent') ? String((input && input.agentId) || toolUseId) : null,
     setStatus(status, note) {
       ctx.status = status;
+      if (status === 'done' || status === 'err') ctx.endedAt = ctx.endedAt || Date.now();
+      // The Agents card in the Overview follows each subagent's state.
+      if (ctx.agentId && window.refreshOverview) window.refreshOverview(chat.id, 400);
       dot.className = 'tool-dot ' + status;
       if (status === 'err' && name === 'Bash' && !head.querySelector('.tool-fix')) {
         const f = tip(el('button', 'tool-act tool-fix', 'fix in chat'), 'Put this failed command in the message box');
