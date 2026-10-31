@@ -9,6 +9,7 @@ const { atomicWriteJson, readJsonSafe } = require('./atomic');
 const { clampMaxChars, clampIdleSeconds } = require('./toolfilter');
 const { normalizeDomains } = require('./webdomains');
 const { normalizeModes, normalizeUsage } = require('./connectorauto');
+const { normalizeScrollbar, normalizeNoticeScope } = require('../shared/uiprefs');
 
 const DEFAULT_SETTINGS = {
   claudePath: '',            // empty = auto-detect
@@ -21,6 +22,8 @@ const DEFAULT_SETTINGS = {
   defaultProviderUid: null,
   defaultCwd: os.homedir(),
   theme: 'dark',            // 'dark' | 'light' (#47)
+  scrollbar: 'accent',      // chat scrollbar: 'accent' (orange, see-through) | 'hidden' | 'default'
+  mcpNoticeScope: 'mine',   // the chat's "connectors not ready" note names: 'mine' (not plugin copies) | 'all'
   failoverChain: [],        // ordered provider uids to retry a turn on (#42)
   closeToTray: false,       // keep chats alive when the window closes (#46)
   modelRouting: false,      // pick a model by task size for chats with no pinned model
@@ -115,6 +118,8 @@ class Store {
     this.data.settings.connectorModes = normalizeModes(this.data.settings.connectorModes);
     this.data.settings.connectorUsage = normalizeUsage(this.data.settings.connectorUsage);
     if (!['auto', 'off', 'always'].includes(this.data.settings.connectorPick)) this.data.settings.connectorPick = 'auto';
+    this.data.settings.scrollbar = normalizeScrollbar(this.data.settings.scrollbar);
+    this.data.settings.mcpNoticeScope = normalizeNoticeScope(this.data.settings.mcpNoticeScope);
     this.save();
   }
 

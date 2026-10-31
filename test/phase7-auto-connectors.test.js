@@ -497,7 +497,8 @@ describe('Overview connectors card', () => {
     expect(c.querySelectorAll('[role="switch"]').length).toBe(0);
     expect([...c.querySelectorAll('button')].some((b) => /^(enable|disable)$/.test(b.textContent))).toBe(false);
     const how = [...c.querySelectorAll('.conn-how')].map((n) => n.textContent);
-    expect(how).toEqual(['used 3×', 'auto · idle', 'auto · loaded']);
+    // Working ones first, then broken, then the folded sign-in and switched-off groups.
+    expect(how).toEqual(['used 3×', 'auto · loaded', 'auto · idle']);
   });
 
   it('offers Sign in and Reconnect only where a connector needs them, and a link to Settings', async () => {

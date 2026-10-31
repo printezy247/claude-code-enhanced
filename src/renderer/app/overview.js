@@ -12,6 +12,7 @@ import { sessionRows } from './sessionscard.js';
 import { Chat } from '../chat/index.js';
 import { openMdEditor } from './mdedit.js';
 import { contextAdvice, cacheLine } from '../chat/ctxadvice.js';
+import CCEMcpGroup from '../../shared/mcpgroup.js';
 
 /* ================= split view (#44) ================= */
 
@@ -939,8 +940,11 @@ function renderTasks(target, cwd, only) {
     pending.push(fetcher.then((r) => {
       const servers = (r && r.ok && r.servers) || [];
       connRows.innerHTML = '';
-      const live = servers.filter((s) => s.status === 'connected').length;
-      conn.badge.textContent = servers.length ? live + '/' + servers.length : '0';
+      // Working over working-or-broken: connectors that wait for a sign-in or are switched
+      // off are neither, and plugin copies of one connector fold into a single row.
+      const grouped = CCEMcpGroup.groupServers(servers);
+      conn.badge.textContent = grouped.badge;
+      conn.badge.title = CCEMcpGroup.summaryText(grouped.counts);
       if (!servers.length) {
         connRows.appendChild(el('div', 'task-row hint', 'no MCP servers in this session'));
         return;
@@ -969,33 +973,49 @@ function renderTasks(target, cwd, only) {
       }
       // Status only: connectors are switched on and off by CCE, per message. What the
       // user can decide lives in Settings, as Auto / Always on / Off per connector.
-      const act = async (btn, sv) => {
+      const actAll = async (btn, svs) => {
         btn.disabled = true;
-        await ccx.invoke('chat:mcp', { id: chat.id, op: 'reconnect', name: sv.name });
+        for (const sv of svs) await ccx.invoke('chat:mcp', { id: chat.id, op: 'reconnect', name: sv.name });
         window.__connCache = {};
         renderOverview();
       };
-      for (const sv of servers) {
+      const sum = CCEMcpGroup.summaryText(grouped.counts);
+      if (sum) connRows.appendChild(el('div', 'task-row hint conn-sum', sum));
+      const rowFor = (g) => {
+        const sv = g.servers[0];
         const row = el('div', 'task-row hint conn-row');
         row.appendChild(el('span', 'st-dot st-' + String(sv.status || 'pending').replace(/[^a-z-]/g, '')));
-        const name = el('span', 'conn-name', sv.name);
-        name.title = sv.status + ((sv.tools || []).length ? '\n' + sv.tools.map((t) => t.name).join(', ') : '');
+        const name = el('span', 'conn-name', g.label + (g.count > 1 ? ' ×' + g.count : ''));
+        const tools = g.servers.reduce((n, x) => n + (x.tools || []).length, 0);
+        name.title = sv.status + (g.plugins.length ? '\nplugins: ' + g.plugins.join(', ') : '')
+          + (g.count === 1 && (sv.tools || []).length ? '\n' + sv.tools.map((t) => t.name).join(', ') : '');
         row.appendChild(name);
-        const tools = (sv.tools || []).length;
         row.appendChild(el('span', 'ctx-tokens', tools ? tools + ' tools' : sv.status || ''));
-        if (sv.how) row.appendChild(el('span', 'conn-how', sv.how));
-        // A button appears only when the connector needs the user.
-        if (sv.status === 'needs-auth') {
-          const b = el('button', 'btn tiny conn-act', 'Sign in');
-          b.addEventListener('click', () => act(b, sv));
-          row.appendChild(b);
-        } else if (sv.status === 'failed') {
-          const b = el('button', 'btn tiny conn-act', 'Reconnect');
-          b.title = sv.error ? String(sv.error).slice(0, 200) : 'Try again';
-          b.addEventListener('click', () => act(b, sv));
+        if (g.count === 1 && sv.how) row.appendChild(el('span', 'conn-how', sv.how));
+        // A button appears only when the connector needs the user; on a folded row it acts on every copy.
+        const label = sv.status === 'needs-auth' ? 'Sign in' : sv.status === 'failed' ? 'Reconnect' : '';
+        if (label) {
+          const b = el('button', 'btn tiny conn-act', g.count > 1 ? label + ' all' : label);
+          if (sv.status === 'failed' && g.count === 1) b.title = sv.error ? String(sv.error).slice(0, 200) : 'Try again';
+          b.addEventListener('click', () => actAll(b, g.servers));
           row.appendChild(b);
         }
-        connRows.appendChild(row);
+        return row;
+      };
+      const folds = { auth: 'Needs sign-in', off: 'Switched off' };
+      for (const bk of ['live', 'pending', 'failed']) {
+        for (const g of grouped.groups.filter((x) => x.bucket === bk)) connRows.appendChild(rowFor(g));
+      }
+      for (const bk of ['auth', 'off']) {
+        const gs = grouped.groups.filter((x) => x.bucket === bk);
+        if (!gs.length) continue;
+        const d = document.createElement('details');
+        d.className = 'conn-note conn-fold';
+        const sm = document.createElement('summary');
+        sm.textContent = folds[bk] + ' (' + grouped.counts[bk] + ')';
+        d.appendChild(sm);
+        for (const g of gs) d.appendChild(rowFor(g));
+        connRows.appendChild(d);
       }
       const manage = el('button', 'btn tiny conn-manage', 'Manage connectors →');
       manage.addEventListener('click', () => window.switchView && window.switchView('connectors'));

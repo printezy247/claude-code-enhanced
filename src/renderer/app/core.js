@@ -191,6 +191,17 @@ export function applyTheme(theme) {
 
 window.applyTheme = applyTheme;
 
+/**
+ * Chat scrollbar: 'accent' (orange, see-through), 'hidden' or 'default'. An
+ * attribute on <html> lets the stylesheet do the work, so it is live and the
+ * same for every chat. The allowed values live in src/shared/uiprefs.js.
+ */
+export function applyScrollbar(mode) {
+  const m = ['accent', 'hidden', 'default'].includes(mode) ? mode : 'accent';
+  document.documentElement.setAttribute('data-scrollbar', m);
+  return m;
+}
+
 export function lsGet(key, fallback) {
   try { const v = localStorage.getItem(key); return v == null ? fallback : JSON.parse(v); } catch { return fallback; }
 }

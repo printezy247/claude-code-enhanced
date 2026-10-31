@@ -18,12 +18,13 @@
     const m = new RegExp('<' + name + '>([\\s\\S]*?)</' + name + '>').exec(s);
     return m ? m[1].trim() : null;
   };
+  const SKILL_BODY_RE = /^Base directory for this skill:/;
   const SUMMARY_RE = /^This session is being continued from a previous conversation/;
 
   /**
    * @param {string} text  the record's text
-   * @param {object} [flags]  record flags (isCompactSummary, isMeta)
-   * @returns {{kind: 'prompt'|'note'|'summary'|'skip', text: string}}
+   * @param {object} [flags]  record flags (isCompactSummary, isMeta, isSynthetic)
+   * @returns {{kind: 'prompt'|'note'|'summary'|'skip', text: string, label?: string}}
    */
   function classifyUserText(text, flags = {}) {
     const s = String(text || '');
@@ -41,6 +42,14 @@
       return { kind: 'prompt', text: (name.startsWith('/') ? name : '/' + name) + (args ? ' ' + args : '') };
     }
     if (flags.isMeta) return { kind: 'skip', text: '' };
+    // A skill's instructions are injected as a user record. The live stream flags
+    // it isSynthetic (isMeta only reaches the saved file), and it is not something
+    // the user typed: fold it into a note instead of a message bubble.
+    if (flags.isSynthetic || SKILL_BODY_RE.test(s.trim())) {
+      const dir = /^Base directory for this skill:\s*(\S+)/.exec(s.trim());
+      const name = dir ? dir[1].split('/').filter(Boolean).pop() : '';
+      return { kind: 'note', text: s.trim(), label: name ? 'skill instructions · ' + name : 'injected instructions' };
+    }
     return { kind: 'prompt', text: s.trim() };
   }
 
