@@ -12,6 +12,12 @@ All notable changes to Claude Code Enhanced are documented here.
 
 
 
+## 0.29.1
+
+New provider.
+
+- Shannon AI is in the Providers list (OpenAI-compatible, bearer key, base URL `https://api.shannon-ai.com/v1`). Default model `shannon-3`; the hosted open-weight models (DeepSeek, Kimi, GLM and more) and `shannon-coder-1` are in the recommended list.
+
 ## 0.29.0
 
 Connector health and safer links.
